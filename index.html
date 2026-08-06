@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>SOLGRAVE ／ ソルグレイヴ</title>
+<meta name="description" content="現実の日光を集めて陽光銃に装填し、不死者を撃ち祓う3Dアクション">
+<meta name="theme-color" content="#0B0E14">
+<link rel="manifest" href="manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="SOLGRAVE">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
+<link rel="apple-touch-icon" sizes="192x192" href="icons/icon-192.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="css/style.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.169.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.169.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+
+<canvas id="view"></canvas>
+
+<!-- 縦持ち警告 -->
+<div id="rotate" class="overlay" hidden>
+  <div class="rotate-in">
+    <div class="rotate-icon">▭</div>
+    <p class="ttl">横にしてください</p>
+    <p class="sub">この作品は横画面専用です</p>
+  </div>
+</div>
+
+<!-- 読み込み -->
+<div id="boot" class="overlay">
+  <div class="boot-in">
+    <h1 class="logo">SOLGRAVE</h1>
+    <p class="logo-sub">ソ ル グ レ イ ヴ</p>
+    <div class="boot-bar"><span id="boot-fill"></span></div>
+    <p id="boot-msg" class="boot-msg">起動しています…</p>
+  </div>
+</div>
+
+<!-- カメラ権限の説明 -->
+<div id="perm" class="overlay" hidden>
+  <div class="panel">
+    <h2>日光の強さを測ります</h2>
+    <p class="lead">
+      この作品は、いまあなたのいる場所の明るさを「陽力（ようりょく）」に変えて遊びます。
+      そのために背面カメラをお借りします。
+    </p>
+    <ul class="notes">
+      <li>映像は<b>画面に表示しません</b></li>
+      <li>映像は<b>保存も送信もしません</b>（明るさの数値だけを使い、すぐ破棄します）</li>
+      <li>断っても遊べます（天気か時刻から推定します）</li>
+    </ul>
+    <div class="btns">
+      <button id="perm-yes" class="btn btn-fill">カメラを使う</button>
+      <button id="perm-no" class="btn btn-line">使わない</button>
+    </div>
+  </div>
+</div>
+
+<!-- タイトル -->
+<div id="title" class="overlay" hidden>
+  <div class="title-in">
+    <h1 class="logo">SOLGRAVE</h1>
+    <p class="logo-sub">陽 を 集 め 、 闇 を 祓 え</p>
+    <div class="title-btns">
+      <button id="btn-start" class="btn btn-fill">はじめる</button>
+      <button id="btn-records" class="btn btn-line">浄化記録</button>
+      <button id="btn-menu-title" class="btn btn-line">陣中帳</button>
+      <button id="btn-config" class="btn btn-line">設定</button>
+    </div>
+    <p class="title-note">陽力 <b id="title-sun">--</b>％ ／ <span id="title-src">測定中</span></p>
+  </div>
+</div>
+
+<!-- HUD -->
+<div id="hud" hidden>
+  <div class="hud-sun">
+    <div class="sun-head"><span id="sun-icon">☀</span><span id="sun-src">カメラ</span></div>
+    <div class="sun-bar"><span id="sun-fill"></span><i id="sun-mark"></i></div>
+    <div class="sun-val"><b id="sun-num">0</b>％<span id="sun-full" class="sun-full" hidden>満陽</span></div>
+  </div>
+  <div class="hud-hp" id="hud-hp"></div>
+  <div class="hud-obj" id="hud-obj">地上で陽力を溜めよ</div>
+  <div class="hud-boss" id="hud-boss" hidden>
+    <div class="boss-name">古き吸血鬼</div>
+    <div class="boss-bar"><span id="boss-fill"></span></div>
+    <div class="boss-phase" id="boss-phase">第一相</div>
+  </div>
+  <div class="hud-fps" id="hud-fps"></div>
+  <div class="hud-solar" id="hud-solar" hidden><span id="solar-remain"></span></div>
+  <div class="shout" id="shout" hidden></div>
+</div>
+
+<!-- モバイル操作 -->
+<div id="pad" hidden>
+  <div class="stick" id="stick-l"><i></i></div>
+  <div class="stick" id="stick-r"><i></i></div>
+  <button class="pad-btn" id="btn-dash">ダッシュ</button>
+  <button class="pad-btn" id="btn-charge">溜め</button>
+  <button class="pad-btn pad-sun" id="btn-solar">☀ 太陽</button>
+  <button class="pad-btn pad-heal" id="btn-heal">祓い</button>
+  <button class="pad-btn pad-menu" id="btn-menu">陣中帳</button>
+</div>
+
+<!-- カットイン -->
+<div id="cutin" class="overlay" hidden><div class="cutin-txt" id="cutin-txt"></div></div>
+
+<!-- 設定 -->
+<div id="config" class="overlay" hidden>
+  <div class="panel">
+    <h2>設定</h2>
+    <label class="row"><span>画質</span>
+      <select id="cfg-quality"><option value="high">高</option><option value="mid" selected>中</option><option value="low">低</option></select>
+    </label>
+    <label class="row"><span>音量</span>
+      <input id="cfg-vol" type="range" min="0" max="100" value="60">
+    </label>
+    <label class="row"><span>ミュート</span>
+      <input id="cfg-mute" type="checkbox">
+    </label>
+    <label class="row"><span>練習モード</span>
+      <input id="cfg-practice" type="checkbox">
+    </label>
+    <label class="row" id="row-manual" hidden><span>陽力を手動指定</span>
+      <input id="cfg-manual" type="range" min="0" max="100" value="70">
+    </label>
+    <p class="note">練習モードにすると、夜でも陽力を自由に決めて遊べます。</p>
+    <div class="btns"><button id="cfg-close" class="btn btn-fill">閉じる</button></div>
+  </div>
+</div>
+
+<!-- 記録 -->
+<div id="records" class="overlay" hidden>
+  <div class="panel">
+    <h2>浄化記録</h2>
+    <div id="rec-body" class="rec-body"></div>
+    <div class="btns"><button id="rec-close" class="btn btn-fill">閉じる</button></div>
+  </div>
+</div>
+
+<!-- リザルト -->
+<div id="result" class="overlay" hidden>
+  <div class="panel">
+    <h2 id="res-ttl">浄化完了</h2>
+    <div id="res-body" class="res-body"></div>
+    <div class="btns">
+      <button id="res-retry" class="btn btn-fill">もう一度</button>
+      <button id="res-title" class="btn btn-line">タイトルへ</button>
+    </div>
+  </div>
+</div>
+
+<!-- 陣中帳 -->
+<div id="menu" class="overlay" hidden>
+  <div class="menu-in">
+    <div class="menu-head">
+      <button class="menu-tab on" data-who="hero">狩人</button>
+      <button class="menu-tab" data-who="miko">巫女</button>
+      <span style="flex:1"></span>
+      <button id="menu-close" class="btn btn-line btn-sm">閉じる</button>
+    </div>
+    <div class="menu-body">
+      <div class="menu-left">
+        <canvas id="menu-canvas"></canvas>
+        <div class="menu-id">
+          <div id="menu-name" class="menu-nm">—</div>
+          <div id="menu-job" class="menu-jb">—</div>
+        </div>
+      </div>
+      <div class="menu-right">
+        <div class="menu-lvrow">
+          <span class="lv-lb">Lv.</span><span id="menu-lv" class="lv-no">1</span>
+          <span class="lv-exp" id="menu-exp">0 / 0</span>
+        </div>
+        <div class="lv-bar"><span id="menu-expbar"></span></div>
+        <div class="menu-pt"><span>割り振れる点</span><b id="menu-points">0</b></div>
+        <div id="menu-stats" class="menu-stats"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<script>
+/* 本体の置き場所を確かめてから読み込む（404を出さない）。
+   js/main.js → main.js → src/main.js の順に探す。 */
+(function(){
+  var cands = ['js/main.js', 'main.js', 'src/main.js'];
+  function load(src){
+    var el = document.createElement('script');
+    el.type = 'module'; el.src = src;
+    el.onerror = function(){ if(window.__solFail) window.__solFail('本体（main.js）を読み込めませんでした'); };
+    document.body.appendChild(el);
+  }
+  (function next(i){
+    if(i >= cands.length){
+      if(window.__solFail) window.__solFail('本体（main.js）が見つかりません。<br>js フォルダごと配置されているかご確認ください');
+      return;
+    }
+    // HEADで存在を確かめる（見つかった時点で終了。無駄な要求を出さない）
+    fetch(cands[i], {method:'HEAD', cache:'no-store'})
+      .then(function(r){ r.ok ? load(cands[i]) : next(i+1); })
+      .catch(function(){ next(i+1); });
+  })(0);
+})();
+</script>
+</body>
+</html>
