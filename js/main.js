@@ -16,7 +16,7 @@ import { Party, expOf, STAT_KEYS } from './stats.js';
 import { Menu } from './menu.js';
 import { UI } from './ui.js';
 import { Save, Config } from './save.js';
-import { Audio, Voice } from './audio.js';
+import { Audio, Voice, LINES } from './audio.js';
 
 const Phase = {
   TITLE: 'title', SURFACE: 'surface', DUNGEON: 'dungeon',
@@ -248,6 +248,13 @@ class Game {
   }
 
   /* ── 陽の化身 ───────────────────────────── */
+  /** 台詞集から喋らせる */
+  line(key) {
+    const L = LINES[key];
+    if (!L) return;
+    this.voice.say(null, L.who, { style: L.style, segments: L.segments });
+  }
+
   invokeSolar() {
     if (this.phase === Phase.TITLE || this.phase === Phase.RESULT) return;
     if (!this.solar.ready) {
@@ -258,7 +265,7 @@ class Game {
     }
     if (this.solar.invoke(this.sun, this.audio)) {
       UI.shout('太 陽 ！');
-      this.voice.say('太陽！', 'hero', { rate: 0.95, pitch: 0.8 });
+      this.line('solar');
       UI.toast('向日葵の妖精が現れ、天から陽が降りそそぐ', 3400);
       UI.sun(this.sun.value, this.sunLabel(), this.sunIcon());
     }
@@ -284,7 +291,7 @@ class Game {
     const healed = this.player.heal(amount);
     UI.hp(this.player.hp, this.player.maxHp);
     UI.shout(crit ? '大 祓 い ！' : '祓 い ま す');
-    this.voice.say(crit ? '大祓い！' : '祓います', 'miko');
+    this.line(crit ? 'healCrit' : 'heal');
     this.audio.sfx('seal');
     UI.toast((healed ? ('心を' + amount + 'つ癒した') : '傷は無いが加護を得た') +
       (m.wardCut > 0 ? ('　加護 ' + Math.round(m.wardCut * 100) + '%×' + Math.round(m.wardSec) + '秒') : ''), 2600);
@@ -360,7 +367,9 @@ class Game {
     if (vt) {
       vt.addEventListener('click', () => {
         this.voice.unlock();
-        const ok = this.voice.say('陽光狩人、参ります', 'hero');
+        const ok = this.voice.say(null, 'hero',
+          { segments: [{ t: '陽光狩人、', p: 1.05, r: 1.15, gap: 120 }, { t: '参ります！', p: 1.12, r: 1.2 }] });
+        setTimeout(() => this.line('heal'), 1600);
         setTimeout(() => this.showVoiceNote(), 350);
         if (!ok) UI.toast('声を出せませんでした');
       });
@@ -487,7 +496,7 @@ class Game {
   async enterBoss() {
     this.phase = Phase.BOSS;
     this.audio.startBGM('boss');
-    this.voice.say('ここが最深部か。行くぞ', 'hero');
+    this.line('bossIn');
     await UI.cutin('古 き 吸 血 鬼', 1600);
     const r = this.world.bossRoom;
     this.boss.spawn(new THREE.Vector3(r.x, 0, r.z - 4));
@@ -690,6 +699,7 @@ class Game {
         this.stats.hits++;
         UI.hp(P.hp, P.maxHp);
         this.audio.sfx('hurt');
+        if (res === 'lost') this.line('hurt');
         if (res === 'lost' && P.hp <= 0) { this.gameOver(); return; }
       }
     }
@@ -698,7 +708,7 @@ class Game {
       this.miko.knock();
       this.audio.sfx('hit');
       UI.toast('日和が打たれた');
-      this.voice.say('きゃっ', 'miko', { rate: 1.2 });
+      this.line('mikoHurt');
     }
     if (this.miko.sweep > 0) {
       this.enemies.pushAway(this.miko.pos.x, this.miko.pos.z, 1.8, this.miko.sweep * dt * 60);
@@ -759,7 +769,7 @@ class Game {
         if (a === 'key') {
           this.hasKey = true;
           this.audio.sfx('refill');
-          this.voice.say('鍵を見つけた', 'hero');
+          this.line('key');
           UI.toast('封印の鍵を手に入れた');
         } else if (a === 'door') {
           this.audio.sfx('phase');
@@ -768,6 +778,7 @@ class Game {
           this.audio.sfx('good');
           const exp = 120 + this.floor * 60;
           this.grantExp(exp);
+          this.line('chest');
           UI.toast('宝を開けた（経験 ' + exp + '）');
         }
       });
@@ -910,7 +921,7 @@ class Game {
       if (up1) who.push('狩人 Lv.' + this.party.hero.lv);
       if (up2) who.push('日和 Lv.' + this.party.miko.lv);
       UI.shout('位 が 上 が っ た');
-      this.voice.say('力が湧いてくる', 'hero');
+      this.line('levelUp');
       UI.toast(who.join('　／　') + '　（陣中帳で割り振れます）', 3600);
       this.audio.sfx('good');
     }

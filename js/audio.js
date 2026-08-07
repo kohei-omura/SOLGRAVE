@@ -1,22 +1,36 @@
 /* audio.js ── 外部音源なし。Web Audio で合成する */
 /* 端末に入っている読み上げ機能で台詞を喋らせる。
    外部音源を持たずに声を出せる唯一の手段。iOSも対応。 */
+/* ── 声の設計 ──────────────────────────────
+   読み上げ機能で操れるのは「声・速さ・高さ・音量」だけ。
+   そこで台詞を句に割り、句ごとに速さと高さを変えて
+   抑揚（演技）を作る。間（ま）も挟んで生っぽさを出す。
+─────────────────────────────────────── */
+
+/* 人物ごとの地の声 */
+const VOICE_PROFILE = {
+  // 主人公：やんちゃで元気な少年。高めで速く、跳ねるように
+  hero:  { pitch: 1.32, rate: 1.16, jitterP: 0.07, jitterR: 0.06, prefer: /Otoya|Hattori|Male|男/i },
+  // 日和：芯のある豊かな声。高すぎず、ゆっくりめで体温を出す
+  miko:  { pitch: 1.12, rate: 0.94, jitterP: 0.04, jitterR: 0.03, prefer: /Kyoko|Female|女/i }
+};
+
 export class Voice {
   constructor() {
     this.enabled = true;
     this.volume = 1.0;
-    this.unlocked = false;      // iOSは最初の指の操作で解錠しないと鳴らない
+    this.unlocked = false;
     this.voices = [];
     this.jaFemale = null;
     this.jaMale = null;
     this.lastError = '';
     this.supported = (typeof window !== 'undefined' && 'speechSynthesis' in window);
+    this._queue = [];
     this._pick();
     try {
       if (this.supported && speechSynthesis.addEventListener) {
         speechSynthesis.addEventListener('voiceschanged', () => this._pick());
       }
-      // 声の一覧は遅れて届くことがあるので、しばらく拾い直す
       let n = 0;
       const t = setInterval(() => { this._pick(); if (++n > 12 || this.voices.length) clearInterval(t); }, 400);
     } catch (e) {}
@@ -29,15 +43,11 @@ export class Voice {
       if (!list.length) return;
       this.voices = list;
       const ja = list.filter(v => /^ja/i.test(v.lang) || /Japanese|日本/i.test(v.name));
-      this.jaFemale = ja.find(v => /Kyoko|Female|女/i.test(v.name)) || ja[0] || null;
-      this.jaMale   = ja.find(v => /Otoya|Hattori|Male|男/i.test(v.name)) || ja[0] || null;
+      this.jaFemale = ja.find(v => VOICE_PROFILE.miko.prefer.test(v.name)) || ja[0] || null;
+      this.jaMale   = ja.find(v => VOICE_PROFILE.hero.prefer.test(v.name)) || ja[0] || null;
     } catch (e) { this.lastError = String(e); }
   }
 
-  /**
-   * iOSは「指の操作から直に呼ばれた speak」でないと以後ずっと鳴らない。
-   * 最初のタップと同じ流れで、ごく短い無音を1度喋らせて解錠する。
-   */
   unlock() {
     if (!this.supported || this.unlocked) return this.unlocked;
     try {
@@ -50,46 +60,103 @@ export class Voice {
     return this.unlocked;
   }
 
-  /** @param who 'hero' | 'miko' */
+  _voiceFor(who) { return (who === 'miko') ? this.jaFemale : this.jaMale; }
+
+  /** 1句を喋る（内部用） */
+  _utter(text, who, pitch, rate, vol, delay) {
+    const u = new SpeechSynthesisUtterance(String(text));
+    u.lang = 'ja-JP';
+    // 声の指定に失敗しても、台詞そのものは喋れるようにする
+    try { const v = this._voiceFor(who); if (v) u.voice = v; } catch (e) { this.lastError = String(e); }
+    u.pitch = Math.max(0, Math.min(2, pitch));
+    u.rate = Math.max(0.1, Math.min(10, rate));
+    u.volume = Math.max(0, Math.min(1, vol));
+    u.onerror = (e) => { this.lastError = (e && e.error) || 'error'; };
+    if (delay > 0) setTimeout(() => { try { speechSynthesis.speak(u); } catch (e) {} }, delay);
+    else speechSynthesis.speak(u);
+  }
+
+  /**
+   * 台詞を喋る。
+   * @param who 'hero' | 'miko'
+   * @param opts.style 'normal' | 'shout'（決め台詞）| 'soft'（囁き）| 'hurt'
+   * @param opts.segments 句ごとに抑揚を変える指定 [{t:'文', p:高さ倍率, r:速さ倍率, gap:後の間ms}]
+   */
   say(text, who, opts) {
-    if (!this.enabled || !text || !this.supported) return false;
+    if (!this.enabled || !this.supported) return false;
+    opts = opts || {};
     try {
-      // 解錠していなければ、この場で試みる（操作の流れの中なら通る）
       if (!this.unlocked) this.unlock();
-      // 直前の発話が残っていれば止める（喋っていない時に cancel すると
-      // iOSでは次の speak が無視されることがあるため、条件を付ける）
       if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
 
-      const u = new SpeechSynthesisUtterance(String(text));
-      u.lang = 'ja-JP';
-      const v = (who === 'miko') ? this.jaFemale : this.jaMale;
-      if (v) u.voice = v;                      // 無ければ lang だけで任せる
-      u.rate   = (opts && opts.rate)  || (who === 'miko' ? 1.05 : 1.0);
-      u.pitch  = (opts && opts.pitch) || (who === 'miko' ? 1.5 : 0.85);
-      u.volume = this.volume;
-      u.onerror = (e) => { this.lastError = (e && e.error) || 'error'; };
-      speechSynthesis.speak(u);
+      const prof = VOICE_PROFILE[who] || VOICE_PROFILE.hero;
+      // 毎回わずかに揺らして機械らしさを消す
+      const jp = 1 + (Math.random() - 0.5) * (prof.jitterP || 0);
+      const jr = 1 + (Math.random() - 0.5) * (prof.jitterR || 0);
+      let basePitch = prof.pitch * jp;
+      let baseRate = prof.rate * jr;
+      let baseVol = this.volume;
+
+      // 言い回しの型
+      if (opts.style === 'shout') {
+        // 一言で場を支配する声：低く、ぐっと遅く、目一杯
+        basePitch = prof.pitch * 0.62;
+        baseRate = prof.rate * 0.58;
+        baseVol = Math.min(1, this.volume * 1.0);
+      } else if (opts.style === 'soft') {
+        basePitch = prof.pitch * 1.02; baseRate = prof.rate * 0.86; baseVol = this.volume * 0.8;
+      } else if (opts.style === 'hurt') {
+        basePitch = prof.pitch * 1.22; baseRate = prof.rate * 1.25;
+      }
+
+      const segs = opts.segments;
+      if (segs && segs.length) {
+        let delay = 0;
+        segs.forEach(sg => {
+          this._utter(sg.t, who, basePitch * (sg.p || 1), baseRate * (sg.r || 1), baseVol, delay);
+          // だいたいの発話時間＋指定の間
+          delay += (String(sg.t).length * 105) / (baseRate * (sg.r || 1)) + (sg.gap || 0);
+        });
+      } else {
+        this._utter(text, who, basePitch, baseRate, baseVol, 0);
+      }
       return true;
     } catch (e) { this.lastError = String(e); return false; }
   }
 
-  /** 診断用：いまの状態を返す */
   status() {
     return {
-      supported: this.supported,
-      unlocked: this.unlocked,
-      voices: this.voices.length,
-      ja: !!(this.jaFemale || this.jaMale),
+      supported: this.supported, unlocked: this.unlocked,
+      voices: this.voices.length, ja: !!(this.jaFemale || this.jaMale),
       jaName: (this.jaFemale && this.jaFemale.name) || (this.jaMale && this.jaMale.name) || 'なし',
-      enabled: this.enabled,
-      error: this.lastError
+      enabled: this.enabled, error: this.lastError
     };
   }
-
   stop() { try { if (this.supported) speechSynthesis.cancel(); } catch (e) {} }
   setEnabled(on) { this.enabled = !!on; if (!on) this.stop(); }
   setVolume(v) { this.volume = Math.max(0, Math.min(1, v)); }
 }
+
+/* ── 台詞集（抑揚つき） ── */
+export const LINES = {
+  solar: { who: 'hero', style: 'shout',
+    segments: [ { t: 'たい', p: 1.0, r: 0.9, gap: 40 }, { t: 'よォ！', p: 0.88, r: 0.62, gap: 0 } ] },
+  levelUp: { who: 'hero',
+    segments: [ { t: 'よっしゃ！', p: 1.12, r: 1.2, gap: 90 }, { t: '力が湧いてきた', p: 1.0, r: 1.05 } ] },
+  key: { who: 'hero',
+    segments: [ { t: 'お、', p: 1.15, r: 1.3, gap: 130 }, { t: '鍵見っけ！', p: 1.08, r: 1.15 } ] },
+  bossIn: { who: 'hero',
+    segments: [ { t: 'ここが最深部か', p: 0.95, r: 1.0, gap: 220 }, { t: '……行くぞ！', p: 1.05, r: 0.92 } ] },
+  chest: { who: 'hero', segments: [ { t: 'やった、お宝だ！', p: 1.1, r: 1.18 } ] },
+  hurt:  { who: 'hero', style: 'hurt', segments: [ { t: 'いっつ！', p: 1.0, r: 1.0 } ] },
+  heal:  { who: 'miko',
+    segments: [ { t: 'いま、', p: 1.0, r: 0.9, gap: 150 }, { t: '祓います', p: 0.96, r: 0.88 } ] },
+  healCrit: { who: 'miko',
+    segments: [ { t: '大祓い', p: 1.06, r: 0.82, gap: 120 }, { t: '——！', p: 0.94, r: 0.7 } ] },
+  mikoHurt: { who: 'miko', style: 'hurt', segments: [ { t: 'きゃっ', p: 1.15, r: 1.3 } ] },
+  mikoWorry: { who: 'miko', style: 'soft',
+    segments: [ { t: '無理は、', p: 1.0, r: 0.88, gap: 170 }, { t: 'しないでくださいね', p: 0.97, r: 0.9 } ] }
+};
 
 export class Audio {
   constructor() {
