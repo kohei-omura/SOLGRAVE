@@ -858,6 +858,7 @@ class Game {
         this.enterPile();
       }
     } else if (this.phase === Phase.PILE) {
+      // 棺は台座に据わったまま。押し出されたら鎖で戻す
       if (this.input.fire && !this.coffin.chained) this.coffin.grab(P.pos.x, P.pos.z);
       if (!this.input.fire) this.coffin.release();
       if (this.coffin.chained) {
@@ -865,26 +866,38 @@ class Game {
         this.coffin.drawChain(P.pos.x, P.pos.z);
       }
       const push = this.pile.update(dt, now, this.coffin.p);
-      this.coffin.p.x += push.x * dt * 8;
-      this.coffin.p.z += push.z * dt * 8;
+      this.coffin.p.x += push.x * dt * 6;
+      this.coffin.p.z += push.z * dt * 6;
       this.coffin.group.position.copy(this.coffin.p);
 
+      // ── 神聖機器に陽光弾を当てると、黒ずんだ光が輝きを取り戻す ──
       for (let i = this.bullets.list.length - 1; i >= 0; i--) {
         const b = this.bullets.list[i];
-        const dx = b.p.x - this.coffin.p.x, dz = b.p.z - this.coffin.p.z;
-        if (dx * dx + dz * dz < 1.8 * 1.8 && b.p.y < 2.4) {
-          if (this.pile.hitCoffin()) {
-            this.audio.sfx('seal');
-            this.particles.emit(this.coffin.p, 10, { color: [1, 0.9, 0.6], size: 2.8, up: 2 });
-          }
+        if (this.pile.hitDevice(b.p.x, b.p.z)) {
           this.bullets.list.splice(i, 1);
+          this.audio.sfx('refill');
+          this.particles.emit(this.pile.corePos, 14,
+            { color: [1, 0.95, 0.7], size: 3.2, up: 2.6, yOff: 1.0 });
+          if (this.pile.purity > 0.9 && !this._purityCall) {
+            this._purityCall = true;
+            this.voice.say(null, 'hero', { segments: [{ t: 'まだまだァ！', p: 1.1, r: 1.2 }] });
+            setTimeout(() => { this._purityCall = false; }, 6000);
+          }
         }
       }
 
-      UI.bossBar(this.pile.hp / 100, this.pile.beaming ? '浄化 照射中' : '照射が途切れている');
-      UI.objective(this.pile.beaming
-        ? '照射中。暴れたら棺を撃って鎮めよ'
-        : '棺を台座へ戻せ（長押しで鎖）');
+      const pur = Math.round(this.pile.purity * 100);
+      UI.bossBar(this.pile.hp / 100, '陽光の輝き ' + pur + '％');
+      if (pur < 25) {
+        UI.objective('陽光が黒ずんでいる！　神聖機器を撃て');
+        if (!this._darkWarn) {
+          this._darkWarn = true;
+          this.audio.sfx('empty');
+          setTimeout(() => { this._darkWarn = false; }, 2500);
+        }
+      } else {
+        UI.objective('浄化中　――　輝きが翳ったら機器を撃て');
+      }
       if (this.pile.done) this.finishPile();
     }
   }
@@ -905,9 +918,10 @@ class Game {
     this.pile.begin(this.sun.value);
     const bh2 = document.getElementById('hud-boss');
     if (bh2) { bh2.hidden = false; const nm = bh2.querySelector('.boss-name'); if (nm) nm.textContent = '吸血鬼の思念体'; }
-    UI.bossBar(1, '浄化 照射中');
-    UI.objective('照射中。暴れたら棺を撃って鎮めよ');
-    UI.toast('四方の光が棺を焼く。思念体が暴れたら棺を撃て', 4200);
+    UI.bossBar(1, '陽光の輝き 100％');
+    UI.objective('浄化中　――　輝きが翳ったら機器を撃て');
+    UI.toast('四方の陽光が棺を焼く。思念体の反発で光が黒ずんだら、神聖機器を撃って輝きを戻せ', 5200);
+    this.voice.say(null, 'hero', { segments: [{ t: '浄めるぞ、', p: 1.0, r: 1.05, gap: 150 }, { t: '日和！', p: 1.1, r: 1.1 }] });
   }
 
   /** 経験値を配る（巫女は7割） */

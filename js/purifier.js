@@ -21,9 +21,10 @@ export class Purifier {
     this.beaming = false;         // 照射中か
     this.socket = new THREE.Vector3(0, 0, 0);
     this.socketR = 2.0;
-    this.rage = 0;                // 暴れの強さ 0〜1
-    this.calm = 0;                // 鎮まりの残り時間
-    this.shots = 0;               // 棺に当てた回数
+    this.rage = 0;                // 反発の強さ 0〜1
+    this.purity = 1;              // 陽光の輝き 1=澄む 0=黒ずむ
+    this.shots = 0;               // 機器に撃ち込んだ回数
+    this.dark = 0;                // 黒ずんだまま経った時間
     this.group = new THREE.Group();
     this._build();
     scene.add(this.group);
@@ -118,7 +119,7 @@ export class Purifier {
   begin(sunPower) {
     this.active = true; this.done = false;
     this.hp = PURIFY_HP;
-    this.rage = 0; this.calm = 0; this.shots = 0;
+    this.rage = 0; this.purity = 1; this.shots = 0; this.dark = 0;
     this.sunAtStart = sunPower;
     this.wraith.visible = true;
     // 陽力が高いほど浄化が速く進む
@@ -132,14 +133,27 @@ export class Purifier {
     return dx * dx + dz * dz < this.socketR * this.socketR;
   }
 
-  /** 棺を撃たれた。暴れが鎮まる */
-  hitCoffin() {
+  /** 神聖機器に陽光弾が当たった。陽光が輝きを取り戻す */
+  hitDevice(bx, bz) {
     if (!this.active) return false;
+    // 台座の周りか、四本の柱のいずれかに当たれば有効
+    const dx = bx - this.socket.x, dz = bz - this.socket.z;
+    let ok = (dx * dx + dz * dz) < 3.4 * 3.4;
+    if (!ok) {
+      for (const e of this.emitters) {
+        const ex = this.socket.x + e.x, ez = this.socket.z + e.z;
+        if (Math.hypot(bx - ex, bz - ez) < 1.6) { ok = true; break; }
+      }
+    }
+    if (!ok) return false;
     this.shots++;
-    this.calm = 1.6;
-    this.rage = Math.max(0, this.rage - 0.45);
+    this.purity = Math.min(1, this.purity + 0.34);
+    this.rage = Math.max(0, this.rage - 0.28);
     return true;
   }
+
+  /** 当てる的の位置（画面案内用） */
+  get corePos() { return this.socket; }
 
   /**
    * @param coffinPos 棺の現在地（暴れで押し出す）
@@ -152,18 +166,35 @@ export class Purifier {
     this.seal.rotation.z += dt * 0.5;
 
     if (!this.active) {
-      this.emitters.forEach(e => { e.beam.visible = false; e.light.intensity = 0; e.lens.material.emissiveIntensity = 0.4; });
+      this.emitters.forEach(e => {
+        e.beam.visible = false; e.light.intensity = 0; e.lens.material.emissiveIntensity = 0.4;
+      });
       return push;
     }
 
-    const on = this.onSocket(coffinPos);
-    this.beaming = on && this.calm <= 0 ? true : on;   // 台座に乗っていれば照射
-    if (this.calm > 0) this.calm -= dt;
+    // ── 思念体が反発し、陽光が黒ずんでいく ──
+    this.rage = Math.min(1, this.rage + dt * 0.16);
+    this.purity = Math.max(0, this.purity - (0.055 + this.rage * 0.10) * dt);
+    this.beaming = this.purity > 0.06;
 
-    // ── 照射 ──
+    // 澄んだ光のときだけ浄化が進む（黒ずむほど効かない）
+    const eff = Math.max(0, (this.purity - 0.18) / 0.82);
+    if (eff > 0) {
+      this.hp = Math.max(0, this.hp - this.rate * eff * dt);
+      this.dark = 0;
+      if (this.particles && Math.random() < 0.5 * eff) {
+        this.particles.emit(coffinPos, 2, { color: [1, 0.95, 0.75], size: 2.8, up: 2.2, yOff: 0.6 });
+      }
+    } else {
+      this.dark += dt;
+    }
+    if (this.hp <= 0) { this.active = false; this.done = true; this.wraith.visible = false; }
+
+    // ── 光線の見た目：澄んだ金 → 黒ずんだ紫 ──
+    const p = this.purity;
+    const cr = 0.10 + p * 0.90, cg = 0.03 + p * 0.92, cb = 0.14 + p * 0.68;
     this.emitters.forEach((e, i) => {
-      e.beam.visible = this.beaming;
-      if (!this.beaming) { e.light.intensity = 0; e.lens.material.emissiveIntensity = 0.4; return; }
+      e.beam.visible = this.beaming || p > 0.02;
       const from = new THREE.Vector3(e.x, e.y, e.z);
       const to = new THREE.Vector3(coffinPos.x - this.socket.x, 0.7, coffinPos.z - this.socket.z);
       const mid = from.clone().add(to).multiplyScalar(0.5);
@@ -172,47 +203,41 @@ export class Purifier {
       e.beam.scale.set(1, len, 1);
       e.beam.lookAt(to.x, to.y, to.z);
       e.beam.rotateX(Math.PI / 2);
-      e.beam.material.opacity = 0.55 + Math.sin(t * 9 + i) * 0.18;
-      e.light.intensity = 3.5 + Math.sin(t * 7 + i) * 0.8;
-      e.lens.material.emissiveIntensity = 2.6;
+      e.beam.material.color.setRGB(cr, cg, cb);
+      e.beam.material.opacity = (0.22 + p * 0.5) + Math.sin(t * 9 + i) * 0.08 * p;
+      e.light.color.setRGB(cr, cg, cb);
+      e.light.intensity = 0.6 + p * 3.6 + Math.sin(t * 7 + i) * 0.5 * p;
+      e.lens.material.emissive.setRGB(cr, cg, cb);
+      e.lens.material.emissiveIntensity = 0.4 + p * 2.4;
     });
-
-    if (this.beaming) {
-      this.hp = Math.max(0, this.hp - this.rate * dt);
-      this.rage = Math.min(1, this.rage + dt * 0.34);        // 照射されるほど暴れる
-      if (this.particles && Math.random() < 0.6) {
-        this.particles.emit(coffinPos, 3, { color: [1, 0.95, 0.75], size: 2.8, up: 2.2, yOff: 0.6 });
-      }
-      if (this.hp <= 0) { this.active = false; this.done = true; this.wraith.visible = false; }
-    } else {
-      this.rage = Math.max(0, this.rage - dt * 0.25);
-    }
+    // 台座の紋も曇る
+    this.seal.material.color.setRGB(cr, cg, cb);
+    this.seal.material.opacity = 0.14 + p * 0.34;
 
     // ── 思念体 ──
     if (this.wraith.visible) {
-      const r = this.rage;
+      const agi = 1 - p;                       // 黒ずむほど暴れる
       this.wraith.position.set(
-        coffinPos.x - this.socket.x + Math.sin(t * 2.2) * 0.5 * r,
-        0.4 + Math.sin(t * 3) * 0.18,
-        coffinPos.z - this.socket.z + Math.cos(t * 1.8) * 0.5 * r
+        coffinPos.x - this.socket.x + Math.sin(t * 2.4) * 0.7 * agi,
+        0.4 + Math.sin(t * 3) * 0.2,
+        coffinPos.z - this.socket.z + Math.cos(t * 2.0) * 0.7 * agi
       );
-      this.wraith.rotation.y += dt * (0.8 + r * 2.4);
+      this.wraith.rotation.y += dt * (0.8 + agi * 3.0);
       this.wraith.scale.setScalar(0.75 + (1 - this.hp / PURIFY_HP) * 0.5);
-      this.wraithLight.intensity = 1.6 + r * 3;
+      this.wraithLight.intensity = 1.2 + agi * 4;
       if (this.wraithArms) {
         this.wraithArms.forEach((a, i) => {
-          a.m.rotation.z = a.sx * (0.55 + Math.sin(t * (5 + r * 8) + i) * 0.5 * r);
+          a.m.rotation.z = a.sx * (0.55 + Math.sin(t * (5 + agi * 10) + i) * 0.6 * agi);
         });
       }
-      if (this.particles && r > 0.3 && Math.random() < r * 0.5) {
-        this.particles.emit(coffinPos, 2, { color: [0.55, 0.12, 0.2], size: 3.0, up: 1.4, yOff: 1.2 });
+      if (this.particles && agi > 0.4 && Math.random() < agi * 0.5) {
+        this.particles.emit(coffinPos, 2, { color: [0.4, 0.08, 0.3], size: 3.2, up: 1.6, yOff: 1.2 });
       }
-      // ── 暴れて棺を台座から引き剥がす ──
-      if (this.beaming && r > 0.22 && this.calm <= 0) {
-        const a = t * 1.3;
-        const f = (r - 0.22) * 4.2;
-        push.x = Math.cos(a) * f;
-        push.z = Math.sin(a) * f;
+      // 完全に黒ずむと、じわじわ棺を押し出す（放置は許さない）
+      if (this.dark > 2.5) {
+        const a = t * 1.1;
+        push.x = Math.cos(a) * 1.6;
+        push.z = Math.sin(a) * 1.6;
       }
     }
     return push;
@@ -221,9 +246,11 @@ export class Purifier {
   /** 浄化率と判定 */
   result(sealRatio, sunPower) {
     const cleared = this.done;
-    let rate = cleared ? 100 - Math.max(0, (this.shots - 4) * 2) : Math.round((1 - this.hp / PURIFY_HP) * 100);
+    // 撃ち込みが少ないほど（＝光を絶やさなかったほど）美しい浄化
+    let rate = cleared ? 100 - Math.max(0, (this.shots - 6) * 1.6)
+                       : Math.round((1 - this.hp / PURIFY_HP) * 100);
     rate = Math.max(0, Math.min(100, Math.round(rate * 0.82 + sealRatio * 12 + Math.min(6, sunPower / 16))));
-    const full = cleared && sunPower >= 90 && this.shots <= 8;
+    const full = cleared && sunPower >= 90 && this.shots <= 12;
     return { rate, full, cleared, shots: this.shots };
   }
 }
