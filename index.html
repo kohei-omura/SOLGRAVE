@@ -11,11 +11,12 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="SOLGRAVE">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
 <link rel="apple-touch-icon" sizes="192x192" href="icons/icon-192.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="css/style.css" onerror="this.onerror=null;this.href='style.css'">
 <script type="importmap">
 {
   "imports": {
@@ -129,6 +130,13 @@
     <label class="row"><span>ミュート</span>
       <input id="cfg-mute" type="checkbox">
     </label>
+    <label class="row"><span>キャラクターの声</span>
+      <input id="cfg-voice" type="checkbox" checked>
+    </label>
+    <div class="row"><span>声の確認</span>
+      <button id="cfg-voice-test" class="btn btn-line btn-sm" style="flex:0 0 auto;min-width:110px">試す</button>
+    </div>
+    <div id="voice-note" class="note" style="margin:2px 0 10px"></div>
     <label class="row"><span>練習モード</span>
       <input id="cfg-practice" type="checkbox">
     </label>
