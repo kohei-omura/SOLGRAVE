@@ -1,12 +1,15 @@
 /* SOLGRAVE ── Service Worker
    自前資産は Cache First、CDN(three.js)は Stale-While-Revalidate */
-const CACHE = 'solgrave-v7';
-const CDN = 'solgrave-cdn-v7';
+const CACHE = 'solgrave-v9';
+const CDN = 'solgrave-cdn-v9';
+/* 置き方が「フォルダ分け」でも「直下まとめ」でも動くよう、
+   両方の場所を候補に入れる。無い物は取得に失敗しても無視される。 */
 const ASSETS = [
   './',
   './index.html',
   './manifest.json',
   './css/style.css',
+  './style.css',
   './js/audio.js',
   './js/boss.js',
   './js/coffin.js',
@@ -23,10 +26,30 @@ const ASSETS = [
   './js/sun.js',
   './js/ui.js',
   './js/world.js',
+  './audio.js',
+  './boss.js',
+  './coffin.js',
+  './enemy.js',
+  './gfx.js',
+  './main.js',
+  './menu.js',
+  './miko.js',
+  './player.js',
+  './purifier.js',
+  './save.js',
+  './solar.js',
+  './stats.js',
+  './sun.js',
+  './ui.js',
+  './world.js',
   './icons/icon-192.png',
+  './icon-192.png',
   './icons/icon-512.png',
+  './icon-512.png',
   './icons/icon-maskable.png',
-  './icons/apple-touch-icon.png'
+  './icon-maskable.png',
+  './icons/apple-touch-icon.png',
+  './apple-touch-icon.png'
 ];
 
 self.addEventListener('install', e => {
