@@ -162,7 +162,7 @@ class Game {
       this.input.ax = dx / len; this.input.az = dy / len;
     });
     canvas.addEventListener('mousedown', e => {
-      this.audio.unlock();
+      this.audio.unlock(); this.voice.unlock();
       if (e.button === 0) { this.input.fire = true; this.onAction(); }
     });
     addEventListener('mouseup', () => { this.input.fire = false; });
@@ -175,7 +175,7 @@ class Game {
       let active = null;
       const rect = () => el.getBoundingClientRect();
       const start = e => {
-        this.audio.unlock();
+        this.audio.unlock(); this.voice.unlock();
         const t = e.changedTouches ? e.changedTouches[0] : e;
         active = t.identifier != null ? t.identifier : 'mouse';
         move(e);
@@ -220,13 +220,13 @@ class Game {
     }
     const solarBtn = document.getElementById('btn-solar');
     if (solarBtn) {
-      const go = e => { if (e) e.preventDefault(); this.audio.unlock(); this.invokeSolar(); };
+      const go = e => { if (e) e.preventDefault(); this.audio.unlock(); this.voice.unlock(); this.invokeSolar(); };
       solarBtn.addEventListener('touchstart', go, { passive: false });
       solarBtn.addEventListener('click', go);
     }
     const healBtn = document.getElementById('btn-heal');
     if (healBtn) {
-      const go2 = e => { if (e) e.preventDefault(); this.audio.unlock(); this.invokeHeal(); };
+      const go2 = e => { if (e) e.preventDefault(); this.audio.unlock(); this.voice.unlock(); this.invokeHeal(); };
       healBtn.addEventListener('touchstart', go2, { passive: false });
       healBtn.addEventListener('click', go2);
     }
@@ -295,7 +295,7 @@ class Game {
     const on = (id, fn) => { const e = document.getElementById(id); if (e) e.addEventListener('click', fn); };
 
     on('perm-yes', async () => {
-      this.audio.unlock();
+      this.audio.unlock(); this.voice.unlock();
       this.cfg.allowCamera = true; Config.save(this.cfg);
       UI.hide('perm');
       await this.sun.start(true);
@@ -303,14 +303,14 @@ class Game {
       UI.sun(this.sun.value, this.sunLabel(), this.sunIcon());
     });
     on('perm-no', async () => {
-      this.audio.unlock();
+      this.audio.unlock(); this.voice.unlock();
       this.cfg.allowCamera = false; Config.save(this.cfg);
       UI.hide('perm');
       await this.sun.start(false);
       UI.sun(this.sun.value, this.sunLabel(), this.sunIcon());
     });
 
-    on('btn-start', () => { this.audio.unlock(); this.startRun(); });
+    on('btn-start', () => { this.audio.unlock(); this.voice.unlock(); this.startRun(); });
     on('btn-config', () => { this.syncConfigUI(); UI.show('config'); });
     on('btn-menu-title', () => { this.menu.show('hero'); });
     on('menu-close', () => { this.menu.hide(); Party.save(this.party); });
@@ -347,6 +347,24 @@ class Game {
     this.voice.setEnabled(this.cfg.voice !== false);
     this.voice.setVolume(this.cfg.volume / 100);
     });
+    const vc = document.getElementById('cfg-voice');
+    if (vc) {
+      vc.checked = this.cfg.voice !== false;
+      vc.addEventListener('change', () => {
+        this.cfg.voice = vc.checked; Config.save(this.cfg);
+        this.voice.setEnabled(vc.checked);
+        this.showVoiceNote();
+      });
+    }
+    const vt = document.getElementById('cfg-voice-test');
+    if (vt) {
+      vt.addEventListener('click', () => {
+        this.voice.unlock();
+        const ok = this.voice.say('陽光狩人、参ります', 'hero');
+        setTimeout(() => this.showVoiceNote(), 350);
+        if (!ok) UI.toast('声を出せませんでした');
+      });
+    }
     const prac = document.getElementById('cfg-practice');
     const row = document.getElementById('row-manual');
     if (prac) prac.addEventListener('change', () => {
@@ -361,6 +379,18 @@ class Game {
       this.sun.setManual(this.cfg.manual);
     });
   }
+  /** 声の状態を設定画面に出す */
+  showVoiceNote() {
+    const el = document.getElementById('voice-note');
+    if (!el) return;
+    const st = this.voice.status();
+    if (!st.supported) { el.textContent = 'この端末は読み上げに対応していません'; return; }
+    if (!st.enabled) { el.textContent = '声は切ってあります'; return; }
+    if (!st.voices) { el.textContent = '声の一覧をまだ取得できていません。「試す」を押すと読み込まれます'; return; }
+    if (!st.ja) { el.textContent = '日本語の声が見つかりません（設定→アクセシビリティ→読み上げコンテンツ→声 で日本語を追加してください）'; return; }
+    el.textContent = '使う声：' + st.jaName + '　／　鳴らない時は本体側面の消音スイッチをご確認ください';
+  }
+
   syncConfigUI() {
     const set = (id, prop, v) => { const e = document.getElementById(id); if (e) e[prop] = v; };
     set('cfg-quality', 'value', this.cfg.quality);
@@ -370,6 +400,7 @@ class Game {
     set('cfg-manual', 'value', this.cfg.manual);
     const row = document.getElementById('row-manual');
     if (row) row.hidden = !this.cfg.practice;
+    this.showVoiceNote();
   }
   async showRecords() {
     const body = document.getElementById('rec-body');

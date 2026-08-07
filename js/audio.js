@@ -5,41 +5,88 @@ export class Voice {
   constructor() {
     this.enabled = true;
     this.volume = 1.0;
-    this.jaVoice = null;
+    this.unlocked = false;      // iOSは最初の指の操作で解錠しないと鳴らない
+    this.voices = [];
+    this.jaFemale = null;
+    this.jaMale = null;
+    this.lastError = '';
+    this.supported = (typeof window !== 'undefined' && 'speechSynthesis' in window);
     this._pick();
     try {
-      if (window.speechSynthesis) {
+      if (this.supported && speechSynthesis.addEventListener) {
         speechSynthesis.addEventListener('voiceschanged', () => this._pick());
       }
+      // 声の一覧は遅れて届くことがあるので、しばらく拾い直す
+      let n = 0;
+      const t = setInterval(() => { this._pick(); if (++n > 12 || this.voices.length) clearInterval(t); }, 400);
     } catch (e) {}
   }
+
   _pick() {
+    if (!this.supported) return;
     try {
       const list = speechSynthesis.getVoices() || [];
-      const ja = list.filter(v => /ja[-_]JP|Japanese/i.test(v.lang + ' ' + v.name));
-      // 女性らしい声を優先（巫女用）
-      this.jaVoice = ja[0] || null;
-      this.jaFemale = ja.find(v => /Kyoko|O-ren|Female|女/i.test(v.name)) || ja[0] || null;
-      this.jaMale = ja.find(v => /Otoya|Hattori|Male|男/i.test(v.name)) || ja[0] || null;
-    } catch (e) {}
+      if (!list.length) return;
+      this.voices = list;
+      const ja = list.filter(v => /^ja/i.test(v.lang) || /Japanese|日本/i.test(v.name));
+      this.jaFemale = ja.find(v => /Kyoko|Female|女/i.test(v.name)) || ja[0] || null;
+      this.jaMale   = ja.find(v => /Otoya|Hattori|Male|男/i.test(v.name)) || ja[0] || null;
+    } catch (e) { this.lastError = String(e); }
   }
+
+  /**
+   * iOSは「指の操作から直に呼ばれた speak」でないと以後ずっと鳴らない。
+   * 最初のタップと同じ流れで、ごく短い無音を1度喋らせて解錠する。
+   */
+  unlock() {
+    if (!this.supported || this.unlocked) return this.unlocked;
+    try {
+      const u = new SpeechSynthesisUtterance(' ');
+      u.volume = 0.01; u.rate = 2; u.lang = 'ja-JP';
+      speechSynthesis.speak(u);
+      this.unlocked = true;
+      this._pick();
+    } catch (e) { this.lastError = String(e); }
+    return this.unlocked;
+  }
+
   /** @param who 'hero' | 'miko' */
   say(text, who, opts) {
-    if (!this.enabled || !text) return;
+    if (!this.enabled || !text || !this.supported) return false;
     try {
-      if (!window.speechSynthesis) return;
-      speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(text);
+      // 解錠していなければ、この場で試みる（操作の流れの中なら通る）
+      if (!this.unlocked) this.unlock();
+      // 直前の発話が残っていれば止める（喋っていない時に cancel すると
+      // iOSでは次の speak が無視されることがあるため、条件を付ける）
+      if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
+
+      const u = new SpeechSynthesisUtterance(String(text));
       u.lang = 'ja-JP';
       const v = (who === 'miko') ? this.jaFemale : this.jaMale;
-      if (v) u.voice = v;
-      u.rate = (opts && opts.rate) || (who === 'miko' ? 1.05 : 1.0);
-      u.pitch = (opts && opts.pitch) || (who === 'miko' ? 1.5 : 0.85);
+      if (v) u.voice = v;                      // 無ければ lang だけで任せる
+      u.rate   = (opts && opts.rate)  || (who === 'miko' ? 1.05 : 1.0);
+      u.pitch  = (opts && opts.pitch) || (who === 'miko' ? 1.5 : 0.85);
       u.volume = this.volume;
+      u.onerror = (e) => { this.lastError = (e && e.error) || 'error'; };
       speechSynthesis.speak(u);
-    } catch (e) {}
+      return true;
+    } catch (e) { this.lastError = String(e); return false; }
   }
-  stop() { try { speechSynthesis.cancel(); } catch (e) {} }
+
+  /** 診断用：いまの状態を返す */
+  status() {
+    return {
+      supported: this.supported,
+      unlocked: this.unlocked,
+      voices: this.voices.length,
+      ja: !!(this.jaFemale || this.jaMale),
+      jaName: (this.jaFemale && this.jaFemale.name) || (this.jaMale && this.jaMale.name) || 'なし',
+      enabled: this.enabled,
+      error: this.lastError
+    };
+  }
+
+  stop() { try { if (this.supported) speechSynthesis.cancel(); } catch (e) {} }
   setEnabled(on) { this.enabled = !!on; if (!on) this.stop(); }
   setVolume(v) { this.volume = Math.max(0, Math.min(1, v)); }
 }
