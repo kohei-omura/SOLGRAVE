@@ -13,6 +13,7 @@ import { Purifier } from './purifier.js';
 import { Miko } from './miko.js';
 import { Solar, SOLAR_DMG_MUL } from './solar.js';
 import { Party, expOf, STAT_KEYS } from './stats.js';
+import { SKILLS, GEAR, rollGear } from './jobs.js';
 import { Menu } from './menu.js';
 import { UI } from './ui.js';
 import { Save, Config } from './save.js';
@@ -35,6 +36,8 @@ class Game {
     this.spawnT = 0;
     this.floor = 1;
     this.hasKey = false;
+    this.heroMp = 0;
+    this.skillCd = {};
   }
 
   async boot() {
@@ -131,6 +134,8 @@ class Game {
       this.player.cutPhys = h.defCut;
       this.player.cutMag = h.mdefCut;
       this.player.evade = h.evade;
+      this.player.guardMax = Math.round(100 * h.guardMul);
+      if (this.player.guard > this.player.guardMax) this.player.guard = this.player.guardMax;
       UI.hp(this.player.hp, this.player.maxHp);
     }
     if (this.miko) this.miko.applyStats(m);
@@ -151,6 +156,7 @@ class Game {
       if (e.code === 'Space') this.onAction();
       if (e.code === 'KeyQ') this.invokeSolar();
       if (e.code === 'KeyE') this.invokeHeal();
+      if (e.code === 'KeyR') this.useSkill();
     });
     addEventListener('keyup', e => { this.keys[e.code] = false; });
 
@@ -230,6 +236,12 @@ class Game {
       healBtn.addEventListener('touchstart', go2, { passive: false });
       healBtn.addEventListener('click', go2);
     }
+    const skb = document.getElementById('btn-skill');
+    if (skb) {
+      const go3 = e => { if (e) e.preventDefault(); this.audio.unlock(); this.voice.unlock(); this.useSkill(); };
+      skb.addEventListener('touchstart', go3, { passive: false });
+      skb.addEventListener('click', go3);
+    }
     const chg = document.getElementById('btn-charge');
     if (chg) {
       chg.addEventListener('touchstart', e => { this.input.charge = true; this.onAction(); e.preventDefault(); }, { passive: false });
@@ -268,6 +280,74 @@ class Game {
       this.line('solar');
       UI.toast('向日葵の妖精が現れ、天から陽が降りそそぐ', 3400);
       UI.sun(this.sun.value, this.sunLabel(), this.sunIcon());
+    }
+  }
+
+  /* ── 技 ───────────────────────────────── */
+  useSkill() {
+    if (this.phase === Phase.TITLE || this.phase === Phase.RESULT) return;
+    const h = this.party.hero;
+    const list = h.activeSkills();
+    if (!list.length) { UI.toast('使える技がありません（陣中帳の「技」で覚えます）'); return; }
+    const id = list[this._skillSel % list.length || 0];
+    const sk = SKILLS[id];
+    const now = performance.now() / 1000;
+    if ((this.skillCd[id] || 0) > now) {
+      UI.toast(sk.name + '　あと' + Math.ceil(this.skillCd[id] - now) + '秒'); this.audio.sfx('empty'); return;
+    }
+    if (this.heroMp < sk.cost) { UI.toast('霊力が足りない（' + Math.floor(this.heroMp) + '／' + sk.cost + '）'); this.audio.sfx('empty'); return; }
+    this.heroMp -= sk.cost;
+    this.skillCd[id] = now + sk.cd;
+    this.castSkill(sk);
+    UI.shout(sk.name);
+    this.audio.sfx('beam');
+  }
+
+  /** 技の中身 */
+  castSkill(sk) {
+    const P = this.player, e = sk.effect || {};
+    const from = P.muzzleWorld();
+    const h = this.party.hero;
+    const dmg = 4 * h.matkMul * (this.solar.active ? SOLAR_DMG_MUL : 1);
+    if (e.shotgun) {
+      for (let i = 0; i < e.shotgun; i++) {
+        const a = (i - (e.shotgun - 1) / 2) * 0.16;
+        const d = P.aim.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), a);
+        this.bullets.fire(from, d, { speed: 32, life: 1.0, dmg: dmg * 0.6, r: 0.24 });
+      }
+    } else if (e.lance) {
+      this.bullets.fire(from, P.aim, { speed: 60, life: 1.6, pierce: true, dmg: dmg * 3.2, r: 0.8 });
+      this.particles.emit(from, 26, { color: [1, 0.95, 0.7], size: 4.4, up: 0.6 });
+    } else if (e.slash || e.nova) {
+      const r = e.slash || e.nova;
+      const n = this.enemies.burnNear(P.pos.x, P.pos.z, r);
+      this.stats.kills += n;
+      this.particles.emit(P.pos, 24, { color: [1, 0.9, 0.5], size: 3.6, up: 2.2, yOff: 0.8 });
+    } else if (e.orb) {
+      this.bullets.fire(from, P.aim, { speed: 20, life: 2.4, dmg: dmg * 1.4, r: 0.5 });
+    } else if (e.rush || e.blink) {
+      P.pos.addScaledVector(P.aim, e.blink ? 8 : 5.5);
+      this.world.resolve(P.pos, P.radius);
+      const n = this.enemies.burnNear(P.pos.x, P.pos.z, 3.4);
+      this.stats.kills += n;
+      P.invuln = Math.max(P.invuln, 0.5);
+      this.particles.emit(P.pos, 20, { color: [1, 0.85, 0.4], size: 3.4, up: 1.6 });
+    } else if (e.shield) {
+      P.wardT = e.shield; P.wardCut = 0.5;
+      this.particles.emit(P.pos, 18, { color: [1, 0.95, 0.75], size: 3, up: 1.4 });
+    } else if (e.rally) {
+      P.wardT = 8; P.wardCut = 0.4;
+      this.miko.mp = this.miko.maxMp;
+      this.miko.stagger = 0;
+      UI.toast('日和の霊力が満ちた');
+    } else if (e.decoy) {
+      this.enemies.pushAway(P.pos.x, P.pos.z, 7, 2.2);
+      P.invuln = Math.max(P.invuln, 1.2);
+    } else if (e.pillar) {
+      const t = P.pos.clone().addScaledVector(P.aim, 6);
+      const n = this.enemies.burnNear(t.x, t.z, 5);
+      this.stats.kills += n;
+      this.particles.emit(t, 40, { color: [1, 0.98, 0.85], size: 5, up: -4, yOff: 9, life: 1.4 });
     }
   }
 
@@ -321,6 +401,9 @@ class Game {
     on('btn-config', () => { this.syncConfigUI(); UI.show('config'); });
     on('btn-menu-title', () => { this.menu.show('hero'); });
     on('menu-close', () => { this.menu.hide(); Party.save(this.party); });
+    document.querySelectorAll('.menu-page').forEach(b => {
+      b.addEventListener('click', () => this.menu.setPage(b.dataset.page));
+    });
     document.querySelectorAll('.menu-tab').forEach(b => {
       b.addEventListener('click', () => { this.menu.who = b.dataset.who; this.menu.show(); });
     });
@@ -421,7 +504,7 @@ class Game {
         const d = new Date(r.at);
         return `<div class="rec-row"><span class="rk">${r.rank}</span>
           <span style="flex:1">${d.getMonth() + 1}/${d.getDate()} ${('0' + d.getHours()).slice(-2)}:${('0' + d.getMinutes()).slice(-2)}</span>
-          <span>浄化 ${r.rate}％</span><span>${r.time}秒</span></div>`;
+          <span>${r.floor ? ('第' + r.floor + '層') : ''}</span><span>浄化 ${r.rate}％</span><span>${r.time}秒</span></div>`;
       }).join('');
     } catch (e) {
       body.innerHTML = '<div class="rec-empty">記録を読み込めませんでした</div>';
@@ -489,7 +572,7 @@ class Game {
     this.world.spawnPoints.forEach((p, i) => {
       this.enemies.spawn(kinds[i % kinds.length], p);
     });
-    UI.objective('最深部へ。天窓の光で陽力を補え');
+    UI.objective('第' + this.floor + '層　――　最深部へ。天窓の光で陽力を補え');
     UI.toast('日光は届かない。天窓の下でのみ陽力が戻る');
   }
 
@@ -527,10 +610,44 @@ class Game {
     UI.objective('灰の核に近づき、拍に合わせて封じよ');
   }
 
-  finishPile() {
+  async finishPile() {
+    if (this._finishing) return;       // ループから何度も呼ばれるのを防ぐ
+    this._finishing = true;
     const bh3 = document.getElementById('hud-boss'); if (bh3) bh3.hidden = true;
     const res = this.pile.result(this.coffin.sealRatio, this.sun.value);
-    this.showResult(res);
+
+    // 褒美：この階の主を祓った証
+    const exp = 900 + this.floor * 450;
+    this.grantExp(exp);
+    const gid = rollGear(this.floor + 2, this.party.hero.get('LUK'));
+    let gearMsg = '';
+    if (gid && this.party.hero.pick(gid)) gearMsg = '　' + GEAR[gid].name + ' を得た';
+    Party.save(this.party);
+
+    // 記録は残すが、ここで終わりにはしない
+    try {
+      await Save.add({ rank: res.full ? 'S' : (res.rate >= 80 ? 'A' : 'B'),
+        rate: res.rate, time: Math.round((performance.now() - this.stats.start) / 1000),
+        maxSun: Math.round(this.stats.maxSun), hits: this.stats.hits, floor: this.floor });
+    } catch (e) {}
+
+    await UI.cutin(res.full ? '完 全 浄 化' : '浄 化 完 了', 1700);
+    if (res.full) {
+      this.audio.sfx('purify');
+      this.particles.emit(this.pile.group.position, 90, { color: [1, 1, 0.9], size: 5, up: 5, life: 2.2 });
+    }
+    this.voice.say(null, 'hero', { segments: [{ t: 'ひとつ', p: 1.05, r: 1.05, gap: 140 }, { t: '祓ったな', p: 1.0, r: 1.0 }] });
+    UI.toast('浄化率 ' + res.rate + '％　経験 ' + exp + gearMsg, 4200);
+
+    // 次の階へ
+    this.floor++;
+    UI.toast('地の底がさらに深くなった　――　第 ' + this.floor + ' 層', 4000);
+    this.coffin.hide();
+    this.pile.active = false; this.pile.done = false;
+    this.pile.group.visible = false;
+    this.enterSurface();
+    UI.objective('陽力を溜め、第' + this.floor + '層へ');
+    this._finishing = false;
   }
 
   async showResult(res) {
@@ -566,6 +683,7 @@ class Game {
 
   async gameOver() {
     this.phase = Phase.RESULT;
+    this.floor = 1;                      // 力尽きたら第1層から
     await UI.cutin('陽 は 落 ち た', 1500);
     const ttl = document.getElementById('res-ttl');
     if (ttl) ttl.textContent = '力尽きた';
@@ -658,6 +776,18 @@ class Game {
           break;
         }
       }
+    }
+
+    // 主人公の霊力
+    const hh = this.party.hero;
+    this.heroMp = Math.min(hh.maxMp, this.heroMp + hh.mpRegen * dt);
+    const skb = document.getElementById('btn-skill');
+    if (skb) {
+      const list = hh.activeSkills();
+      const id = list[0];
+      const cd = id ? (this.skillCd[id] || 0) - now : 0;
+      skb.disabled = !list.length || cd > 0 || this.heroMp < (id ? SKILLS[id].cost : 0);
+      skb.textContent = list.length ? (SKILLS[id].name) : '技';
     }
 
     // 陽の化身
@@ -779,7 +909,13 @@ class Game {
           const exp = 120 + this.floor * 60;
           this.grantExp(exp);
           this.line('chest');
-          UI.toast('宝を開けた（経験 ' + exp + '）');
+          const gid = rollGear(this.floor, this.party.hero.get('LUK'));
+          if (gid && this.party.hero.pick(gid)) {
+            UI.toast('宝を開けた　' + GEAR[gid].name + ' を手に入れた（経験 ' + exp + '）', 3600);
+          } else {
+            UI.toast('宝を開けた（経験 ' + exp + '）');
+          }
+          Party.save(this.party);
         }
       });
       // 光の罠
@@ -959,7 +1095,7 @@ class Game {
       : { speed: 34, life: 1.2, dmg: 1 * mul, r: 0.2 });
     P.muzzleFlash(charged);
     this.audio.sfx(charged ? 'beam' : 'shot');
-    this.shotCd = charged ? 0.5 : 0.14;
+    this.shotCd = (charged ? 0.5 : 0.14) * this.party.hero.fireRateMul;
     this.particles.emit(from, charged ? 10 : 3, { color: [1, 0.92, 0.6], size: charged ? 3 : 1.8, up: 0.3, yOff: 0 });
   }
 }

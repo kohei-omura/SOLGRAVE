@@ -5,6 +5,7 @@
    ══════════════════════════════════════════════════════════════ */
 import * as THREE from 'three';
 import { STAT_KEYS, STAT_INFO, expToNext, MAX_LV } from './stats.js';
+import { JOBS, SKILLS, GEAR, SLOTS, skillsOf, canLearn } from './jobs.js';
 
 /* いまの値が実際に何をもたらしているかを言葉にする */
 function effectOf(k, c, who) {
@@ -43,6 +44,7 @@ export class Menu {
     this.party = party;          // { hero: Character, miko: Character }
     this.makers = makers;        // { hero: ()=>Group, miko: ()=>Group }
     this.who = 'hero';
+    this.page = 'stat';
     this.open = false;
     this._raf = 0;
     this._built = false;
@@ -133,6 +135,8 @@ export class Menu {
     step();
   }
 
+  setPage(p) { this.page = p; this.render(); }
+
   /** 数値の表示を組み立てる */
   render() {
     const c = this.party[this.who];
@@ -164,6 +168,17 @@ export class Menu {
       ptEl.parentNode.classList.toggle('has', c.points > 0);
     }
 
+    // 頁の切り替え
+    document.querySelectorAll('.menu-page').forEach(b => b.classList.toggle('on', b.dataset.page === this.page));
+    const panes = { stat: 'menu-stats', skill: 'menu-skill', gear: 'menu-gear', job: 'menu-job' };
+    Object.keys(panes).forEach(k => {
+      const el = document.getElementById(panes[k]);
+      if (el) el.hidden = (k !== this.page);
+    });
+    if (this.page === 'skill') { this._renderSkill(c); return; }
+    if (this.page === 'gear')  { this._renderGear(c); return; }
+    if (this.page === 'job')   { this._renderJob(c); return; }
+
     const body = document.getElementById('menu-stats');
     if (!body) return;
     body.innerHTML = STAT_KEYS.map(k => {
@@ -188,4 +203,99 @@ export class Menu {
       });
     });
   }
+
+  /* ── 技 ── */
+  _renderSkill(c) {
+    const el = document.getElementById('menu-skill');
+    if (!el) return;
+    if (!c.job) { el.innerHTML = '<div class="rec-empty">まず「職」を定めてください</div>'; return; }
+    const list = skillsOf(c.job);
+    el.innerHTML =
+      '<div class="menu-pt' + (c.skillPts > 0 ? ' has' : '') + '"><span>覚えられる技の点</span><b>' + c.skillPts + '</b></div>' +
+      list.map(sk => {
+        const has = !!c.learned[sk.id];
+        const ck = canLearn(sk.id, c.lv, c.learned);
+        const cls = has ? 'learned' : (ck.ok ? '' : 'locked');
+        const kind = sk.kind === 'active' ? '技' : '常';
+        const cost = sk.kind === 'active' ? ('　霊力' + sk.cost + '／' + sk.cd + '秒') : '';
+        return '<div class="sk-row ' + cls + '">' +
+          '<span class="sk-nm">' + esc(sk.name) + '<i>' + kind + '</i></span>' +
+          (has ? '<span class="sk-have">習得</span>'
+               : '<button class="sk-btn" data-id="' + sk.id + '"' + (ck.ok && c.skillPts > 0 ? '' : ' disabled') + '>覚える</button>') +
+          '<div class="sk-ds">' + esc(sk.desc) + cost +
+            (has ? '' : (ck.ok ? '' : '　<span style="color:var(--shu)">' + esc(ck.why) + '</span>')) + '</div>' +
+          '</div>';
+      }).join('');
+    el.querySelectorAll('.sk-btn').forEach(b => {
+      b.addEventListener('click', () => {
+        const r = c.learn(b.dataset.id);
+        if (r.ok) { this.render(); if (this.onChange) this.onChange(); }
+      });
+    });
+  }
+
+  /* ── 装備 ── */
+  _renderGear(c) {
+    const el = document.getElementById('menu-gear');
+    if (!el) return;
+    const modTxt = (g) => Object.keys(g.mods || {}).filter(k => g.mods[k])
+      .map(k => k + '+' + g.mods[k]).join(' ');
+    el.innerHTML = SLOTS.map(sl => {
+      const cur = c.gear[sl.id];
+      const owned = c.bag.filter(id => GEAR[id] && GEAR[id].slot === sl.id);
+      return '<div class="gr-slot"><div class="gr-hd">' + sl.name + '</div>' +
+        '<div class="gr-cur">' + (cur && GEAR[cur] ? esc(GEAR[cur].name) + '<span class="gr-mod">' + modTxt(GEAR[cur]) + '</span>' : '—') + '</div>' +
+        '<div class="gr-list">' +
+          (owned.length ? owned.map(id =>
+            '<button class="gr-item' + (id === cur ? ' on' : '') + '" data-id="' + id + '">' +
+            esc(GEAR[id].name) + '<span class="gr-mod">' + modTxt(GEAR[id]) + '</span></button>').join('')
+            : '<span style="font-size:11px;color:var(--mut)">持っていません</span>') +
+        '</div></div>';
+    }).join('');
+    el.querySelectorAll('.gr-item').forEach(b => {
+      b.addEventListener('click', () => {
+        if (c.equip(b.dataset.id)) { this.render(); if (this.onChange) this.onChange(); }
+      });
+    });
+  }
+
+  /* ── 職 ── */
+  _renderJob(c) {
+    const el = document.getElementById('menu-job');
+    if (!el) return;
+    const keys = Object.keys(JOBS);
+    el.innerHTML =
+      '<div class="note" style="margin-bottom:8px">職を選ぶと伸び方が変わり、その職の技を覚えられます。' +
+      (c.job ? '変えると覚えた技は失われます。' : '') + '</div>' +
+      keys.map(k => {
+        const j = JOBS[k];
+        const bias = Object.keys(j.bias).filter(x => j.bias[x] >= 1.1)
+          .map(x => x + '×' + j.bias[x].toFixed(2)).join('　');
+        return '<div class="jb-row' + (c.job === k ? ' on' : '') + '" data-job="' + k + '">' +
+          '<div class="jb-nm"><b>' + esc(j.short) + '</b>' + esc(j.name) + '</div>' +
+          '<div class="jb-ds">' + esc(j.desc) + '</div>' +
+          '<div class="jb-bias">' + bias + '</div></div>';
+      }).join('');
+    el.querySelectorAll('.jb-row').forEach(b => {
+      b.addEventListener('click', () => {
+        const k = b.dataset.job;
+        if (c.job === k) return;
+        if (c.job && Object.keys(c.learned).length) {
+          if (!confirm('職を変えると、覚えた技は失われます。よろしいですか。')) return;
+        }
+        // 覚えた技を返す
+        const back = Object.keys(c.learned).length;
+        c.learned = {};
+        c.skillPts += back;
+        c.job = k;
+        this.render();
+        if (this.onChange) this.onChange();
+      });
+    });
+  }
+}
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g,
+    m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
 }
