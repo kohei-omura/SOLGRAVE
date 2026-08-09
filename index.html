@@ -112,6 +112,7 @@
   <button class="pad-btn pad-sun" id="btn-solar">☀ 太陽</button>
   <button class="pad-btn pad-heal" id="btn-heal">祓い</button>
   <button class="pad-btn pad-menu" id="btn-menu">陣中帳</button>
+  <button class="pad-btn pad-skill" id="btn-skill">技</button>
 </div>
 
 <!-- カットイン -->
@@ -175,6 +176,11 @@
     <div class="menu-head">
       <button class="menu-tab on" data-who="hero">狩人</button>
       <button class="menu-tab" data-who="miko">巫女</button>
+      <span class="menu-sep"></span>
+      <button class="menu-page on" data-page="stat">能力</button>
+      <button class="menu-page" data-page="skill">技</button>
+      <button class="menu-page" data-page="gear">装備</button>
+      <button class="menu-page" data-page="job">職</button>
       <span style="flex:1"></span>
       <button id="menu-close" class="btn btn-line btn-sm">閉じる</button>
     </div>
@@ -194,6 +200,9 @@
         <div class="lv-bar"><span id="menu-expbar"></span></div>
         <div class="menu-pt"><span>割り振れる点</span><b id="menu-points">0</b></div>
         <div id="menu-stats" class="menu-stats"></div>
+        <div id="menu-skill" class="menu-pane" hidden></div>
+        <div id="menu-gear" class="menu-pane" hidden></div>
+        <div id="menu-job" class="menu-pane" hidden></div>
       </div>
     </div>
   </div>
