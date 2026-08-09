@@ -14,6 +14,7 @@ import { Miko } from './miko.js';
 import { Solar, SOLAR_DMG_MUL } from './solar.js';
 import { Party, expOf, STAT_KEYS } from './stats.js';
 import { SKILLS, GEAR, rollGear } from './jobs.js';
+import { Town } from './town.js';
 import { Menu } from './menu.js';
 import { UI } from './ui.js';
 import { Save, Config } from './save.js';
@@ -38,6 +39,8 @@ class Game {
     this.hasKey = false;
     this.heroMp = 0;
     this.skillCd = {};
+    this.coin = 0;
+    this.talking = null;
   }
 
   async boot() {
@@ -57,6 +60,7 @@ class Game {
     this.player = new Player(this.gfx.scene);
     this.miko = new Miko(this.gfx.scene, this.particles);
     this.solar = new Solar(this.gfx.scene, this.particles);
+    this.town = new Town(this.gfx.scene, this.particles);
     this.boss = new Boss(this.gfx.scene, this.particles);
     this.coffin = new Coffin(this.gfx.scene, this.particles);
     this.pile = new Purifier(this.gfx.scene, this.particles);
@@ -157,6 +161,7 @@ class Game {
       if (e.code === 'KeyQ') this.invokeSolar();
       if (e.code === 'KeyE') this.invokeHeal();
       if (e.code === 'KeyR') this.useSkill();
+      if (e.code === 'KeyF') { if (this.talking) this.closeTalk(); else this.doTalk(); }
     });
     addEventListener('keyup', e => { this.keys[e.code] = false; });
 
@@ -236,6 +241,14 @@ class Game {
       healBtn.addEventListener('touchstart', go2, { passive: false });
       healBtn.addEventListener('click', go2);
     }
+    const tkb = document.getElementById('btn-talk');
+    if (tkb) {
+      const go4 = e => { if (e) e.preventDefault(); this.audio.unlock(); this.voice.unlock(); this.doTalk(); };
+      tkb.addEventListener('touchstart', go4, { passive: false });
+      tkb.addEventListener('click', go4);
+    }
+    const sc = document.getElementById('shop-close');
+    if (sc) sc.addEventListener('click', () => UI.hide('shop'));
     const skb = document.getElementById('btn-skill');
     if (skb) {
       const go3 = e => { if (e) e.preventDefault(); this.audio.unlock(); this.voice.unlock(); this.useSkill(); };
@@ -281,6 +294,95 @@ class Game {
       UI.toast('向日葵の妖精が現れ、天から陽が降りそそぐ', 3400);
       UI.sun(this.sun.value, this.sunLabel(), this.sunIcon());
     }
+  }
+
+  /* ── 街 ───────────────────────────────── */
+  doTalk() {
+    const n = this._nearNpc;
+    if (!n) return;
+    const r = this.town.talk(n);
+    if (!r) return;
+    this.talking = n;
+    const box = document.getElementById('talk');
+    document.getElementById('talk-name').textContent = r.name;
+    document.getElementById('talk-role').textContent = r.role;
+    document.getElementById('talk-txt').textContent = r.text;
+    const btns = document.getElementById('talk-btns');
+    btns.innerHTML = '';
+    const add = (label, fn, fill) => {
+      const b = document.createElement('button');
+      b.className = 'btn ' + (fill ? 'btn-fill' : 'btn-line');
+      b.textContent = label;
+      b.addEventListener('click', fn);
+      btns.appendChild(b);
+    };
+    if (r.kind === 'shop') add('品を見る', () => { this.closeTalk(); this.openShop(); }, true);
+    if (r.kind === 'inn') add('休む（20陽貨）', () => this.restAtInn(), true);
+    if (r.kind === 'smith') add('銃を磨く（30陽貨）', () => this.polishGun(), true);
+    add('もう少し話す', () => this.doTalk());
+    add('離れる', () => this.closeTalk());
+    box.hidden = false;
+    const male = ['kid', 'friend', 'smith', 'old'].indexOf(n.def.id) >= 0;
+    this.voice.say(r.text.slice(0, 22), male ? 'hero' : 'miko');
+  }
+  closeTalk() {
+    this.talking = null;
+    const box = document.getElementById('talk');
+    if (box) box.hidden = true;
+    this.voice.stop();
+  }
+  restAtInn() {
+    if (this.coin < 20) { UI.toast('陽貨が足りません（' + this.coin + '／20）'); return; }
+    this.coin -= 20;
+    this.player.hp = this.player.maxHp;
+    this.player.guard = this.player.guardMax;
+    this.heroMp = this.party.hero.maxMp;
+    this.miko.mp = this.miko.maxMp;
+    this.miko.healCd = 0; this.miko.stagger = 0;
+    UI.hp(this.player.hp, this.player.maxHp);
+    this.audio.sfx('refill');
+    UI.toast('よく休んだ。心も霊力も満ちた');
+    this.closeTalk();
+  }
+  polishGun() {
+    if (this.coin < 30) { UI.toast('陽貨が足りません（' + this.coin + '／30）'); return; }
+    this.coin -= 30;
+    this.party.hero.pick('w1');
+    Party.save(this.party);
+    UI.toast('鉄爺が銃を磨いてくれた（磨かれた銃身 を得た）', 3200);
+    this.audio.sfx('good');
+    this.closeTalk();
+  }
+  openShop() {
+    const el = document.getElementById('shop-list');
+    if (!el) return;
+    const stock = ['w1', 'a1', 't1', 'w2', 'a2', 't2'];
+    const price = (g) => (g.rare + 1) * 60;
+    document.getElementById('shop-coin').textContent = this.coin;
+    el.innerHTML = stock.map(id => {
+      const g = GEAR[id];
+      const have = this.party.hero.bag.indexOf(id) >= 0;
+      const mods = Object.keys(g.mods).filter(k => g.mods[k]).map(k => k + '+' + g.mods[k]).join(' ');
+      return '<div class="sh-row"><span class="sh-nm">' + g.name + '<span class="sh-md">' + mods + '</span></span>' +
+        '<span class="sh-pr">' + price(g) + '</span>' +
+        (have ? '<span class="sh-md">所持</span>'
+              : '<button class="sh-bt" data-id="' + id + '"' + (this.coin >= price(g) ? '' : ' disabled') + '>買う</button>') +
+        '</div>';
+    }).join('');
+    el.querySelectorAll('.sh-bt').forEach(b => {
+      b.addEventListener('click', () => {
+        const id = b.dataset.id, g = GEAR[id];
+        const pr = (g.rare + 1) * 60;
+        if (this.coin < pr) return;
+        this.coin -= pr;
+        this.party.hero.pick(id);
+        Party.save(this.party);
+        this.audio.sfx('good');
+        UI.toast(g.name + ' を買った');
+        this.openShop();
+      });
+    });
+    UI.show('shop');
   }
 
   /* ── 技 ───────────────────────────────── */
@@ -546,6 +648,7 @@ class Game {
     this.ambient.intensity = 1.5;
     this.hemi.intensity = 1.1;
     this.gfx.scene.fog.density = 0.008;
+    this.town.build(this.world.colliders);
     this.pile.place(new THREE.Vector3(0, 0, 0));
     UI.hp(this.player.hp, this.player.maxHp);
     UI.objective('陽力を溜め、南の縦穴から地下へ');
@@ -623,6 +726,7 @@ class Game {
     // 褒美：この階の主を祓った証
     const exp = 900 + this.floor * 450;
     this.grantExp(exp);
+    this.coin += 120 + this.floor * 60;
     const gid = rollGear(this.floor + 2, this.party.hero.get('LUK'));
     let gearMsg = '';
     if (gid && this.party.hero.pick(gid)) gearMsg = '　' + GEAR[gid].name + ' を得た';
@@ -720,6 +824,7 @@ class Game {
     }
 
     this.world.update(now);
+    if (this.town && this.town.built && this.phase === Phase.SURFACE) this.town.update(now, this.player.pos);
     this.particles.update(dt);
     this.bullets.update(dt, this.world);
     this.coffin.update(dt, now);
@@ -785,6 +890,14 @@ class Game {
     // 主人公の霊力
     const hh = this.party.hero;
     this.heroMp = Math.min(hh.maxMp, this.heroMp + hh.mpRegen * dt);
+    const tkb = document.getElementById('btn-talk');
+    if (tkb) {
+      const go4 = e => { if (e) e.preventDefault(); this.audio.unlock(); this.voice.unlock(); this.doTalk(); };
+      tkb.addEventListener('touchstart', go4, { passive: false });
+      tkb.addEventListener('click', go4);
+    }
+    const sc = document.getElementById('shop-close');
+    if (sc) sc.addEventListener('click', () => UI.hide('shop'));
     const skb = document.getElementById('btn-skill');
     if (skb) {
       const list = hh.activeSkills();
@@ -822,6 +935,7 @@ class Game {
       this.stats.kills++;
       this.audio.sfx('ash');
       // 階が深いほど、レアなら大きく
+      this.coin += Math.round((2 + this.floor) * (e.rare ? 12 : 1));
       const base = expOf(e.kind, false) * (1 + (this.floor - 1) * 0.45);
       this.grantExp(Math.round(base * (e.rare ? 9 : 1)));
       if (e.rare) {
@@ -901,6 +1015,14 @@ class Game {
         this.stats.hits++; UI.hp(P.hp, P.maxHp); this.audio.sfx('hurt');
         if (P.hp <= 0) { this.gameOver(); return; }
       }
+    }
+
+    const tb = document.getElementById('btn-talk');
+    if (tb) {
+      const near = (this.phase === Phase.SURFACE && this.town.built)
+        ? this.town.near(P.pos.x, P.pos.z, 3.0) : null;
+      tb.hidden = !near || !!this.talking;
+      this._nearNpc = near;
     }
 
     // 進行の切り替え
