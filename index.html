@@ -113,6 +113,7 @@
   <button class="pad-btn pad-heal" id="btn-heal">祓い</button>
   <button class="pad-btn pad-menu" id="btn-menu">陣中帳</button>
   <button class="pad-btn pad-skill" id="btn-skill">技</button>
+  <button class="pad-btn pad-talk" id="btn-talk" hidden>話す</button>
 </div>
 
 <!-- カットイン -->
@@ -205,6 +206,25 @@
         <div id="menu-job" class="menu-pane" hidden></div>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- 会話 -->
+<div id="talk" class="talk" hidden>
+  <div class="talk-in">
+    <div class="talk-who"><b id="talk-name">—</b><span id="talk-role"></span></div>
+    <div class="talk-txt" id="talk-txt"></div>
+    <div class="talk-btns" id="talk-btns"></div>
+  </div>
+</div>
+
+<!-- 道具屋 -->
+<div id="shop" class="overlay" hidden>
+  <div class="panel">
+    <h2>道具屋</h2>
+    <div class="shop-coin">陽貨 <b id="shop-coin">0</b></div>
+    <div id="shop-list" class="shop-list"></div>
+    <div class="btns"><button id="shop-close" class="btn btn-fill">閉じる</button></div>
   </div>
 </div>
 
