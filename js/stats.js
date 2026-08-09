@@ -31,7 +31,8 @@ const GROWTH = { HP: 0.9, MP: 0.45, ATK: 0.32, DEF: 0.28, MATK: 0.26, MDEF: 0.26
 /** その水準に上がるのに要る経験値 */
 export function expToNext(lv) {
   if (lv >= MAX_LV) return Infinity;
-  return Math.floor(18 * Math.pow(lv, 1.85) + 22 * lv + 30);
+  // 階層で稼ぎが伸びる前提で、伸び方を緩める（1.85→1.55）
+  return Math.floor(20 * Math.pow(lv, 1.55) + 24 * lv + 30);
 }
 
 export class Character {

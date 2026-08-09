@@ -248,15 +248,40 @@ export class Enemies {
     this.meshes[EnemyKind.RUNNER] = mk(runner, skin(0x8a5a3a));
     this.meshes[EnemyKind.SHIELD] = mk(shield, metalMaterial(61, 0x5a6570));
     this.meshes[EnemyKind.BAT]    = mk(bat,    skin(0x4a3a52));
+
+    // レア個体の輪（頭上に浮かぶ）
+    this.rareRings = new THREE.InstancedMesh(
+      new THREE.TorusGeometry(0.55, 0.06, 8, 20),
+      new THREE.MeshBasicMaterial({ color: 0x9affd0, transparent: true, opacity: 0.85,
+        blending: THREE.AdditiveBlending, depthWrite: false }),
+      16);
+    this.rareRings.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.rareRings.frustumCulled = false;
+    this.scene.add(this.rareRings);
   }
-  spawn(kind, pos) {
+  /** 階の深さに応じた強化率を決める */
+  setFloor(floor) {
+    this.floor = Math.max(1, floor || 1);
+    // 深いほど硬く、速く、痛い
+    this.hpMul = 1 + (this.floor - 1) * 0.55;
+    this.spMul = Math.min(1.9, 1 + (this.floor - 1) * 0.06);
+    this.dmgMul = 1 + (this.floor - 1) * 0.28;
+    this.rareRate = Math.min(0.22, 0.03 + (this.floor - 1) * 0.018);
+  }
+
+  spawn(kind, pos, forceRare) {
     const sp = SPEC[kind];
+    const rare = forceRare || (Math.random() < (this.rareRate || 0));
+    const hm = (this.hpMul || 1) * (rare ? 4.5 : 1);
+    const maxHp = Math.max(1, Math.round(sp.hp * hm));
     this.list.push({
-      kind, hp: sp.hp, maxHp: sp.hp,
-      p: pos.clone(), r: sp.r, speed: sp.speed,
+      kind, hp: maxHp, maxHp,
+      p: pos.clone(), r: sp.r * (rare ? 1.35 : 1),
+      speed: sp.speed * (this.spMul || 1) * (rare ? 0.88 : 1),
       burn: 0, stagger: 0, dead: false, ash: 0,
       y: kind === EnemyKind.BAT ? 1.8 : 0,
-      phase: Math.random() * 6.28
+      phase: Math.random() * 6.28,
+      rare: rare
     });
   }
   clear() { this.list.length = 0; this._sync(); }
@@ -389,6 +414,8 @@ export class Enemies {
   }
 
   /** プレイヤーへの接触判定 */
+  get contactPower() { return Math.round(100 * (this.dmgMul || 1)); }
+
   touching(px, pz) {
     for (const e of this.list) {
       if (e.dead) continue;
@@ -407,7 +434,7 @@ export class Enemies {
       if (!im) continue;
       const idx = counts[e.kind]++;
       if (idx >= im.count) continue;
-      const scale = e.ash > 0 ? Math.max(0.01, e.ash) : 1;
+      const scale = (e.ash > 0 ? Math.max(0.01, e.ash) : 1) * (e.rare ? 1.35 : 1);
       this._m.makeTranslation(e.p.x, e.y, e.p.z);
       if (e.facing) {
         this._q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.atan2(e.facing.x, e.facing.z));
@@ -421,5 +448,19 @@ export class Enemies {
       for (let i = counts[k]; i < im.count; i++) im.setMatrixAt(i, this._hide);
       im.instanceMatrix.needsUpdate = true;
     });
+    // レアの輪
+    if (this.rareRings) {
+      let n = 0;
+      const t = performance.now() / 1000;
+      for (const e of this.list) {
+        if (e.dead || !e.rare || n >= this.rareRings.count) continue;
+        this._m.makeTranslation(e.p.x, e.y + 2.4 + Math.sin(t * 2 + e.phase) * 0.12, e.p.z);
+        this._m.multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2));
+        this._m.multiply(new THREE.Matrix4().makeRotationZ(t * 1.4));
+        this.rareRings.setMatrixAt(n++, this._m);
+      }
+      for (let i = n; i < this.rareRings.count; i++) this.rareRings.setMatrixAt(i, this._hide);
+      this.rareRings.instanceMatrix.needsUpdate = true;
+    }
   }
 }

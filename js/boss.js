@@ -150,6 +150,31 @@ export class Boss {
     this.cloakMat = capeMat;
   }
 
+  /** 階ごとの主。深いほど強く、姿の色も変わる */
+  setFloor(floor) {
+    this.floor = Math.max(1, floor || 1);
+    const LORD = [
+      { name: '古き吸血鬼',   cape: 0x0d0a12, line: 0x6b0f18, eye: 0xff1a1a },
+      { name: '血啜りの伯',   cape: 0x120a16, line: 0x7a1420, eye: 0xff3a2a },
+      { name: '霧を統べる者', cape: 0x0a1018, line: 0x14506b, eye: 0x4ad0ff },
+      { name: '月喰みの王',   cape: 0x14101c, line: 0x5a3a8a, eye: 0xc07aff },
+      { name: '夜の始祖',     cape: 0x1a0a0a, line: 0x8a1010, eye: 0xff6a1a }
+    ];
+    const L = LORD[(this.floor - 1) % LORD.length];
+    this.lordName = L.name + (this.floor > LORD.length ? '・第' + this.floor + '相' : '');
+    this.maxHp = Math.round(340 * (1 + (this.floor - 1) * 0.7));
+    this.hp = this.maxHp;
+    this.power = Math.round(120 * (1 + (this.floor - 1) * 0.3));
+    try {
+      if (this.cloakMat) this.cloakMat.color.setHex(L.cape);
+      this.body.traverse(o => {
+        if (o.material && o.material.emissive && o.material.emissiveIntensity > 3) o.material.emissive.setHex(L.eye);
+      });
+      if (this.aura) this.aura.color.setHex(L.eye);
+    } catch (e) {}
+    return this.lordName;
+  }
+
   spawn(pos) {
     this.alive = true; this.hp = this.maxHp; this.phase = 1;
     this.p.copy(pos); this.mist = 0; this.stun = 0; this.atkCd = 2;

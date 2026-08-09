@@ -567,6 +567,7 @@ class Game {
     this.gfx.scene.background.setHex(0x1d2531);
     this.gfx.scene.fog.color.setHex(0x1d2531);
     this.enemies.clear();
+    this.enemies.setFloor(this.floor);
     // 湧き
     const kinds = [EnemyKind.WALKER, EnemyKind.RUNNER, EnemyKind.SHIELD, EnemyKind.BAT];
     this.world.spawnPoints.forEach((p, i) => {
@@ -578,9 +579,12 @@ class Game {
 
   async enterBoss() {
     this.phase = Phase.BOSS;
+    const lord = this.boss.setFloor(this.floor);
+    const bn = document.querySelector('#hud-boss .boss-name');
+    if (bn) bn.textContent = lord;
     this.audio.startBGM('boss');
     this.line('bossIn');
-    await UI.cutin('古 き 吸 血 鬼', 1600);
+    await UI.cutin(this.boss.lordName || '古 き 吸 血 鬼', 1600);
     const r = this.world.bossRoom;
     this.boss.spawn(new THREE.Vector3(r.x, 0, r.z - 4));
     const bh = document.getElementById('hud-boss'); if (bh) bh.hidden = false;
@@ -817,13 +821,31 @@ class Game {
     const killed = this.enemies.hitTest(this.bullets, (e) => {
       this.stats.kills++;
       this.audio.sfx('ash');
-      this.grantExp(expOf(e.kind, false));
+      // 階が深いほど、レアなら大きく
+      const base = expOf(e.kind, false) * (1 + (this.floor - 1) * 0.45);
+      this.grantExp(Math.round(base * (e.rare ? 9 : 1)));
+      if (e.rare) {
+        this.particles.emit(new THREE.Vector3(e.p.x, e.y + 1, e.p.z), 30,
+          { color: [0.6, 1, 0.82], size: 4, up: 3, life: 1.6 });
+        const gid = rollGear(this.floor + 3, this.party.hero.get('LUK'));
+        if (gid && this.party.hero.pick(gid)) {
+          UI.toast('稀なる者を祓った　' + GEAR[gid].name + ' を得た', 3800);
+          this.voice.say(null, 'hero', { segments: [{ t: 'すげぇ、', p: 1.15, r: 1.25, gap: 100 }, { t: 'いい物だ！', p: 1.1, r: 1.15 }] });
+        } else UI.toast('稀なる者を祓った');
+        Party.save(this.party);
+      } else if (Math.random() < 0.05 + this.floor * 0.012) {
+        const gid = rollGear(this.floor, this.party.hero.get('LUK'));
+        if (gid && this.party.hero.pick(gid)) {
+          UI.toast(GEAR[gid].name + ' を拾った', 2600);
+          Party.save(this.party);
+        }
+      }
     }, this.audio);
 
     // 被弾
     const hit = this.enemies.touching(P.pos.x, P.pos.z);
     if (hit) {
-      const res = P.hurt(100, false);
+      const res = P.hurt(this.enemies.contactPower, false);
       if (res === 'evade') UI.toast('かわした');
       else if (res) {
         this.stats.hits++;
@@ -875,7 +897,7 @@ class Game {
           }
         }
       }
-      if (act === 'claw' && P.hurt(120, true)) {
+      if (act === 'claw' && P.hurt(this.boss.power || 120, true)) {
         this.stats.hits++; UI.hp(P.hp, P.maxHp); this.audio.sfx('hurt');
         if (P.hp <= 0) { this.gameOver(); return; }
       }
