@@ -9,7 +9,7 @@ import { Player, SHOT_COST, CHARGE_COST } from './player.js';
 import { Enemies, Bullets, Particles, EnemyKind } from './enemy.js';
 import { Boss } from './boss.js';
 import { Coffin } from './coffin.js';
-import { Purifier } from './purifier.js';
+import { Purifier, Step } from './purifier.js';
 import { Miko } from './miko.js';
 import { Solar, SOLAR_DMG_MUL } from './solar.js';
 import { Party, expOf, STAT_KEYS } from './stats.js';
@@ -1148,47 +1148,89 @@ class Game {
         this.enterPile();
       }
     } else if (this.phase === Phase.PILE) {
-      // 棺は台座に据わったまま。押し出されたら鎖で戻す
-      if (this.input.fire && !this.coffin.chained) this.coffin.grab(P.pos.x, P.pos.z);
-      if (!this.input.fire) this.coffin.release();
-      if (this.coffin.chained) {
-        this.coffin.drag(P.pos.x, P.pos.z, dt, this.world);
-        this.coffin.drawChain(P.pos.x, P.pos.z);
-      }
-      const push = this.pile.update(dt, now, this.coffin.p);
-      this.coffin.p.x += push.x * dt * 6;
-      this.coffin.p.z += push.z * dt * 6;
-      this.coffin.group.position.copy(this.coffin.p);
+      const pl = this.pile;
 
-      // ── 神聖機器に陽光弾を当てると、黒ずんだ光が輝きを取り戻す ──
-      for (let i = this.bullets.list.length - 1; i >= 0; i--) {
-        const b = this.bullets.list[i];
-        if (this.pile.hitDevice(b.p.x, b.p.z)) {
-          this.bullets.list.splice(i, 1);
-          this.audio.sfx('refill');
-          this.particles.emit(this.pile.corePos, 14,
-            { color: [1, 0.95, 0.7], size: 3.2, up: 2.6, yOff: 1.0 });
-          if (this.pile.purity > 0.9 && !this._purityCall) {
-            this._purityCall = true;
-            this.voice.say(null, 'hero', { segments: [{ t: 'まだまだァ！', p: 1.1, r: 1.2 }] });
-            setTimeout(() => { this._purityCall = false; }, 6000);
+      // ① 棺を鎖で曳いて台座へ。乗せると固定される
+      if (pl.step === Step.WAIT) {
+        if (this.input.fire && !this.coffin.chained) this.coffin.grab(P.pos.x, P.pos.z);
+        if (!this.input.fire) this.coffin.release();
+        if (this.coffin.chained) {
+          this.coffin.drag(P.pos.x, P.pos.z, dt, this.world);
+          this.coffin.drawChain(P.pos.x, P.pos.z);
+        }
+        this.coffin.group.position.copy(this.coffin.p);
+        if (pl.onSocket(this.coffin.p)) {
+          this.coffin.release();
+          this.coffin.p.copy(pl.socket);
+          this.coffin.group.position.copy(this.coffin.p);
+          pl.lock();
+          this.audio.sfx('seal');
+          this.particles.emit(pl.socket, 24, { color: [1, 0.9, 0.6], size: 3.4, up: 2.2, yOff: 0.6 });
+          UI.toast('棺が鉤爪で固定された。四基の照射機を撃て', 3800);
+          this.voice.say(null, 'hero', { segments: [{ t: '据えたぞ。', p: 1.05, r: 1.1, gap: 140 }, { t: '照射機だ！', p: 1.12, r: 1.15 }] });
+        }
+        UI.objective('棺を陣の中心へ運べ（長押しで鎖）');
+      }
+
+      // ② 照射機を撃って棺へ向ける
+      else if (pl.step === Step.LOCKED) {
+        for (let i = this.bullets.list.length - 1; i >= 0; i--) {
+          const bb = this.bullets.list[i];
+          const hit = pl.hitEmitter(bb.p.x, bb.p.z);
+          if (hit) {
+            this.bullets.list.splice(i, 1);
+            this.audio.sfx('refill');
+            const e = pl.emitters[hit.index];
+            this.particles.emit(new THREE.Vector3(pl.socket.x + e.x, e.y, pl.socket.z + e.z), 18,
+              { color: [1, 0.95, 0.7], size: 3.2, up: 1.6 });
+            if (hit.left === 0) {
+              UI.toast('四基すべてが棺を捉えた。陣の下端へ', 4000);
+              this.voice.say(null, 'hero', { segments: [{ t: '全機、', p: 1.05, r: 1.15, gap: 120 }, { t: '照準よし！', p: 1.12, r: 1.1 }] });
+            } else UI.toast('照射機が向いた（残り ' + hit.left + '）');
+            break;
           }
         }
+        UI.objective('四隅の照射機を撃て　（' + pl.aimedCount + ' / 4）');
       }
 
-      const pur = Math.round(this.pile.purity * 100);
-      UI.bossBar(this.pile.hp / 100, '陽光の輝き ' + pur + '％');
-      if (pur < 25) {
-        UI.objective('陽光が黒ずんでいる！　神聖機器を撃て');
-        if (!this._darkWarn) {
-          this._darkWarn = true;
-          this.audio.sfx('empty');
-          setTimeout(() => { this._darkWarn = false; }, 2500);
+      // ③ 集光台で陽を集める
+      else if (pl.step === Step.READY) {
+        if (pl.onFocus(P.pos.x, P.pos.z)) {
+          const c = pl.gather(dt, this.sun.value);
+          P.charging = Math.min(1, c);          // 溜めの所作を借りる
+          if (c >= 1) {
+            P.charging = 0;
+            this.audio.sfx('purify');
+            UI.shout('陽 よ 、 満 ち よ');
+            this.voice.say(null, 'hero', { style: 'shout', segments: [{ t: '陽よ、', p: 1.0, r: 0.8, gap: 160 }, { t: '満ちよ！', p: 0.9, r: 0.62 }] });
+            this.particles.emit(pl.focusPos, 40, { color: [1, 0.98, 0.8], size: 4.4, up: 3.4, life: 1.6 });
+            const bh = document.getElementById('hud-boss');
+            if (bh) { bh.hidden = false; const nm = bh.querySelector('.boss-name'); if (nm) nm.textContent = '吸血鬼の思念体'; }
+          }
+          UI.objective('陽を集めている……　' + Math.round(pl.charge * 100) + '％');
+        } else {
+          P.charging = 0;
+          UI.objective('陣の下端（集光台）に立て');
         }
-      } else {
-        UI.objective('浄化中　――　輝きが翳ったら機器を撃て');
       }
-      if (this.pile.done) this.finishPile();
+
+      // ④ 浄化
+      else if (pl.step === Step.PURIFY) {
+        for (let i = this.bullets.list.length - 1; i >= 0; i--) {
+          const bb = this.bullets.list[i];
+          if (pl.hitDevice(bb.p.x, bb.p.z)) {
+            this.bullets.list.splice(i, 1);
+            this.audio.sfx('refill');
+            this.particles.emit(pl.corePos, 14, { color: [1, 0.95, 0.7], size: 3.2, up: 2.6, yOff: 1.0 });
+          }
+        }
+        const pur = Math.round(pl.purity * 100);
+        UI.bossBar(pl.hp / 100, '陽光の輝き ' + pur + '％');
+        UI.objective(pur < 25 ? '陽光が黒ずんでいる！　機器を撃て' : '浄化中　――　翳ったら機器を撃て');
+      }
+
+      pl.update(dt, now, this.coffin.p);
+      if (pl.done) this.finishPile();
     }
   }
 
@@ -1203,7 +1245,7 @@ class Game {
     this.gfx.scene.fog.density = 0.008;
     this.enemies.clear();
     this.pile.place(new THREE.Vector3(0, 0, 0));
-    this.coffin.p.set(0, 0, 0);
+    this.coffin.p.set(0, 0, 9);   // 少し離れた所から運ぶ
     this.coffin.group.position.copy(this.coffin.p);
     this.pile.begin(this.sun.value);
     const bh2 = document.getElementById('hud-boss');
