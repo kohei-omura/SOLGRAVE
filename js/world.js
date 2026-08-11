@@ -20,6 +20,8 @@ export class World {
     this.group = new THREE.Group();
     this.scene.add(this.group);
     this.colliders = [];     // {min:{x,z}, max:{x,z}}
+    this.ramps = [];         // 登れる場所 {x1,z1,x2,z2,y1,y2,w}
+    this.plats = [];         // 平らな高台 {x,z,r,y}
     this.shafts = [];        // 天窓 {x,z,r,mesh,light}
     this.rooms = [];
     this.spawnPoints = [];
@@ -40,6 +42,7 @@ export class World {
     this.group = new THREE.Group();
     this.scene.add(this.group);
     this.colliders = []; this.shafts = []; this.rooms = []; this.torches = [];
+    this.ramps = []; this.plats = [];
     this.gimmicks = null; this.wards = null; this.wardRing = null; this.sanctuary = null;
     this.warp = null; this.warpRings = null; this.warpCol = null;
     this.spawnPoints = []; this.exit = null; this.bossRoom = null;
@@ -171,19 +174,24 @@ export class World {
       step.position.set(PX, y, PZ); step.castShadow = true; step.receiveShadow = true;
       this.group.add(step);
       const half = w / 2;
-      // 側面は通れないようにする（正面の階段だけ空ける）
-      this.colliders.push({ min: { x: PX - half, z: PZ - half }, max: { x: PX + half, z: PZ - 5.2 } });
-      this.colliders.push({ min: { x: PX - half, z: PZ + 5.2 }, max: { x: PX + half, z: PZ + half } });
-      this.colliders.push({ min: { x: PX - half, z: PZ - half }, max: { x: PX - 5.2, z: PZ + half } });
-      this.colliders.push({ min: { x: PX + 5.2, z: PZ - half }, max: { x: PX + half, z: PZ + half } });
+      // 正面（南から北へ登る道）だけ空け、左右と裏は塞ぐ
+      this.colliders.push({ min: { x: PX - half, z: PZ - 2.0 }, max: { x: PX - 5.6, z: PZ + half } });
+      this.colliders.push({ min: { x: PX + 5.6, z: PZ - 2.0 }, max: { x: PX + half, z: PZ + half } });
+      this.colliders.push({ min: { x: PX - half, z: PZ + half - 1.2 }, max: { x: PX + half, z: PZ + half } });
     }
-    // 正面の大階段
-    for (let i = 0; i < 12; i++) {
-      const st = new THREE.Mesh(new THREE.BoxGeometry(10, 0.6, 1.2), pyr);
-      st.position.set(PX, 0.3 + i * 1.35, PZ - 17 + i * 1.15);
-      st.receiveShadow = true;
+    // 正面の大階段（見た目）
+    const STEP_N = 16, STEP_Z0 = PZ - 26, STEP_Z1 = PZ - 3.0, STEP_TOP = 19.0;
+    for (let i = 0; i < STEP_N; i++) {
+      const t = i / (STEP_N - 1);
+      const st = new THREE.Mesh(new THREE.BoxGeometry(11, 0.7, (STEP_Z1 - STEP_Z0) / STEP_N + 0.5), pyr);
+      st.position.set(PX, STEP_TOP * t, STEP_Z0 + (STEP_Z1 - STEP_Z0) * t);
+      st.receiveShadow = true; st.castShadow = true;
       this.group.add(st);
     }
+    // 登れる坂として登録（ここを歩くと高さが上がる）
+    this.ramps.push({ x1: PX, z1: STEP_Z0, x2: PX, z2: STEP_Z1, y1: 0, y2: STEP_TOP, w: 5.5 });
+    // 頂上の平場
+    this.plats.push({ x: PX, z: PZ, r: 6.5, y: STEP_TOP });
     // 頂上の祠と入口
     const shrine = new THREE.Mesh(new THREE.BoxGeometry(9, 5, 9), pyr);
     shrine.position.set(PX, 19.5, PZ); shrine.castShadow = true;
@@ -681,6 +689,31 @@ export class World {
   }
 
   /* ── 判定 ────────────────────────────── */
+  /** その地点の地面の高さ。坂と高台を見る */
+  heightAt(x, z) {
+    let y = 0;
+    if (this.plats) {
+      for (const p of this.plats) {
+        if ((x - p.x) ** 2 + (z - p.z) ** 2 < p.r * p.r) y = Math.max(y, p.y);
+      }
+    }
+    if (this.ramps) {
+      for (const r of this.ramps) {
+        const dx = r.x2 - r.x1, dz = r.z2 - r.z1;
+        const len2 = dx * dx + dz * dz;
+        if (len2 < 1e-6) continue;
+        let t = ((x - r.x1) * dx + (z - r.z1) * dz) / len2;
+        if (t < 0 || t > 1) continue;
+        // 坂の中心からの横ずれ
+        const cx = r.x1 + dx * t, cz = r.z1 + dz * t;
+        const off = Math.hypot(x - cx, z - cz);
+        if (off > r.w) continue;
+        y = Math.max(y, r.y1 + (r.y2 - r.y1) * t);
+      }
+    }
+    return y;
+  }
+
   /** 円（プレイヤー/敵）と壁AABBの押し戻し */
   resolve(pos, radius) {
     // 高速移動でも抜けないよう二度当てる

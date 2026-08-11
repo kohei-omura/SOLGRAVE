@@ -41,6 +41,8 @@ class Game {
     this.skillCd = {};
     this.coin = 0;
     this.talking = null;
+    this.camYaw = 0;       // 視点の向き
+    this.camPitch = 0.62;  // 見下ろす角度
   }
 
   async boot() {
@@ -219,6 +221,33 @@ class Game {
       addEventListener('mousemove', e => { if (active !== null) move(e); });
       addEventListener('mouseup', end);
     };
+    // 何も無い所を指でなぞると視点が回る
+    (() => {
+      const cv = document.getElementById('view');
+      if (!cv) return;
+      let id = null, lx = 0, ly = 0;
+      const start = e => {
+        const t = e.changedTouches ? e.changedTouches[0] : e;
+        id = (t.identifier != null) ? t.identifier : 'mouse';
+        lx = t.clientX; ly = t.clientY;
+      };
+      const move = e => {
+        if (id === null) return;
+        const list = e.changedTouches ? Array.from(e.changedTouches) : [e];
+        const t = list.find(x => ((x.identifier != null) ? x.identifier : 'mouse') === id);
+        if (!t) return;
+        this.camYaw -= (t.clientX - lx) * 0.006;
+        this.camPitch = Math.max(0.18, Math.min(1.35, this.camPitch + (t.clientY - ly) * 0.004));
+        lx = t.clientX; ly = t.clientY;
+        e.preventDefault();
+      };
+      const end = () => { id = null; };
+      cv.addEventListener('touchstart', start, { passive: false });
+      cv.addEventListener('touchmove', move, { passive: false });
+      cv.addEventListener('touchend', end);
+      cv.addEventListener('touchcancel', end);
+    })();
+
     setupStick('stick-l', (x, y) => { this.input.mx = x; this.input.mz = y; });
     setupStick('stick-r', (x, y) => {
       if (x || y) { this.input.ax = x; this.input.az = y; this.input.fire = true; }
@@ -823,6 +852,10 @@ class Game {
     // キーボード
     if (this.phase !== Phase.TITLE && this.phase !== Phase.RESULT) {
       let mx = 0, mz = 0;
+      if (this.keys['ArrowLeft']) this.camYaw -= dt * 1.8;
+      if (this.keys['ArrowRight']) this.camYaw += dt * 1.8;
+      if (this.keys['ArrowUp']) this.camPitch = Math.min(1.35, this.camPitch + dt * 1.0);
+      if (this.keys['ArrowDown']) this.camPitch = Math.max(0.18, this.camPitch - dt * 1.0);
       if (this.keys['KeyW']) mz -= 1;
       if (this.keys['KeyS']) mz += 1;
       if (this.keys['KeyA']) mx -= 1;
@@ -844,18 +877,34 @@ class Game {
       this.updatePlay(dt, now);
     }
 
-    // カメラ追従（見下ろし気味）
+    // カメラ追従（指でなぞると360度まわる）
     const p = this.player.pos;
-    const camTarget = new THREE.Vector3(p.x, 12.5, p.z + 11);
+    const dist = 16.5;
+    const h = Math.sin(this.camPitch) * dist;
+    const rad = Math.cos(this.camPitch) * dist;
+    const camTarget = new THREE.Vector3(
+      p.x - Math.sin(this.camYaw) * rad,
+      p.y + h,
+      p.z - Math.cos(this.camYaw) * rad
+    );
     this.gfx.camera.position.lerp(camTarget, 1 - Math.pow(0.0015, dt));
-    this.gfx.camera.lookAt(p.x, 1.2, p.z);
+    this.gfx.camera.lookAt(p.x, p.y + 1.4, p.z);
 
     this.gfx.render(now);
   }
 
   updatePlay(dt, now) {
     const P = this.player;
-    P.update(dt, this.input, this.world, now);
+    // 入力を視点の向きに合わせて回す（前が常に画面の奥）
+    const cy = Math.cos(this.camYaw), sy = Math.sin(this.camYaw);
+    const rot = {
+      mx: this.input.mx * cy - this.input.mz * sy,
+      mz: this.input.mx * sy + this.input.mz * cy,
+      ax: this.input.ax * cy - this.input.az * sy,
+      az: this.input.ax * sy + this.input.az * cy,
+      fire: this.input.fire, charge: this.input.charge, dash: this.input.dash
+    };
+    P.update(dt, rot, this.world, now);
 
     // 射撃
     this.shotCd -= dt;

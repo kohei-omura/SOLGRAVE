@@ -263,12 +263,18 @@ export class Player {
     this.pos.x += this.vel.x * dt;
     this.pos.z += this.vel.z * dt;
     world.resolve(this.pos, this.radius);
+    // 坂や階段の高さに滑らかに乗る
+    if (world.heightAt) {
+      const gy = world.heightAt(this.pos.x, this.pos.z);
+      this.pos.y += (gy - this.pos.y) * Math.min(1, dt * 10);
+    }
 
     if (input.ax || input.az) this.aim.set(input.ax, 0, input.az).normalize();
     else if (this.vel.lengthSq() > 0.01) this.aim.copy(this.vel).setY(0).normalize();
 
     this.group.position.copy(this.pos);
     this.group.rotation.y = Math.atan2(this.aim.x, this.aim.z);
+    this._baseY = this.pos.y;
 
     if (mag > 0.05) {
       this.walkT += dt * 9 * mag;
@@ -281,7 +287,7 @@ export class Player {
 
     const c = this.charging;
     if (c > 0) {
-      this.group.position.y = -0.14 * c;
+      this.group.position.y = this.pos.y - 0.14 * c;
       this.gun.rotation.x = -0.4 * c;
       this.gun.position.y = 1.36 + 0.14 * c;
       this.orb.visible = true;
@@ -305,7 +311,7 @@ export class Player {
       this.lamp.intensity = 5.0 + c * 6;
       this.muzzleLight.intensity = c * 5;
     } else {
-      this.group.position.y = 0;
+      this.group.position.y = this.pos.y;
       this.gun.rotation.x *= 0.8;
       this.gun.position.y += (1.36 - this.gun.position.y) * 0.3;
       this.orb.visible = false;

@@ -100,10 +100,55 @@ export class Town {
       [-13, -26, 9, 7], [3, -26, 9, 7], [19, -26, 8, 7],
       [-30, -24, 7, 6], [30, -24, 7, 6]
     ];
+    this.rooms = [];
     houses.forEach((h, i) => {
       const [x, z, w, d] = h;
       const ht = 3.4 + (i % 3) * 0.6;
-      box(w, ht, d, x, ht / 2, z, wall, true);
+      const T = 0.4, DOOR = 2.4;
+      // 中空にして、南面に戸口を空ける
+      // 北・東・西の壁
+      box(w, ht, T, x, ht / 2, z - d / 2 + T / 2, wall, true);
+      box(T, ht, d, x - w / 2 + T / 2, ht / 2, z, wall, true);
+      box(T, ht, d, x + w / 2 - T / 2, ht / 2, z, wall, true);
+      // 南面は戸口を残して左右に
+      const side = (w - DOOR) / 2;
+      if (side > 0.1) {
+        box(side, ht, T, x - (DOOR / 2 + side / 2), ht / 2, z + d / 2 - T / 2, wall, true);
+        box(side, ht, T, x + (DOOR / 2 + side / 2), ht / 2, z + d / 2 - T / 2, wall, true);
+      }
+      // 鴨居
+      box(DOOR + 0.6, 0.5, T, x, ht - 0.25, z + d / 2 - T / 2, wood, false);
+      // 床
+      const fl = new THREE.Mesh(new THREE.PlaneGeometry(w - T * 2, d - T * 2), wood);
+      fl.rotation.x = -Math.PI / 2; fl.position.set(x, 0.04, z);
+      fl.receiveShadow = true;
+      this.group.add(fl);
+      // ── 中の調度 ──
+      const put = (gw, gh, gd, gx, gy, gz, mat) => {
+        const m = new THREE.Mesh(new THREE.BoxGeometry(gw, gh, gd), mat);
+        m.position.set(gx, gy, gz); m.castShadow = true;
+        this.group.add(m);
+        colliders && colliders.push({ min: { x: gx - gw / 2, z: gz - gd / 2 },
+                                      max: { x: gx + gw / 2, z: gz + gd / 2 } });
+      };
+      if (i % 3 === 0) {          // 寝間
+        put(1.9, 0.5, 1.1, x - w / 4, 0.25, z - d / 4, wood);
+        put(0.5, 0.5, 0.5, x + w / 4, 0.25, z - d / 4, wall);
+      } else if (i % 3 === 1) {   // 台所
+        put(1.6, 0.9, 0.7, x, 0.45, z - d / 2 + 1.2, wall);
+        put(0.7, 0.7, 0.7, x - w / 4, 0.35, z + d / 4, wood);
+      } else {                    // 仕事場
+        put(1.5, 0.75, 0.9, x, 0.38, z, wood);
+        put(0.6, 1.4, 0.6, x + w / 4, 0.7, z - d / 4, wall);
+      }
+      // 室内の灯り
+      const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), glowMaterial(0xffd48a, 2.0));
+      lamp.position.set(x, ht - 0.7, z);
+      this.group.add(lamp);
+      const il = new THREE.PointLight(0xffd48a, 1.6, 9, 2);
+      il.position.set(x, ht - 0.8, z);
+      this.group.add(il);
+      this.rooms.push({ x, z, w, d });
       // 切妻屋根
       const r = new THREE.Mesh(new THREE.ConeGeometry(Math.max(w, d) * 0.78, 1.9, 4), roof);
       r.position.set(x, ht + 0.95, z); r.rotation.y = Math.PI / 4; r.castShadow = true;
