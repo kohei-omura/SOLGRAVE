@@ -656,7 +656,7 @@ class Game {
     this.gfx.scene.fog.density = 0.008;
     this.town.build(this.world.colliders);
     this.town.group.visible = true;
-    this.pile.place(new THREE.Vector3(0, 0, 0));
+    this.pile.place(this.world.purifierSpot ? this.world.purifierSpot.clone() : new THREE.Vector3(-52, 0, 0));
     UI.hp(this.player.hp, this.player.maxHp, this.player.guard, this.player.guardMax);
     UI.objective('陽力を溜め、南の縦穴から地下へ');
     UI.hide('hud-boss');
@@ -1041,7 +1041,15 @@ class Game {
       if (e && Math.hypot(P.pos.x - e.x, P.pos.z - e.z) < e.r) {
         this.enterDungeon();
       }
-      UI.objective(this.sun.isFull ? '満陽。南の縦穴から地下へ' : '陽力 ' + Math.round(this.sun.value) + '％／縦穴は南');
+      const sc = this.world.sanctuary;
+      const inSanct = sc && Math.hypot(P.pos.x - sc.x, P.pos.z - sc.z) < sc.r;
+      if (inSanct !== this._inSanct) {
+        this._inSanct = inSanct;
+        this.audio.startBGM(inSanct ? 'dungeon' : 'surface');
+        if (inSanct) UI.toast('祓いの聖域　――　墓と結界に囲まれた場所', 3200);
+      }
+      UI.objective(inSanct ? '聖域　――　浄化の陽輪盤がある'
+        : ('陽力 ' + Math.round(this.sun.value) + '％／遺跡は南の彼方'));
     } else if (this.phase === Phase.DUNGEON) {
       const r = this.world.bossRoom;
       if (r && Math.hypot(P.pos.x - r.x, P.pos.z - r.z) < Math.max(r.w, r.d) * 0.4) {
@@ -1237,15 +1245,18 @@ class Game {
   enterPile() {
     this.phase = Phase.PILE;
     this.world.buildSurface();
-    this.player.reset(new THREE.Vector3(0, 0, 6));
-    this.miko.reset(new THREE.Vector3(0, 0, 6));
+    const sp = this.world.purifierSpot ? this.world.purifierSpot.clone() : new THREE.Vector3(-52, 0, 0);
+    this.player.reset(new THREE.Vector3(sp.x, 0, sp.z + 18));
+    this.miko.reset(new THREE.Vector3(sp.x, 0, sp.z + 18));
+    this.audio.startBGM('dungeon');
     this.sunLight.intensity = 3.0;
     this.ambient.intensity = 1.5;
     this.hemi.intensity = 1.1;
     this.gfx.scene.fog.density = 0.008;
     this.enemies.clear();
-    this.pile.place(new THREE.Vector3(0, 0, 0));
-    this.coffin.p.set(0, 0, 9);   // 少し離れた所から運ぶ
+    this.pile.place(this.world.purifierSpot ? this.world.purifierSpot.clone() : new THREE.Vector3(-52, 0, 0));
+    const sp2 = this.world.purifierSpot ? this.world.purifierSpot : new THREE.Vector3(-52, 0, 0);
+    this.coffin.p.set(sp2.x + 8, 0, sp2.z + 9);
     this.coffin.group.position.copy(this.coffin.p);
     this.pile.begin(this.sun.value);
     const bh2 = document.getElementById('hud-boss');

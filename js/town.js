@@ -9,42 +9,42 @@ import { stoneMaterial, metalMaterial, glowMaterial, fleshMaterial } from './gfx
    kind: 'shop' 道具屋／'inn' 宿／'smith' 鍛冶／その他は語らい相手 */
 export const TOWNSFOLK = [
   { id: 'shop',  name: '陽子（ようこ）', role: '道具屋', kind: 'shop',
-    x: -9, z: -4, hair: 0x3a2418, cloth: 0xb85a3a, skin: 0xf2d8bc,
+    x: -14, z: -6, hair: 0x3a2418, cloth: 0xb85a3a, skin: 0xf2d8bc,
     lines: ['よく戻ったねぇ。掘り出し物、見ていくかい？',
             'その傷……無理はいけないよ。',
             '深いところの品は、うちにも滅多に入らないのさ。'] },
   { id: 'inn',   name: '芹（せり）',     role: '宿の娘', kind: 'inn',
-    x: 9,  z: -5, hair: 0x1d1620, cloth: 0x6a8ab0, skin: 0xf6dcc8,
+    x: 14, z: -7, hair: 0x1d1620, cloth: 0x6a8ab0, skin: 0xf6dcc8,
     lines: ['おかえりなさい。少し休んでいかれますか？',
             '湯を沸かしてあります。ゆっくりどうぞ。',
             '……ご無事で、ほんとうによかった。'] },
   { id: 'smith', name: '鉄爺（てつじい）', role: '鍛冶', kind: 'smith',
-    x: -13, z: 4, hair: 0xd8d0c4, cloth: 0x4a4038, skin: 0xd8b892,
+    x: -16, z: 8, hair: 0xd8d0c4, cloth: 0x4a4038, skin: 0xd8b892,
     lines: ['銃はな、魔法じゃねぇ。手入れが命だ。',
             '陽ってのは、溜めるより使い方よ。',
             'また持ってきな。見てやる。'] },
   { id: 'kid',   name: '豆太（まめた）', role: '町の子', kind: 'talk',
-    x: 3,  z: -12, hair: 0x2a1c14, cloth: 0x8aa85a, skin: 0xf0d0aa,
+    x: 4, z: -15, hair: 0x2a1c14, cloth: 0x8aa85a, skin: 0xf0d0aa,
     lines: ['にいちゃん、また潜るの！？かっけー！',
             'おれも大きくなったら、陽光銃つかうんだ！',
             '巫女のねえちゃん、きれいだよね。'] },
   { id: 'girl1', name: '燐（りん）',     role: '花売り', kind: 'talk',
-    x: -4, z: 7,  hair: 0x4a2a3a, cloth: 0xd88aa0, skin: 0xf8e0cc,
+    x: -7, z: 12,  hair: 0x4a2a3a, cloth: 0xd88aa0, skin: 0xf8e0cc,
     lines: ['向日葵、いかがですか。陽を向く花ですよ。',
             'あなたが戻るたび、町が明るくなる気がします。',
             '……こんど、話し相手になってくださいね。'] },
   { id: 'girl2', name: '澪（みお）',     role: '水汲み', kind: 'talk',
-    x: 13, z: 6,  hair: 0x1a2a3a, cloth: 0x7ab0c0, skin: 0xf4dcc4,
+    x: 15, z: 10,  hair: 0x1a2a3a, cloth: 0x7ab0c0, skin: 0xf4dcc4,
     lines: ['井戸の水、冷たくておいしいですよ。',
             '地の底は、まだ暗いままですか。',
             '無事に帰ってきてくれるなら、それでいいんです。'] },
   { id: 'old',   name: '宗庵（そうあん）', role: '語り部', kind: 'talk',
-    x: 0,  z: -16, hair: 0xc8c0b4, cloth: 0x5a4a6a, skin: 0xd0b898,
+    x: 0, z: -22, hair: 0xc8c0b4, cloth: 0x5a4a6a, skin: 0xd0b898,
     lines: ['この下には、幾層もの闇が眠っておる。',
             '主を祓えば、次の主が目を覚ます。終わりはない。',
             '……それでも、陽は昇るのじゃ。'] },
   { id: 'friend', name: '颯（はやて）',  role: '狩人仲間', kind: 'talk',
-    x: 6,  z: 9,  hair: 0x2a2018, cloth: 0x6a7a4a, skin: 0xe8c8a4,
+    x: 9, z: 14,  hair: 0x2a2018, cloth: 0x6a7a4a, skin: 0xe8c8a4,
     lines: ['よう。今日はどこまで潜った？',
             'おれもいつか、お前みたいに深くまで行くよ。',
             '無茶すんなよ。待ってる奴がいるんだからな。'] }
@@ -93,9 +93,12 @@ export class Town {
     };
 
     // ── 家並み ──
+    // 広場（半径20）の外周に、区画を分けて建てる
     const houses = [
-      [-11, -6, 6, 5], [11, -7, 7, 5], [-16, 3, 6, 6], [16, 4, 6, 6],
-      [-6, 10, 5, 5], [7, 12, 6, 5], [-2, -19, 7, 5], [18, -2, 5, 6], [-19, -3, 5, 5]
+      [-25, -12, 8, 7], [-25, 2, 8, 7], [-25, 16, 8, 7],
+      [25, -12, 8, 7], [25, 2, 8, 7], [25, 16, 8, 7],
+      [-13, -26, 9, 7], [3, -26, 9, 7], [19, -26, 8, 7],
+      [-30, -24, 7, 6], [30, -24, 7, 6]
     ];
     houses.forEach((h, i) => {
       const [x, z, w, d] = h;
@@ -116,18 +119,17 @@ export class Town {
     });
 
     // ── 道の石畳 ──
-    const path = new THREE.Mesh(new THREE.PlaneGeometry(9, 46),
-      stoneMaterial(204, 0xa89c88));
-    path.rotation.x = -Math.PI / 2; path.position.set(0, 0.02, -2);
-    path.receiveShadow = true;
-    this.group.add(path);
-    const cross = new THREE.Mesh(new THREE.PlaneGeometry(40, 8), stoneMaterial(205, 0xa89c88));
-    cross.rotation.x = -Math.PI / 2; cross.position.set(0, 0.02, 2);
-    this.group.add(cross);
+    // 区画を分ける小径
+    [[-19, 0, 4, 44], [19, 0, 4, 44], [0, -20, 60, 4]].forEach(([x, z, w, d]) => {
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), stoneMaterial(204, 0xb0a690));
+      m.rotation.x = -Math.PI / 2; m.position.set(x, 0.025, z);
+      m.receiveShadow = true;
+      this.group.add(m);
+    });
 
     // ── 灯籠 ──
     this.lanterns = [];
-    [[-6, -10], [6, -10], [-6, 8], [6, 8], [-14, 0], [14, 0]].forEach(([x, z]) => {
+    [[-18, -14], [18, -14], [-18, 14], [18, 14], [-21, 0], [21, 0], [0, 24], [0, -24]].forEach(([x, z]) => {
       box(0.5, 2.2, 0.5, x, 1.1, z, wood, false);
       const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.9, 0.8), glowMaterial(0xffd48a, 1.6));
       lamp.position.set(x, 2.6, z);
@@ -140,10 +142,10 @@ export class Town {
 
     // ── 鳥居（縦穴の手前） ──
     const torii = metalMaterial(206, 0xb3424a);
-    box(0.5, 5, 0.5, -3.2, 2.5, 15, torii, true);
-    box(0.5, 5, 0.5, 3.2, 2.5, 15, torii, true);
-    box(8.4, 0.5, 0.7, 0, 5.1, 15, torii, false);
-    box(7.2, 0.35, 0.5, 0, 4.4, 15, torii, false);
+    box(0.5, 6, 0.5, -4.6, 3, 30, torii, true);
+    box(0.5, 6, 0.5, 4.6, 3, 30, torii, true);
+    box(11.6, 0.6, 0.8, 0, 6.2, 30, torii, false);
+    box(10, 0.4, 0.6, 0, 5.3, 30, torii, false);
 
     // ── 住人 ──
     TOWNSFOLK.forEach(def => this._addNpc(def, colliders));

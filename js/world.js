@@ -40,7 +40,8 @@ export class World {
     this.group = new THREE.Group();
     this.scene.add(this.group);
     this.colliders = []; this.shafts = []; this.rooms = []; this.torches = [];
-    this.gimmicks = null;
+    this.gimmicks = null; this.wards = null; this.wardRing = null; this.sanctuary = null;
+    this.warp = null; this.warpRings = null; this.warpCol = null;
     this.spawnPoints = []; this.exit = null; this.bossRoom = null;
   }
 
@@ -60,48 +61,170 @@ export class World {
   }
 
   /* ── 地上 ───────────────────────────────── */
+  /* ── 地上 ───────────────────────────────
+     街（中央）／ 聖域（西・墓と教会）／ 遺跡（南・階段状の神殿）
+     の三つの区画に分ける。
+  ──────────────────────────────────────── */
   buildSurface() {
     this.clear();
     this.isSurface = true;
 
-    const floorMat = stoneMaterial(11, 0x8d8471);
-    const f = new THREE.Mesh(new THREE.PlaneGeometry(120, 120), floorMat);
+    const ground = stoneMaterial(11, 0x8d8471);
+    const f = new THREE.Mesh(new THREE.PlaneGeometry(220, 220), ground);
     f.rotation.x = -Math.PI / 2; f.receiveShadow = true;
     this.group.add(f);
 
-    // 外周の崩れた石壁
-    const wallMat = stoneMaterial(12, 0x7c8493);
-    const R = 26;
-    for (let i = 0; i < 28; i++) {
-      const a = (i / 28) * Math.PI * 2;
-      const x = Math.cos(a) * R, z = Math.sin(a) * R;
-      const h = 2.4 + ((i * 37) % 10) * 0.22;
-      const m = this._box(3.2, h, 1.6, x, h / 2, z, wallMat, true);
-      m.rotation.y = -a;
+    const stone = stoneMaterial(13, 0x9a9287);
+    const dark  = stoneMaterial(15, 0x5a5560);
+    const wood  = stoneMaterial(16, 0x6a5238);
+
+    /* ── 街の敷石（中央の広場と大路） ── */
+    const plaza = new THREE.Mesh(new THREE.CircleGeometry(20, 48), stoneMaterial(14, 0xb0a690));
+    plaza.rotation.x = -Math.PI / 2; plaza.position.set(0, 0.02, 0);
+    plaza.receiveShadow = true;
+    this.group.add(plaza);
+    // 南へ伸びる参道（遺跡へ）
+    const road = new THREE.Mesh(new THREE.PlaneGeometry(11, 60), stoneMaterial(17, 0xa89c88));
+    road.rotation.x = -Math.PI / 2; road.position.set(0, 0.02, 34);
+    this.group.add(road);
+    // 西へ伸びる小径（聖域へ）
+    const lane = new THREE.Mesh(new THREE.PlaneGeometry(46, 7), stoneMaterial(18, 0x8f8574));
+    lane.rotation.x = -Math.PI / 2; lane.position.set(-30, 0.02, 0);
+    this.group.add(lane);
+
+    /* ══ 聖域（西の外れ）── 墓・教会・結界・呪札 ══ */
+    const SX = -52, SZ = 0;
+    this.sanctuary = { x: SX, z: SZ, r: 22 };
+    // 荒れた土
+    const soil = new THREE.Mesh(new THREE.CircleGeometry(21, 40), stoneMaterial(19, 0x4a4640));
+    soil.rotation.x = -Math.PI / 2; soil.position.set(SX, 0.03, SZ);
+    this.group.add(soil);
+    // 教会（尖塔つき）
+    const ch = new THREE.Mesh(new THREE.BoxGeometry(9, 7, 13), dark);
+    ch.position.set(SX - 1, 3.5, SZ - 15); ch.castShadow = true;
+    this.group.add(ch);
+    this.colliders.push({ min: { x: SX - 5.5, z: SZ - 21.5 }, max: { x: SX + 3.5, z: SZ - 8.5 } });
+    const spire = new THREE.Mesh(new THREE.ConeGeometry(3.2, 9, 6), dark);
+    spire.position.set(SX - 1, 11.5, SZ - 15); spire.castShadow = true;
+    this.group.add(spire);
+    const cross1 = new THREE.Mesh(new THREE.BoxGeometry(0.3, 2.4, 0.3), metalMaterial(20, 0xc9a227));
+    cross1.position.set(SX - 1, 17.2, SZ - 15);
+    this.group.add(cross1);
+    const cross2 = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.3, 0.3), metalMaterial(20, 0xc9a227));
+    cross2.position.set(SX - 1, 17.6, SZ - 15);
+    this.group.add(cross2);
+    // 墓石を並べる
+    for (let i = 0; i < 22; i++) {
+      const a = (i / 22) * Math.PI * 2;
+      const rr = 12 + (i % 4) * 2.4;
+      const gx = SX + Math.cos(a) * rr, gz = SZ + Math.sin(a) * rr;
+      const h = 1.1 + (i % 3) * 0.35;
+      const g = new THREE.Mesh(new THREE.BoxGeometry(0.7, h, 0.3), dark);
+      g.position.set(gx, h / 2, gz); g.rotation.y = a + (i % 2 ? 0.2 : -0.15);
+      g.castShadow = true;
+      this.group.add(g);
+      if (i % 3 === 0) {
+        const cap = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.16, 0.4), dark);
+        cap.position.set(gx, h + 0.08, gz); cap.rotation.y = g.rotation.y;
+        this.group.add(cap);
+      }
     }
+    // 結界の柱と注連縄めいた綱
+    this.wards = [];
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      const px = SX + Math.cos(a) * 18, pz = SZ + Math.sin(a) * 18;
+      const p = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.28, 3.4, 8), wood);
+      p.position.set(px, 1.7, pz); p.castShadow = true;
+      this.group.add(p);
+      this.colliders.push({ min: { x: px - 0.3, z: pz - 0.3 }, max: { x: px + 0.3, z: pz + 0.3 } });
+      // 呪札（ゆれる）
+      for (let k = 0; k < 3; k++) {
+        const fuda = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.7),
+          new THREE.MeshStandardMaterial({ color: 0xf0e8d8, side: THREE.DoubleSide, roughness: 0.9 }));
+        fuda.position.set(px + (k - 1) * 0.34, 2.9, pz + 0.16);
+        this.group.add(fuda);
+        this.wards.push({ m: fuda, phase: Math.random() * 6.28 });
+      }
+      const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.16, 10, 8), glowMaterial(0x9ad8ff, 1.6));
+      lamp.position.set(px, 3.6, pz);
+      this.group.add(lamp);
+    }
+    // 結界の輪（地面）
+    const ward = new THREE.Mesh(new THREE.RingGeometry(17.6, 18.4, 64),
+      new THREE.MeshBasicMaterial({ color: 0x8ad0ff, transparent: true, opacity: 0.22,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+    ward.rotation.x = -Math.PI / 2; ward.position.set(SX, 0.05, SZ);
+    this.group.add(ward);
+    this.wardRing = ward;
+    this.purifierSpot = new THREE.Vector3(SX, 0, SZ);
 
-    // 中央の祭壇（浄化装置の土台）
-    const alt = stoneMaterial(13, 0x9a9287);
-    this._box(7, 0.6, 7, 0, 0.3, 0, alt, false);
-    this._box(1.1, 1.6, 1.1, -2.4, 1.1, -2.4, alt, true);
-    this._box(1.1, 1.6, 1.1, 2.4, 1.1, -2.4, alt, true);
+    /* ══ 遺跡（南に遠く）── 階段状の神殿 ══ */
+    const PX = 0, PZ = 74;
+    const pyr = stoneMaterial(23, 0x9c8d70);
+    // 五段のピラミッド
+    for (let i = 0; i < 5; i++) {
+      const w = 34 - i * 6;
+      const h = 3.4;
+      const y = i * h + h / 2;
+      const step = new THREE.Mesh(new THREE.BoxGeometry(w, h, w), pyr);
+      step.position.set(PX, y, PZ); step.castShadow = true; step.receiveShadow = true;
+      this.group.add(step);
+      const half = w / 2;
+      // 側面は通れないようにする（正面の階段だけ空ける）
+      this.colliders.push({ min: { x: PX - half, z: PZ - half }, max: { x: PX + half, z: PZ - 5.2 } });
+      this.colliders.push({ min: { x: PX - half, z: PZ + 5.2 }, max: { x: PX + half, z: PZ + half } });
+      this.colliders.push({ min: { x: PX - half, z: PZ - half }, max: { x: PX - 5.2, z: PZ + half } });
+      this.colliders.push({ min: { x: PX + 5.2, z: PZ - half }, max: { x: PX + half, z: PZ + half } });
+    }
+    // 正面の大階段
+    for (let i = 0; i < 12; i++) {
+      const st = new THREE.Mesh(new THREE.BoxGeometry(10, 0.6, 1.2), pyr);
+      st.position.set(PX, 0.3 + i * 1.35, PZ - 17 + i * 1.15);
+      st.receiveShadow = true;
+      this.group.add(st);
+    }
+    // 頂上の祠と入口
+    const shrine = new THREE.Mesh(new THREE.BoxGeometry(9, 5, 9), pyr);
+    shrine.position.set(PX, 19.5, PZ); shrine.castShadow = true;
+    this.group.add(shrine);
+    const doorway = new THREE.Mesh(new THREE.BoxGeometry(4.4, 4.2, 0.6),
+      new THREE.MeshStandardMaterial({ color: 0x06080c, roughness: 1 }));
+    doorway.position.set(PX, 19.1, PZ - 4.5);
+    this.group.add(doorway);
+    // 入口を縁取る石柱と篝火
+    [-1, 1].forEach(sx => {
+      const p = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.7, 5.4, 8), pyr);
+      p.position.set(PX + sx * 3.4, 19.7, PZ - 4.6); p.castShadow = true;
+      this.group.add(p);
+      const fire = new THREE.Mesh(new THREE.SphereGeometry(0.32, 10, 8), glowMaterial(0xff9a4a, 2.6));
+      fire.position.set(PX + sx * 3.4, 22.7, PZ - 4.6);
+      this.group.add(fire);
+      const l = new THREE.PointLight(0xffa860, 3.0, 20, 1.6);
+      l.position.set(PX + sx * 3.4, 22.7, PZ - 4.6);
+      this.group.add(l);
+      if (!this.torches) this.torches = [];
+      this.torches.push({ fire, light: l, phase: Math.random() * 6.28 });
+    });
+    // 蛇の意匠（階段の脇）
+    [-1, 1].forEach(sx => {
+      for (let i = 0; i < 6; i++) {
+        const seg = new THREE.Mesh(new THREE.SphereGeometry(0.7 - i * 0.06, 10, 8), pyr);
+        seg.position.set(PX + sx * 5.9, 0.7 + i * 2.6, PZ - 16 + i * 2.2);
+        this.group.add(seg);
+      }
+    });
 
-    // 地下への入口
-    const holeMat = new THREE.MeshStandardMaterial({ color: 0x05070b, roughness: 1 });
-    const hole = new THREE.Mesh(new THREE.CircleGeometry(2.2, 24), holeMat);
-    hole.rotation.x = -Math.PI / 2; hole.position.set(0, 0.02, 12);
-    this.group.add(hole);
-    const ring = metalMaterial(14, 0x7a6a44);
-    const rm = new THREE.Mesh(new THREE.TorusGeometry(2.3, 0.16, 8, 28), ring);
-    rm.rotation.x = -Math.PI / 2; rm.position.set(0, 0.1, 12);
-    this.group.add(rm);
-    this.entrance = { x: 0, z: 12, r: 2.2 };
+    // 入口の判定（頂上の祠）
+    this.entrance = { x: PX, z: PZ - 4.5, r: 3.2, y: 19 };
+    const em = new THREE.Mesh(new THREE.TorusGeometry(2.6, 0.16, 8, 28), metalMaterial(24, 0xc9a227));
+    em.rotation.x = -Math.PI / 2; em.position.set(PX, 17.2, PZ - 4.5);
+    this.group.add(em);
 
-    this.playerStart = new THREE.Vector3(0, 0, 20);
+    this.playerStart = new THREE.Vector3(0, 0, -6);
     return this;
   }
 
-  /* ── 地下ダンジョン ─────────────────────── */
   /* ── 地下ダンジョン（迷路） ─────────────────
      格子状に部屋を並べ、深さ優先で穴を掘って迷路にする。
      行き止まりには褒美、道中には仕掛けを置く。
@@ -262,13 +385,68 @@ export class World {
     });
 
     this.playerStart = new THREE.Vector3(this.startRoom.x, 0, this.startRoom.z);
-    this.exit = { x: this.startRoom.x, z: this.startRoom.z, r: 2.6 };
-    const ex = glowMaterial(0xffd98a, 1.6);
-    const em = new THREE.Mesh(new THREE.TorusGeometry(1.8, 0.14, 8, 26), ex);
-    em.rotation.x = -Math.PI / 2;
-    em.position.set(this.exit.x, 0.12, this.exit.z);
-    this.group.add(em);
+
+    // ── 帰還のワープ台 ──
+    // 降り立った真下ではなく、入口の部屋の「奥の端」に置く
+    const sr = this.startRoom;
+    const wx = sr.x + (sr.w / 2 - 4.5) * (sr.cell.E ? -1 : 1);
+    const wz = sr.z + (sr.d / 2 - 4.5) * (sr.cell.S ? -1 : 1);
+    this._addWarp(wx, wz);
+    this.exit = { x: wx, z: wz, r: 2.8 };
     return this;
+  }
+
+  /** 帰還のワープ台（魔法陣） */
+  _addWarp(x, z) {
+    const g = new THREE.Group();
+    const base = stoneMaterial(107, 0xa89c88);
+    const plate = new THREE.Mesh(new THREE.CylinderGeometry(3.0, 3.4, 0.35, 28), base);
+    plate.position.y = 0.17; plate.receiveShadow = true;
+    g.add(plate);
+    // 三重の輪
+    this.warpRings = [];
+    [[1.0, 1.25, 0.55], [1.8, 2.0, 0.42], [2.5, 2.75, 0.34]].forEach(([a, b, o], i) => {
+      const m = new THREE.Mesh(new THREE.RingGeometry(a, b, 48),
+        new THREE.MeshBasicMaterial({ color: 0x9ad8ff, transparent: true, opacity: o,
+          blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+      m.rotation.x = -Math.PI / 2; m.position.y = 0.36 + i * 0.002;
+      g.add(m);
+      this.warpRings.push({ m, dir: (i % 2 ? -1 : 1) * (0.3 + i * 0.2) });
+    });
+    // 放射する文様
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      const bar = new THREE.Mesh(new THREE.PlaneGeometry(0.12, 1.1),
+        new THREE.MeshBasicMaterial({ color: 0x9ad8ff, transparent: true, opacity: 0.4,
+          blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+      bar.rotation.x = -Math.PI / 2; bar.rotation.z = -a;
+      bar.position.set(Math.cos(a) * 2.15, 0.37, Math.sin(a) * 2.15);
+      g.add(bar);
+    }
+    // 四隅の石柱
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+      const p = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.34, 2.6, 8), metalMaterial(108, 0x7a8a9a));
+      p.position.set(Math.cos(a) * 3.0, 1.3, Math.sin(a) * 3.0); p.castShadow = true;
+      g.add(p);
+      const orb = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 10), glowMaterial(0x9ad8ff, 2.2));
+      orb.position.set(Math.cos(a) * 3.0, 2.8, Math.sin(a) * 3.0);
+      g.add(orb);
+    }
+    // 立ち上る光
+    const col = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.9, 1.5, 6, 20, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0x9ad8ff, transparent: true, opacity: 0.16,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+    col.position.y = 3;
+    g.add(col);
+    this.warpCol = col;
+    const l = new THREE.PointLight(0x9ad8ff, 2.6, 16, 2);
+    l.position.set(0, 2, 0);
+    g.add(l);
+    g.position.set(x, 0, z);
+    this.group.add(g);
+    this.warp = { x, z, group: g };
   }
 
   /* ── 仕掛けの部品 ── */
@@ -561,6 +739,16 @@ export class World {
           if (!k.taken) { k.mesh.rotation.y += 0.02; k.mesh.position.y = 0.6 + Math.sin(t * 2) * 0.12; }
         }
       }
+    }
+    if (this.wards) {
+      for (const w of this.wards) {
+        w.m.rotation.z = Math.sin(t * 1.6 + w.phase) * 0.18;
+      }
+    }
+    if (this.wardRing) this.wardRing.material.opacity = 0.16 + Math.sin(t * 1.2) * 0.07;
+    if (this.warpRings) {
+      for (const w of this.warpRings) w.m.rotation.z += w.dir * 0.016;
+      if (this.warpCol) this.warpCol.material.opacity = 0.12 + Math.sin(t * 2) * 0.05;
     }
     if (this.torches) {
       for (const tr of this.torches) {
