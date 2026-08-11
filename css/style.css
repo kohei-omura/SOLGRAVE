@@ -94,10 +94,17 @@ body{
   text-shadow:0 0 10px var(--kin);animation:pulse 1.4s ease-in-out infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
 
-.hud-hp{position:absolute;right:14px;top:12px;display:flex;gap:6px}
-.hp-dot{width:14px;height:14px;border-radius:50%;border:1px solid var(--shu);
-  background:radial-gradient(circle at 35% 30%,#ff8a90,var(--shu));box-shadow:0 0 10px rgba(179,66,74,.6)}
-.hp-dot.off{background:none;box-shadow:none;opacity:.3}
+.hud-hp{position:absolute;right:14px;top:12px;width:min(220px,42vw)}
+.hp-lb{font-size:10.5px;color:var(--mut);letter-spacing:.14em;margin-bottom:4px;text-align:right}
+.hp-bar{position:relative;height:9px;border:1px solid rgba(179,66,74,.55);border-radius:2px;
+  background:rgba(0,0,0,.45);overflow:hidden}
+.hp-bar span{display:block;height:100%;width:100%;
+  background:linear-gradient(90deg,#5a1016,var(--shu) 55%,#ff8a90);
+  transition:width .25s ease;box-shadow:0 0 10px rgba(179,66,74,.6)}
+.hp-bar.low span{animation:hpLow .8s ease-in-out infinite}
+@keyframes hpLow{0%,100%{opacity:1}50%{opacity:.45}}
+.hp-num{font-size:11px;color:var(--ink);margin-top:3px;text-align:right;letter-spacing:.06em;
+  font-family:ui-monospace,monospace}
 
 .hud-obj{position:absolute;left:50%;top:12px;transform:translateX(-50%);
   font-size:12px;letter-spacing:.14em;color:var(--ink);
