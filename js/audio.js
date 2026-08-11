@@ -247,7 +247,7 @@ export class Audio {
 
     if (kind === 'surface') {
       // ── 地上：明るく澄んだ調べ（長調・軽やか） ──
-      const beat = 0.5;
+      const beat = 0.62;
       const scale = [0, 2, 4, 7, 9, 12, 14, 16];      // 長音階
       const root = 262;                                 // ド
       const chords = [[0, 4, 7], [5, 9, 12], [7, 11, 14], [0, 4, 7]];
@@ -262,11 +262,43 @@ export class Audio {
         // 旋律
         if (s % 2 === 0) {
           const n = scale[Math.floor((Math.sin(s * 0.7) * 0.5 + 0.5) * (scale.length - 1))];
-          this._tone(root * Math.pow(2, n / 12), beat * 1.1, 'sine', 0.055);
+          this._tone(root * Math.pow(2, n / 12), beat * 1.3, 'sine', 0.048);
         }
         // 軽い刻み
         if (s % 4 === 2) this._noise(0.06, 0.035, 6000, 2400);
         if (s % 8 === 6) this._tone(root * 2, beat * 0.5, 'triangle', 0.035);
+        this._step++;
+      };
+      tick();
+      this._bgmTimer = setInterval(tick, beat * 1000);
+      return;
+    }
+
+    if (kind === 'sacred') {
+      // ── 聖域：神聖で澄んだ調べ（聖歌のような持続と鈴） ──
+      const beat = 1.15;
+      const root = 261.6;
+      const chant = [0, 4, 7, 11, 12, 7, 4, 0];
+      try {
+        [root / 4, root / 4 * 1.5].forEach((fr, i) => {
+          const o = this.ctx.createOscillator(), g = this.ctx.createGain();
+          o.type = 'sine'; o.frequency.value = fr; g.gain.value = 0.06;
+          o.connect(g); g.connect(this.master); o.start();
+          this._drone.push({ o, g });
+        });
+      } catch (e) {}
+      const tick = () => {
+        if (this.muted || document.hidden) return;
+        const s = this._step;
+        // 澄んだ和音
+        if (s % 4 === 0) [0, 4, 7].forEach((semi, i) =>
+          this._tone(root * Math.pow(2, semi / 12), beat * 3.6, 'sine', 0.05, i * 0.05));
+        // 聖歌のような旋律
+        this._tone(root * 2 * Math.pow(2, chant[s % chant.length] / 12), beat * 1.6, 'triangle', 0.045);
+        // 鈴
+        if (s % 8 === 4) { this._tone(2093, 0.9, 'sine', 0.045); this._tone(3136, 0.7, 'sine', 0.03, 0.06); }
+        // 微かな風
+        if (s % 6 === 3) this._noise(1.6, 0.022, 3200, 900);
         this._step++;
       };
       tick();

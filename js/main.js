@@ -71,7 +71,7 @@ class Game {
     this.sunLight = new THREE.DirectionalLight(0xfff0d0, 2.2);
     this.sunLight.position.set(18, 30, 12);
     this.sunLight.castShadow = true;
-    this.sunLight.shadow.mapSize.set(1024, 1024);
+    this.sunLight.shadow.mapSize.set(768, 768);
     this.sunLight.shadow.camera.near = 1; this.sunLight.shadow.camera.far = 90;
     this.sunLight.shadow.camera.left = -40; this.sunLight.shadow.camera.right = 40;
     this.sunLight.shadow.camera.top = 40; this.sunLight.shadow.camera.bottom = -40;
@@ -236,8 +236,8 @@ class Game {
         const list = e.changedTouches ? Array.from(e.changedTouches) : [e];
         const t = list.find(x => ((x.identifier != null) ? x.identifier : 'mouse') === id);
         if (!t) return;
-        this.camYaw -= (t.clientX - lx) * 0.006;
-        this.camPitch = Math.max(0.18, Math.min(1.35, this.camPitch + (t.clientY - ly) * 0.004));
+        this.camYaw += (t.clientX - lx) * 0.006;
+        this.camPitch = Math.max(0.18, Math.min(1.35, this.camPitch - (t.clientY - ly) * 0.004));
         lx = t.clientX; ly = t.clientY;
         e.preventDefault();
       };
@@ -438,6 +438,10 @@ class Game {
   castSkill(sk) {
     const P = this.player, e = sk.effect || {};
     const from = P.muzzleWorld();
+    // 高さの違う敵（コウモリ）にも当たるよう、狙いをわずかに寄せる
+    let dir = P.aim;
+    const help = this.enemies.assistAim ? this.enemies.assistAim(from, P.aim, 0.20) : null;
+    if (help) dir = new THREE.Vector3(help.x, help.y, help.z);
     const h = this.party.hero;
     const dmg = 4 * h.matkMul * (this.solar.active ? SOLAR_DMG_MUL : 1);
     if (e.shotgun) {
@@ -852,8 +856,8 @@ class Game {
     // キーボード
     if (this.phase !== Phase.TITLE && this.phase !== Phase.RESULT) {
       let mx = 0, mz = 0;
-      if (this.keys['ArrowLeft']) this.camYaw -= dt * 1.8;
-      if (this.keys['ArrowRight']) this.camYaw += dt * 1.8;
+      if (this.keys['ArrowLeft']) this.camYaw += dt * 1.8;
+      if (this.keys['ArrowRight']) this.camYaw -= dt * 1.8;
       if (this.keys['ArrowUp']) this.camPitch = Math.min(1.35, this.camPitch + dt * 1.0);
       if (this.keys['ArrowDown']) this.camPitch = Math.max(0.18, this.camPitch - dt * 1.0);
       if (this.keys['KeyW']) mz -= 1;
@@ -866,7 +870,10 @@ class Game {
     }
 
     this.world.update(now);
-    if (this.phase === Phase.DUNGEON || this.phase === Phase.BOSS) this.world.cullLights(this.player.pos.x, this.player.pos.z, this.cfg.quality === 'low' ? 4 : 7);
+    const maxL = (this.cfg.quality === 'low') ? 3 : (this.cfg.quality === 'high' ? 8 : 5);
+    if (this.world.cullLights) this.world.cullLights(this.player.pos.x, this.player.pos.z, maxL);
+    if (this.town && this.town.built && this.town.group.visible && this.town.cullLights)
+      this.town.cullLights(this.player.pos.x, this.player.pos.z, maxL);
     if (this.town && this.town.built && this.phase === Phase.SURFACE) this.town.update(now, this.player.pos);
     this.particles.update(dt);
     this.bullets.update(dt, this.world);
@@ -1087,14 +1094,17 @@ class Game {
     // 進行の切り替え
     if (this.phase === Phase.SURFACE) {
       const e = this.world.entrance;
-      if (e && Math.hypot(P.pos.x - e.x, P.pos.z - e.z) < e.r) {
+      // 頂上の祠だけが入口。ふもとで反応しないよう高さも見る
+      if (e && Math.hypot(P.pos.x - e.x, P.pos.z - e.z) < e.r
+          && Math.abs(P.pos.y - (e.y || 0)) < 3.0) {
         this.enterDungeon();
+        return;                    // この後のBGM判定に上書きされないよう抜ける
       }
       const sc = this.world.sanctuary;
       const inSanct = sc && Math.hypot(P.pos.x - sc.x, P.pos.z - sc.z) < sc.r;
       if (inSanct !== this._inSanct) {
         this._inSanct = inSanct;
-        this.audio.startBGM(inSanct ? 'dungeon' : 'surface');
+        this.audio.startBGM(inSanct ? 'sacred' : 'surface');
         if (inSanct) UI.toast('祓いの聖域　――　墓と結界に囲まれた場所', 3200);
       }
       UI.objective(inSanct ? '聖域　――　浄化の陽輪盤がある'
@@ -1297,7 +1307,8 @@ class Game {
     const sp = this.world.purifierSpot ? this.world.purifierSpot.clone() : new THREE.Vector3(-52, 0, 0);
     this.player.reset(new THREE.Vector3(sp.x, 0, sp.z + 18));
     this.miko.reset(new THREE.Vector3(sp.x, 0, sp.z + 18));
-    this.audio.startBGM('dungeon');
+    this.audio.startBGM('sacred');
+    this._inSanct = true;
     this.sunLight.intensity = 3.0;
     this.ambient.intensity = 1.5;
     this.hemi.intensity = 1.1;
@@ -1342,11 +1353,15 @@ class Game {
     }
     const P = this.player;
     const from = P.muzzleWorld();
+    let dir = P.aim;
+    const help = this.enemies && this.enemies.assistAim
+      ? this.enemies.assistAim(from, P.aim, 0.20) : null;
+    if (help) dir = new THREE.Vector3(help.x, help.y, help.z);
     const h = this.party.hero;
     let mul = this.solar.active ? SOLAR_DMG_MUL : 1;
     mul *= charged ? h.matkMul : h.atkMul;
     if (Math.random() < h.critRate) { mul *= h.critMul; this._crit = true; } else this._crit = false;
-    this.bullets.fire(from, P.aim, charged
+    this.bullets.fire(from, dir, charged
       ? { speed: 46, life: 1.4, pierce: true, dmg: 4 * mul, r: 0.4 }
       : { speed: 34, life: 1.2, dmg: 1 * mul, r: 0.2 });
     P.muzzleFlash(charged);

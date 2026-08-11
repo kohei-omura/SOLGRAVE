@@ -279,7 +279,7 @@ export class Enemies {
       p: pos.clone(), r: sp.r * (rare ? 1.35 : 1),
       speed: sp.speed * (this.spMul || 1) * (rare ? 0.88 : 1),
       burn: 0, stagger: 0, dead: false, ash: 0,
-      y: kind === EnemyKind.BAT ? 1.8 : 0,
+      y: kind === EnemyKind.BAT ? 1.45 : 0,
       phase: Math.random() * 6.28,
       rare: rare
     });
@@ -296,7 +296,10 @@ export class Enemies {
         if (e.dead) continue;
         // この1フレームで弾が通った線分と、敵の球との最短距離で判定する
         // （点で判定すると高速な弾が敵を飛び越してしまう）
-        const ex = e.p.x, ey = e.y + 1.0, ez = e.p.z;
+        // 判定の中心は、種ごとの体の中心に合わせる
+        // （コウモリは e.y が体の中心そのもの。地上の敵は足元基準なので持ち上げる）
+        const ex = e.p.x, ez = e.p.z;
+        const ey = (e.kind === EnemyKind.BAT) ? e.y : (e.y + 0.95);
         const px = b.prev ? b.prev.x : b.p.x, py = b.prev ? b.prev.y : b.p.y, pz = b.prev ? b.prev.z : b.p.z;
         const sx = b.p.x - px, sy = b.p.y - py, sz = b.p.z - pz;
         const seg2 = sx * sx + sy * sy + sz * sz;
@@ -307,8 +310,11 @@ export class Enemies {
         }
         const cx2 = px + sx * t, cy2 = py + sy * t, cz2 = pz + sz * t;
         const dx = ex - cx2, dy = ey - cy2, dz = ez - cz2;
-        const hitR = e.r + b.r + 0.45;      // 当たりやすいよう少し余裕を持たせる
-        if (dx * dx + dy * dy + dz * dz < hitR * hitR) {
+        // コウモリは高く飛ぶため、縦方向に余裕を持たせる
+        const vAllow = (e.kind === EnemyKind.BAT) ? 1.15 : 0.75;
+        const hitR = e.r + b.r + 0.45;
+        const dyClamped = Math.max(0, Math.abs(dy) - vAllow);
+        if (dx * dx + dyClamped * dyClamped + dz * dz < hitR * hitR) {
           // 盾持ちは正面からの通常弾を弾く
           if (e.kind === EnemyKind.SHIELD && !b.pierce) {
             const toB = this._v.set(b.p.x - e.p.x, 0, b.p.z - e.p.z).normalize();
@@ -375,7 +381,7 @@ export class Enemies {
       e.p.x += dirx * sp * dt;
       e.p.z += dirz * sp * dt;
       if (e.kind === EnemyKind.BAT) {
-        e.y = 1.6 + Math.sin(performance.now() / 400 + e.phase) * 0.5;
+        e.y = 1.45 + Math.sin(performance.now() / 400 + e.phase) * 0.35;
       } else {
         world.resolve(e.p, e.r);
       }
@@ -424,6 +430,21 @@ export class Enemies {
       if (dx * dx + dz * dz < sp.dmgR * sp.dmgR) return e;
     }
     return null;
+  }
+
+  /** 狙いを助ける：一番近い敵の方向へわずかに弾を寄せる */
+  assistAim(from, dir, maxAngle) {
+    let best = null, bestDot = Math.cos(maxAngle || 0.22);
+    for (const e of this.list) {
+      if (e.dead) continue;
+      const ey = (e.kind === EnemyKind.BAT) ? e.y : e.y + 0.95;
+      const vx = e.p.x - from.x, vy = ey - from.y, vz = e.p.z - from.z;
+      const len = Math.hypot(vx, vy, vz);
+      if (len < 0.5 || len > 22) continue;
+      const dot = (vx / len) * dir.x + (vz / len) * dir.z;
+      if (dot > bestDot) { bestDot = dot; best = { x: vx / len, y: vy / len, z: vz / len }; }
+    }
+    return best;
   }
 
   _sync() {

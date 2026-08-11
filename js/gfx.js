@@ -151,7 +151,8 @@ export class Gfx {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.85;
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;   // 柔らかい影は重いので通常の影に
+    this.renderer.shadowMap.autoUpdate = true;
     this.scale = 1;
     this._applyPixelRatio();
 

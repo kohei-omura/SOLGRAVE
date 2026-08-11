@@ -72,6 +72,7 @@ export class Town {
     this.group = new THREE.Group();
     this.scene.add(this.group);
     this.npcs = [];
+    this.townLights = null;
     this.built = false;
   }
 
@@ -84,7 +85,7 @@ export class Town {
 
     const box = (w, h, d, x, y, z, mat, solid) => {
       const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
-      m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true;
+      m.position.set(x, y, z); m.castShadow = false; m.receiveShadow = true;
       this.group.add(m);
       if (solid && colliders) {
         colliders.push({ min: { x: x - w / 2, z: z - d / 2 }, max: { x: x + w / 2, z: z + d / 2 } });
@@ -126,7 +127,7 @@ export class Town {
       // ── 中の調度 ──
       const put = (gw, gh, gd, gx, gy, gz, mat) => {
         const m = new THREE.Mesh(new THREE.BoxGeometry(gw, gh, gd), mat);
-        m.position.set(gx, gy, gz); m.castShadow = true;
+        m.position.set(gx, gy, gz); m.castShadow = false;
         this.group.add(m);
         colliders && colliders.push({ min: { x: gx - gw / 2, z: gz - gd / 2 },
                                       max: { x: gx + gw / 2, z: gz + gd / 2 } });
@@ -146,12 +147,14 @@ export class Town {
       lamp.position.set(x, ht - 0.7, z);
       this.group.add(lamp);
       const il = new THREE.PointLight(0xffd48a, 1.6, 9, 2);
+      il.visible = false;
       il.position.set(x, ht - 0.8, z);
       this.group.add(il);
+      (this.townLights = this.townLights || []).push(il);
       this.rooms.push({ x, z, w, d });
       // 切妻屋根
       const r = new THREE.Mesh(new THREE.ConeGeometry(Math.max(w, d) * 0.78, 1.9, 4), roof);
-      r.position.set(x, ht + 0.95, z); r.rotation.y = Math.PI / 4; r.castShadow = true;
+      r.position.set(x, ht + 0.95, z); r.rotation.y = Math.PI / 4; r.castShadow = false;
       this.group.add(r);
       // 障子窓（灯り）
       const win = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 0.9),
@@ -159,8 +162,10 @@ export class Town {
       win.position.set(x, ht * 0.55, z + d / 2 + 0.02);
       this.group.add(win);
       const wl = new THREE.PointLight(0xffd48a, 1.0, 8, 2);
+      wl.visible = false;
       wl.position.set(x, ht * 0.55, z + d / 2 + 0.6);
       this.group.add(wl);
+      (this.townLights = this.townLights || []).push(wl);
     });
 
     // ── 道の石畳 ──
@@ -180,9 +185,11 @@ export class Town {
       lamp.position.set(x, 2.6, z);
       this.group.add(lamp);
       const l = new THREE.PointLight(0xffc878, 2.4, 14, 2);
+      l.visible = false;
       l.position.set(x, 2.7, z);
       this.group.add(l);
       this.lanterns.push({ lamp, light: l, phase: Math.random() * 6.28 });
+      (this.townLights = this.townLights || []).push(l);
     });
 
     // ── 鳥居（縦穴の手前） ──
@@ -202,11 +209,11 @@ export class Town {
     const g = new THREE.Group();
     // 体
     const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.26, 0.62, 5, 10), fleshMaterial(def.cloth));
-    body.position.y = 0.92; body.castShadow = true;
+    body.position.y = 0.92; body.castShadow = false;
     g.add(body);
     // 頭
     const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 14, 12), fleshMaterial(def.skin));
-    head.position.y = 1.5; head.castShadow = true;
+    head.position.y = 1.5; head.castShadow = false;
     g.add(head);
     // 髪
     const hair = new THREE.Mesh(new THREE.SphereGeometry(0.235, 14, 12, 0, Math.PI * 2, 0, Math.PI * 0.6),
@@ -261,10 +268,21 @@ export class Town {
     return { name: n.def.name, role: n.def.role, text: l, kind: n.def.kind };
   }
 
+  /** 近い灯りだけ点ける */
+  cullLights(px, pz, maxOn) {
+    if (!this.townLights) return;
+    maxOn = maxOn || 6;
+    const a = this.townLights;
+    for (const l of a) { const dx = l.position.x - px, dz = l.position.z - pz; l._d = dx * dx + dz * dz; }
+    const s = a.slice().sort((x, y) => x._d - y._d);
+    for (let i = 0; i < s.length; i++) s[i].visible = (i < maxOn && s[i]._d < 1200);
+  }
+
   update(t, playerPos) {
     // 灯籠の揺らぎ
     if (this.lanterns) {
       for (const l of this.lanterns) {
+        if (!l.light.visible) continue;
         const f = 1 + Math.sin(t * 3 + l.phase) * 0.08;
         l.light.intensity = 2.4 * f;
         l.lamp.material.emissiveIntensity = 1.6 * f;

@@ -52,7 +52,7 @@ export class World {
     const g = new THREE.BoxGeometry(w, h, d);
     const m = new THREE.Mesh(g, mat);
     m.position.set(x, y, z);
-    m.castShadow = true; m.receiveShadow = true;
+    m.castShadow = false; m.receiveShadow = true;   // 壁は影を落とさない（描画を軽く）
     this.group.add(m);
     if (collide) {
       this.colliders.push({
@@ -104,11 +104,11 @@ export class World {
     this.group.add(soil);
     // 教会（尖塔つき）
     const ch = new THREE.Mesh(new THREE.BoxGeometry(9, 7, 13), dark);
-    ch.position.set(SX - 1, 3.5, SZ - 15); ch.castShadow = true;
+    ch.position.set(SX - 1, 3.5, SZ - 15); ch.castShadow = false;
     this.group.add(ch);
     this.colliders.push({ min: { x: SX - 5.5, z: SZ - 21.5 }, max: { x: SX + 3.5, z: SZ - 8.5 } });
     const spire = new THREE.Mesh(new THREE.ConeGeometry(3.2, 9, 6), dark);
-    spire.position.set(SX - 1, 11.5, SZ - 15); spire.castShadow = true;
+    spire.position.set(SX - 1, 11.5, SZ - 15); spire.castShadow = false;
     this.group.add(spire);
     const cross1 = new THREE.Mesh(new THREE.BoxGeometry(0.3, 2.4, 0.3), metalMaterial(20, 0xc9a227));
     cross1.position.set(SX - 1, 17.2, SZ - 15);
@@ -124,7 +124,7 @@ export class World {
       const h = 1.1 + (i % 3) * 0.35;
       const g = new THREE.Mesh(new THREE.BoxGeometry(0.7, h, 0.3), dark);
       g.position.set(gx, h / 2, gz); g.rotation.y = a + (i % 2 ? 0.2 : -0.15);
-      g.castShadow = true;
+      g.castShadow = false;
       this.group.add(g);
       if (i % 3 === 0) {
         const cap = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.16, 0.4), dark);
@@ -138,7 +138,7 @@ export class World {
       const a = (i / 8) * Math.PI * 2;
       const px = SX + Math.cos(a) * 18, pz = SZ + Math.sin(a) * 18;
       const p = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.28, 3.4, 8), wood);
-      p.position.set(px, 1.7, pz); p.castShadow = true;
+      p.position.set(px, 1.7, pz); p.castShadow = false;
       this.group.add(p);
       this.colliders.push({ min: { x: px - 0.3, z: pz - 0.3 }, max: { x: px + 0.3, z: pz + 0.3 } });
       // 呪札（ゆれる）
@@ -171,7 +171,7 @@ export class World {
       const h = 3.4;
       const y = i * h + h / 2;
       const step = new THREE.Mesh(new THREE.BoxGeometry(w, h, w), pyr);
-      step.position.set(PX, y, PZ); step.castShadow = true; step.receiveShadow = true;
+      step.position.set(PX, y, PZ); step.castShadow = false; step.receiveShadow = true;
       this.group.add(step);
       const half = w / 2;
       // 正面（南から北へ登る道）だけ空け、左右と裏は塞ぐ
@@ -185,7 +185,7 @@ export class World {
       const t = i / (STEP_N - 1);
       const st = new THREE.Mesh(new THREE.BoxGeometry(11, 0.7, (STEP_Z1 - STEP_Z0) / STEP_N + 0.5), pyr);
       st.position.set(PX, STEP_TOP * t, STEP_Z0 + (STEP_Z1 - STEP_Z0) * t);
-      st.receiveShadow = true; st.castShadow = true;
+      st.receiveShadow = true; st.castShadow = false;
       this.group.add(st);
     }
     // 登れる坂として登録（ここを歩くと高さが上がる）
@@ -194,7 +194,7 @@ export class World {
     this.plats.push({ x: PX, z: PZ, r: 6.5, y: STEP_TOP });
     // 頂上の祠と入口
     const shrine = new THREE.Mesh(new THREE.BoxGeometry(9, 5, 9), pyr);
-    shrine.position.set(PX, 19.5, PZ); shrine.castShadow = true;
+    shrine.position.set(PX, 19.5, PZ); shrine.castShadow = false;
     this.group.add(shrine);
     const doorway = new THREE.Mesh(new THREE.BoxGeometry(4.4, 4.2, 0.6),
       new THREE.MeshStandardMaterial({ color: 0x06080c, roughness: 1 }));
@@ -203,12 +203,13 @@ export class World {
     // 入口を縁取る石柱と篝火
     [-1, 1].forEach(sx => {
       const p = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.7, 5.4, 8), pyr);
-      p.position.set(PX + sx * 3.4, 19.7, PZ - 4.6); p.castShadow = true;
+      p.position.set(PX + sx * 3.4, 19.7, PZ - 4.6); p.castShadow = false;
       this.group.add(p);
       const fire = new THREE.Mesh(new THREE.SphereGeometry(0.32, 10, 8), glowMaterial(0xff9a4a, 2.6));
       fire.position.set(PX + sx * 3.4, 22.7, PZ - 4.6);
       this.group.add(fire);
-      const l = new THREE.PointLight(0xffa860, 3.0, 20, 1.6);
+      const l = new THREE.PointLight(0xffa860, 3.0, 18, 1.6);
+      l.visible = false;
       l.position.set(PX + sx * 3.4, 22.7, PZ - 4.6);
       this.group.add(l);
       if (!this.torches) this.torches = [];
@@ -316,20 +317,23 @@ export class World {
         // 四方の壁（通じている面だけ戸口を空ける）
         const rowZ = (zPos, open) => {
           if (!open) { this._box(w + T2 * 2, WALL_H, T2, cx, WALL_H / 2, zPos, wallMat, true); return; }
-          const side = (w + T2 * 2 - DOOR) / 2;
-          if (side > 0.1) {
-            this._box(side, WALL_H, T2, cx - (DOOR / 2 + side / 2), WALL_H / 2, zPos, wallMat, true);
-            this._box(side, WALL_H, T2, cx + (DOOR / 2 + side / 2), WALL_H / 2, zPos, wallMat, true);
+          // 戸口ぶんだけ空け、左右は必ず端まで届かせる
+          const total = w + T2 * 2;
+          const side = (total - DOOR) / 2;
+          if (side > 0.05) {
+            this._box(side + T2, WALL_H, T2 * 1.6, cx - (DOOR / 2 + side / 2), WALL_H / 2, zPos, wallMat, true);
+            this._box(side + T2, WALL_H, T2 * 1.6, cx + (DOOR / 2 + side / 2), WALL_H / 2, zPos, wallMat, true);
           }
           const lin = new THREE.Mesh(new THREE.BoxGeometry(DOOR + 1.2, 0.7, T2 + 0.2), wallMat);
           lin.position.set(cx, WALL_H - 0.35, zPos); this.group.add(lin);
         };
         const colX = (xPos, open) => {
           if (!open) { this._box(T2, WALL_H, d + T2 * 2, xPos, WALL_H / 2, cz, wallMat, true); return; }
-          const side = (d + T2 * 2 - DOOR) / 2;
-          if (side > 0.1) {
-            this._box(T2, WALL_H, side, xPos, WALL_H / 2, cz - (DOOR / 2 + side / 2), wallMat, true);
-            this._box(T2, WALL_H, side, xPos, WALL_H / 2, cz + (DOOR / 2 + side / 2), wallMat, true);
+          const total = d + T2 * 2;
+          const side = (total - DOOR) / 2;
+          if (side > 0.05) {
+            this._box(T2 * 1.6, WALL_H, side + T2, xPos, WALL_H / 2, cz - (DOOR / 2 + side / 2), wallMat, true);
+            this._box(T2 * 1.6, WALL_H, side + T2, xPos, WALL_H / 2, cz + (DOOR / 2 + side / 2), wallMat, true);
           }
           const lin = new THREE.Mesh(new THREE.BoxGeometry(T2 + 0.2, 0.7, DOOR + 1.2), wallMat);
           lin.position.set(xPos, WALL_H - 0.35, cz); this.group.add(lin);
@@ -338,6 +342,11 @@ export class World {
         rowZ(cz + d / 2 + T2 / 2, c.S);
         colX(cx - w / 2 - T2 / 2, c.W);
         colX(cx + w / 2 + T2 / 2, c.E);
+        // 四隅の継ぎ目を塞ぐ（ここに隙間ができて抜けていた）
+        [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([sx, sz]) => {
+          this._box(T2 * 2.4, WALL_H, T2 * 2.4,
+            cx + sx * (w / 2 + T2 / 2), WALL_H / 2, cz + sz * (d / 2 + T2 / 2), wallMat, true);
+        });
 
         // 通路
         if (c.S) this._corridorZ(cx, cz + d / 2, cz + CELL - d / 2, wallMat, floorMat, DOOR);
@@ -345,7 +354,7 @@ export class World {
 
         // 松明
         this._addTorch(cx - w / 2 + 1.8, cz - d / 2 + 1.8);
-        this._addTorch(cx + w / 2 - 1.8, cz + d / 2 - 1.8);
+        if ((x + y) % 2 === 0) this._addTorch(cx + w / 2 - 1.8, cz + d / 2 - 1.8);
 
         // 天窓は3部屋に1つ程度
         if ((x + y) % 3 === 1) this._addShaft(cx + (rnd() - 0.5) * 6, cz + (rnd() - 0.5) * 6);
@@ -435,7 +444,7 @@ export class World {
     for (let i = 0; i < 4; i++) {
       const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
       const p = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.34, 2.6, 8), metalMaterial(108, 0x7a8a9a));
-      p.position.set(Math.cos(a) * 3.0, 1.3, Math.sin(a) * 3.0); p.castShadow = true;
+      p.position.set(Math.cos(a) * 3.0, 1.3, Math.sin(a) * 3.0); p.castShadow = false;
       g.add(p);
       const orb = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 10), glowMaterial(0x9ad8ff, 2.2));
       orb.position.set(Math.cos(a) * 3.0, 2.8, Math.sin(a) * 3.0);
@@ -587,8 +596,8 @@ export class World {
     const cl = new THREE.Mesh(new THREE.PlaneGeometry(W, len), floorMat);
     cl.rotation.x = Math.PI / 2; cl.position.set(cx, WALL_H, mz);
     this.group.add(cl);
-    this._box(T, WALL_H, len, cx - W / 2 - T / 2, WALL_H / 2, mz, wallMat, true);
-    this._box(T, WALL_H, len, cx + W / 2 + T / 2, WALL_H / 2, mz, wallMat, true);
+    this._box(T * 1.6, WALL_H, len, cx - W / 2 - T / 2, WALL_H / 2, mz, wallMat, true);
+    this._box(T * 1.6, WALL_H, len, cx + W / 2 + T / 2, WALL_H / 2, mz, wallMat, true);
   }
   /** 東西の通路 */
   _corridorX(cz, x1, x2, wallMat, floorMat, W) {
@@ -600,8 +609,8 @@ export class World {
     const cl = new THREE.Mesh(new THREE.PlaneGeometry(len, W), floorMat);
     cl.rotation.x = Math.PI / 2; cl.position.set(mx, WALL_H, cz);
     this.group.add(cl);
-    this._box(len, WALL_H, T, mx, WALL_H / 2, cz - W / 2 - T / 2, wallMat, true);
-    this._box(len, WALL_H, T, mx, WALL_H / 2, cz + W / 2 + T / 2, wallMat, true);
+    this._box(len, WALL_H, T * 1.6, mx, WALL_H / 2, cz - W / 2 - T / 2, wallMat, true);
+    this._box(len, WALL_H, T * 1.6, mx, WALL_H / 2, cz + W / 2 + T / 2, wallMat, true);
   }
 
   _corridor(x1, z1, x2, z2, wallMat, floorMat) {
@@ -717,7 +726,7 @@ export class World {
   /** 円（プレイヤー/敵）と壁AABBの押し戻し */
   resolve(pos, radius) {
     // 高速移動でも抜けないよう二度当てる
-    for (let pass = 0; pass < 2; pass++)
+    for (let pass = 0; pass < 3; pass++)
     for (const c of this.colliders) {
       const cx = Math.max(c.min.x, Math.min(pos.x, c.max.x));
       const cz = Math.max(c.min.z, Math.min(pos.z, c.max.z));
@@ -745,7 +754,7 @@ export class World {
   /** 近くの灯りだけを点ける。遠くは消して描画負荷を下げる */
   cullLights(px, pz, maxOn) {
     maxOn = maxOn || 6;
-    if (!this.torches) return;
+    if (!this.torches || !this.torches.length) return;
     const arr = this.torches;
     for (const tr of arr) {
       const dx = tr.light.position.x - px, dz = tr.light.position.z - pz;
@@ -756,7 +765,7 @@ export class World {
     if (this.shafts) {
       const sh = this.shafts.slice().sort((a, b) =>
         ((a.x - px) ** 2 + (a.z - pz) ** 2) - ((b.x - px) ** 2 + (b.z - pz) ** 2));
-      for (let i = 0; i < sh.length; i++) sh[i].light.visible = (i < 3);
+      for (let i = 0; i < sh.length; i++) sh[i].light.visible = (i < 2);
     }
   }
 
