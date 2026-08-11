@@ -48,11 +48,17 @@ export const UI = {
     if (this.el.titleSun) this.el.titleSun.textContent = Math.round(v);
     if (this.el.titleSrc && srcLabel) this.el.titleSrc.textContent = srcLabel;
   },
-  hp(cur, max) {
-    if (!this.el.hp) return;
-    let h = '';
-    for (let i = 0; i < max; i++) h += '<span class="hp-dot' + (i < cur ? '' : ' off') + '"></span>';
-    this.el.hp.innerHTML = h;
+  hp(cur, max, guard, guardMax) {
+    const fill = document.getElementById('hp-fill');
+    const num = document.getElementById('hp-num');
+    const bar = fill && fill.parentNode;
+    if (!fill) return;
+    // 心の数に、いまの心の耐久を足して滑らかに見せる
+    const g = (guardMax > 0) ? Math.max(0, Math.min(1, guard / guardMax)) : 1;
+    const ratio = max > 0 ? Math.max(0, Math.min(1, ((cur - 1) + g) / max)) : 0;
+    fill.style.width = (cur <= 0 ? 0 : ratio * 100) + '%';
+    if (num) num.textContent = cur + ' / ' + max;
+    if (bar) bar.classList.toggle('low', cur <= 1);
   },
   objective(t) { if (this.el.obj) this.el.obj.textContent = t; },
   solar(on, remain) {

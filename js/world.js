@@ -39,7 +39,8 @@ export class World {
     this.scene.remove(this.group);
     this.group = new THREE.Group();
     this.scene.add(this.group);
-    this.colliders = []; this.shafts = []; this.rooms = [];
+    this.colliders = []; this.shafts = []; this.rooms = []; this.torches = [];
+    this.gimmicks = null;
     this.spawnPoints = []; this.exit = null; this.bossRoom = null;
   }
 
@@ -335,6 +336,7 @@ export class World {
   /** 鍵を拾う／扉を開く／宝箱を開ける。起きたことを返す */
   interact(px, pz, hasKey) {
     const out = [];
+    if (!this.gimmicks) return out;
     this.gimmicks.keys.forEach(k => {
       if (!k.taken && Math.hypot(px - k.x, pz - k.z) < 2.2) {
         k.taken = true; k.mesh.visible = false; k.light.intensity = 0;
@@ -360,6 +362,7 @@ export class World {
 
   /** 祭壇を撃つ */
   shootSwitch(bx, bz) {
+    if (!this.gimmicks || !this.gimmicks.switches) return false;
     for (const s of this.gimmicks.switches) {
       if (!s.on && Math.hypot(bx - s.x, bz - s.z) < 1.6) {
         s.on = true;
@@ -381,6 +384,7 @@ export class World {
 
   /** 光の罠に触れているか */
   onHazard(x, z) {
+    if (!this.gimmicks || !this.gimmicks.hazards) return null;
     for (const h of this.gimmicks.hazards) {
       if (Math.hypot(x - h.x, z - h.z) < h.r) return h;
     }
@@ -389,7 +393,7 @@ export class World {
 
   /** 南北の通路 */
   _corridorZ(cx, z1, z2, wallMat, floorMat, W) {
-    const len = Math.abs(z2 - z1) + 2;
+    const len = Math.abs(z2 - z1) + 6;   // 部屋の壁と重ねて隙間を無くす
     const mz = (z1 + z2) / 2;
     const fl = new THREE.Mesh(new THREE.PlaneGeometry(W, len), floorMat);
     fl.rotation.x = -Math.PI / 2; fl.position.set(cx, 0, mz); fl.receiveShadow = true;
@@ -402,7 +406,7 @@ export class World {
   }
   /** 東西の通路 */
   _corridorX(cz, x1, x2, wallMat, floorMat, W) {
-    const len = Math.abs(x2 - x1) + 2;
+    const len = Math.abs(x2 - x1) + 6;
     const mx = (x1 + x2) / 2;
     const fl = new THREE.Mesh(new THREE.PlaneGeometry(len, W), floorMat);
     fl.rotation.x = -Math.PI / 2; fl.position.set(mx, 0, cz); fl.receiveShadow = true;
@@ -466,6 +470,7 @@ export class World {
     fire.position.set(x, 1.62, z);
     this.group.add(fire);
     const l = new THREE.PointLight(0xffa860, 3.4, 20, 1.6);
+    l.visible = false;   // 近づいた時だけ点ける（描画負荷を抑える）
     l.position.set(x, 1.7, z);
     this.group.add(l);
     if (!this.torches) this.torches = [];
@@ -500,6 +505,8 @@ export class World {
   /* ── 判定 ────────────────────────────── */
   /** 円（プレイヤー/敵）と壁AABBの押し戻し */
   resolve(pos, radius) {
+    // 高速移動でも抜けないよう二度当てる
+    for (let pass = 0; pass < 2; pass++)
     for (const c of this.colliders) {
       const cx = Math.max(c.min.x, Math.min(pos.x, c.max.x));
       const cz = Math.max(c.min.z, Math.min(pos.z, c.max.z));
@@ -524,6 +531,24 @@ export class World {
     return null;
   }
 
+  /** 近くの灯りだけを点ける。遠くは消して描画負荷を下げる */
+  cullLights(px, pz, maxOn) {
+    maxOn = maxOn || 6;
+    if (!this.torches) return;
+    const arr = this.torches;
+    for (const tr of arr) {
+      const dx = tr.light.position.x - px, dz = tr.light.position.z - pz;
+      tr._d = dx * dx + dz * dz;
+    }
+    const sorted = arr.slice().sort((a, b) => a._d - b._d);
+    for (let i = 0; i < sorted.length; i++) sorted[i].light.visible = (i < maxOn && sorted[i]._d < 900);
+    if (this.shafts) {
+      const sh = this.shafts.slice().sort((a, b) =>
+        ((a.x - px) ** 2 + (a.z - pz) ** 2) - ((b.x - px) ** 2 + (b.z - pz) ** 2));
+      for (let i = 0; i < sh.length; i++) sh[i].light.visible = (i < 3);
+    }
+  }
+
   update(t) {
     if (this.gimmicks) {
       if (this.gimmicks.hazards) {
@@ -539,6 +564,7 @@ export class World {
     }
     if (this.torches) {
       for (const tr of this.torches) {
+        if (!tr.light.visible) continue;
         const f = 1 + Math.sin(t * 7 + tr.phase) * 0.12 + Math.sin(t * 13.3 + tr.phase) * 0.06;
         tr.light.intensity = 3.4 * f;
         tr.fire.scale.setScalar(f);

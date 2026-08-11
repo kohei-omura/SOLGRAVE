@@ -140,7 +140,7 @@ class Game {
       this.player.evade = h.evade;
       this.player.guardMax = Math.round(100 * h.guardMul);
       if (this.player.guard > this.player.guardMax) this.player.guard = this.player.guardMax;
-      UI.hp(this.player.hp, this.player.maxHp);
+      UI.hp(this.player.hp, this.player.maxHp, this.player.guard, this.player.guardMax);
     }
     if (this.miko) this.miko.applyStats(m);
   }
@@ -339,7 +339,7 @@ class Game {
     this.heroMp = this.party.hero.maxMp;
     this.miko.mp = this.miko.maxMp;
     this.miko.healCd = 0; this.miko.stagger = 0;
-    UI.hp(this.player.hp, this.player.maxHp);
+    UI.hp(this.player.hp, this.player.maxHp, this.player.guard, this.player.guardMax);
     this.audio.sfx('refill');
     UI.toast('よく休んだ。心も霊力も満ちた');
     this.closeTalk();
@@ -471,7 +471,7 @@ class Game {
     this.player.wardT = m.wardSec;
     this.player.wardCut = m.wardCut;
     const healed = this.player.heal(amount);
-    UI.hp(this.player.hp, this.player.maxHp);
+    UI.hp(this.player.hp, this.player.maxHp, this.player.guard, this.player.guardMax);
     UI.shout(crit ? '大 祓 い ！' : '祓 い ま す');
     this.line(crit ? 'healCrit' : 'heal');
     this.audio.sfx('seal');
@@ -632,6 +632,9 @@ class Game {
     UI.hide('title'); UI.show('hud');
     if ('ontouchstart' in window) UI.show('pad');
     this.stats = { hits: 0, maxSun: this.sun.value, start: performance.now(), kills: 0 };
+    this.shotCd = 0; this.chargeT = 0; this._chargeSfx = false;
+    this.player.charging = 0; this.player.pushing = false;
+    this.heroMp = this.party.hero.maxMp;
     this.enemies.clear(); this.bullets.clear();
     this.boss.despawn(); this.boss.cleanup(); this.coffin.hide();
     this.solar.end(); this.solar.cd = 0;
@@ -641,6 +644,9 @@ class Game {
   enterSurface() {
     this.phase = Phase.SURFACE;
     this.audio.startBGM('surface');
+    this.enemies.clear();          // 地上に敵を持ち込まない
+    this.bullets.clear();
+    this.boss.despawn(); this.boss.cleanup();
     this.world.buildSurface();
     this.player.reset(this.world.playerStart);
     this.miko.reset(this.world.playerStart);
@@ -649,8 +655,9 @@ class Game {
     this.hemi.intensity = 1.1;
     this.gfx.scene.fog.density = 0.008;
     this.town.build(this.world.colliders);
+    this.town.group.visible = true;
     this.pile.place(new THREE.Vector3(0, 0, 0));
-    UI.hp(this.player.hp, this.player.maxHp);
+    UI.hp(this.player.hp, this.player.maxHp, this.player.guard, this.player.guardMax);
     UI.objective('陽力を溜め、南の縦穴から地下へ');
     UI.hide('hud-boss');
     const bh = document.getElementById('hud-boss'); if (bh) bh.hidden = true;
@@ -659,6 +666,8 @@ class Game {
   enterDungeon() {
     this.phase = Phase.DUNGEON;
     this.audio.startBGM('dungeon');
+    if (this.town) this.town.group.visible = false;   // 地下に街を持ち込まない
+    this.pile.group.visible = false;
     this.hasKey = false;
     this.world.buildDungeon(Date.now() % 100000, this.floor);
     this.player.reset(this.world.playerStart);
@@ -687,12 +696,12 @@ class Game {
     if (bn) bn.textContent = lord;
     this.audio.startBGM('boss');
     this.line('bossIn');
-    await UI.cutin(this.boss.lordName || '古 き 吸 血 鬼', 1600);
+    await UI.cutin('第 ' + this.floor + ' 層　' + (this.boss.lordName || '古き吸血鬼'), 1800);
     const r = this.world.bossRoom;
     this.boss.spawn(new THREE.Vector3(r.x, 0, r.z - 4));
     const bh = document.getElementById('hud-boss'); if (bh) bh.hidden = false;
     UI.bossBar(1, '第一相');
-    UI.objective('霧を散らし、闇を討て');
+    UI.objective('第' + this.floor + '層の主　――　霧を散らし、闇を討て');
     this.audio.sfx('phase');
   }
 
@@ -824,6 +833,7 @@ class Game {
     }
 
     this.world.update(now);
+    if (this.phase === Phase.DUNGEON || this.phase === Phase.BOSS) this.world.cullLights(this.player.pos.x, this.player.pos.z, this.cfg.quality === 'low' ? 4 : 7);
     if (this.town && this.town.built && this.phase === Phase.SURFACE) this.town.update(now, this.player.pos);
     this.particles.update(dt);
     this.bullets.update(dt, this.world);
@@ -963,7 +973,7 @@ class Game {
       if (res === 'evade') UI.toast('かわした');
       else if (res) {
         this.stats.hits++;
-        UI.hp(P.hp, P.maxHp);
+        UI.hp(P.hp, P.maxHp, P.guard, P.guardMax);
         this.audio.sfx('hurt');
         if (res === 'lost') this.line('hurt');
         if (res === 'lost' && P.hp <= 0) { this.gameOver(); return; }
@@ -1012,7 +1022,7 @@ class Game {
         }
       }
       if (act === 'claw' && P.hurt(this.boss.power || 120, true)) {
-        this.stats.hits++; UI.hp(P.hp, P.maxHp); this.audio.sfx('hurt');
+        this.stats.hits++; UI.hp(P.hp, P.maxHp, P.guard, P.guardMax); this.audio.sfx('hurt');
         if (P.hp <= 0) { this.gameOver(); return; }
       }
     }
@@ -1067,7 +1077,7 @@ class Game {
       if (hz && !this.solar.active) {
         const res = P.hurt(60, true);
         if (res === 'lost' || res === 'guard') {
-          UI.hp(P.hp, P.maxHp); this.audio.sfx('hurt');
+          UI.hp(P.hp, P.maxHp, P.guard, P.guardMax); this.audio.sfx('hurt');
           if (P.hp <= 0) { this.gameOver(); return; }
         }
       }
