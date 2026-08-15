@@ -321,3 +321,17 @@ body{
 .fl-btn.on{border-color:var(--kin);color:var(--kin);background:rgba(201,162,39,.1)}
 .fl-btn.rest{border-color:#9affd0;color:#9affd0}
 .fl-btn small{display:block;font-size:9px;color:var(--mut);margin-top:2px}
+
+.pad-key{border-color:#ffd24a;color:#ffe9a8;min-width:120px;
+  background:radial-gradient(circle at 50% 40%,rgba(255,210,74,.3),rgba(6,7,10,.6));
+  box-shadow:0 0 16px rgba(255,210,74,.5)}
+#btn-key{left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom) + 92px)}
+.bag-row{display:grid;grid-template-columns:34px 1fr auto;gap:10px;align-items:center;
+  padding:10px;border:1px solid var(--line);border-radius:5px}
+.bag-row.key{border-color:var(--kin);background:rgba(201,162,39,.08)}
+.bag-ico{font-size:20px;text-align:center}
+.bag-nm{font-size:13.5px;color:var(--ink)}
+.bag-ds{grid-column:2/-1;font-size:10.5px;color:var(--mut);line-height:1.6}
+.bag-use{min-height:34px;padding:0 12px;border-radius:3px;border:1px solid var(--shu);
+  background:none;color:var(--shu);font-size:12px;cursor:pointer;font-family:var(--mincho)}
+.bag-use:disabled{opacity:.3}
