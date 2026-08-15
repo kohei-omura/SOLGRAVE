@@ -582,15 +582,34 @@ export class World {
     const lintel = new THREE.Mesh(new THREE.BoxGeometry(15.4, 1.2, 1.0), frame);
     lintel.position.set(0, WALL_H + 0.2, 0);
     g.add(lintel);
+    // 鍵穴（大きく光らせて分かるように）
+    const kh = new THREE.Group();
+    const plate = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 1.0, 0.3, 20), metalMaterial(131, 0xd8c07a));
+    plate.rotation.x = Math.PI / 2; plate.position.set(0, WALL_H / 2 - 1.9, -0.55);
+    kh.add(plate);
+    const hole = new THREE.Mesh(new THREE.CircleGeometry(0.34, 16),
+      new THREE.MeshBasicMaterial({ color: 0x120c08 }));
+    hole.position.set(0, WALL_H / 2 - 1.9, -0.72);
+    kh.add(hole);
+    const slot = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.6, 0.05),
+      new THREE.MeshBasicMaterial({ color: 0x120c08 }));
+    slot.position.set(0, WALL_H / 2 - 2.2, -0.72);
+    kh.add(slot);
+    const halo = new THREE.Mesh(new THREE.TorusGeometry(1.2, 0.09, 10, 26), glowMaterial(0xffd24a, 2.4));
+    halo.position.set(0, WALL_H / 2 - 1.9, -0.6);
+    kh.add(halo);
+    g.add(kh);
+    this.keyhole = { group: kh, halo };
+
     // 中央の紋章
     const crest = new THREE.Mesh(new THREE.TorusGeometry(1.5, 0.18, 12, 30), glowMaterial(0xff3a5a, 2.2));
-    crest.position.set(0, WALL_H / 2, -0.5);
+    crest.position.set(0, WALL_H / 2 + 1.4, -0.5);
     g.add(crest);
     this.doorCrest = crest;
     for (let i = 0; i < 8; i++) {
       const a = (i / 8) * Math.PI * 2;
       const sp = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.6, 6), glowMaterial(0xff5a70, 1.8));
-      sp.position.set(Math.cos(a) * 2.0, WALL_H / 2 + Math.sin(a) * 2.0, -0.5);
+      sp.position.set(Math.cos(a) * 2.0, WALL_H / 2 + 1.4 + Math.sin(a) * 2.0, -0.5);
       sp.rotation.z = a - Math.PI / 2;
       g.add(sp);
     }
@@ -1016,6 +1035,10 @@ export class World {
     }
     if (this.wardRing) this.wardRing.material.opacity = 0.16 + Math.sin(t * 1.2) * 0.07;
     if (this.doorCrest) this.doorCrest.rotation.z += 0.01;
+    if (this.keyhole && this.grandDoor && !this.grandDoor.open) {
+      this.keyhole.halo.rotation.z += 0.02;
+      this.keyhole.halo.material.emissiveIntensity = 2.0 + Math.sin(t * 3) * 0.9;
+    } else if (this.keyhole) this.keyhole.group.visible = false;
     // 扉が開く所作
     if (this.grandDoor && this.grandDoor.open && this.grandDoor.anim < 1) {
       this.grandDoor.anim = Math.min(1, this.grandDoor.anim + 0.012);

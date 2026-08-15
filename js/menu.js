@@ -170,7 +170,7 @@ export class Menu {
 
     // 頁の切り替え
     document.querySelectorAll('.menu-page').forEach(b => b.classList.toggle('on', b.dataset.page === this.page));
-    const panes = { stat: 'menu-stats', skill: 'menu-skill', gear: 'menu-gear', job: 'menu-job' };
+    const panes = { stat: 'menu-stats', skill: 'menu-skill', gear: 'menu-gear', job: 'menu-job', bag: 'menu-bag' };
     Object.keys(panes).forEach(k => {
       const el = document.getElementById(panes[k]);
       if (el) el.hidden = (k !== this.page);
@@ -178,6 +178,7 @@ export class Menu {
     if (this.page === 'skill') { this._renderSkill(c); return; }
     if (this.page === 'gear')  { this._renderGear(c); return; }
     if (this.page === 'job')   { this._renderJob(c); return; }
+    if (this.page === 'bag')   { this._renderBag(c); return; }
 
     const body = document.getElementById('menu-stats');
     if (!body) return;
@@ -256,6 +257,35 @@ export class Menu {
       b.addEventListener('click', () => {
         if (c.equip(b.dataset.id)) { this.render(); if (this.onChange) this.onChange(); }
       });
+    });
+  }
+
+  /* ── 持ち物 ── */
+  _renderBag(c) {
+    const el = document.getElementById('menu-bag');
+    if (!el) return;
+    const items = [];
+    if (this.hasKey) {
+      items.push({ ico: '🗝', nm: '大扉の鍵', key: true,
+        ds: '主の間を塞ぐ大扉を開けられる。扉のそばで「使う」を押してください。' });
+    }
+    (c.bag || []).forEach(id => {
+      const g = GEAR[id];
+      if (!g) return;
+      const mods = Object.keys(g.mods || {}).filter(k => g.mods[k]).map(k => k + '+' + g.mods[k]).join(' ');
+      const worn = Object.keys(c.gear).some(sl => c.gear[sl] === id);
+      items.push({ ico: g.slot === 'weapon' ? '⚔' : g.slot === 'armor' ? '🛡' : '◈',
+        nm: g.name + (worn ? '（装備中）' : ''), ds: g.desc + '　' + mods });
+    });
+    if (!items.length) { el.innerHTML = '<div class="rec-empty">持ち物はありません</div>'; return; }
+    el.innerHTML = items.map((it, i) =>
+      '<div class="bag-row' + (it.key ? ' key' : '') + '">' +
+      '<span class="bag-ico">' + it.ico + '</span>' +
+      '<span class="bag-nm">' + esc(it.nm) + '</span>' +
+      (it.key ? '<button class="bag-use" data-i="' + i + '">使う</button>' : '<span></span>') +
+      '<div class="bag-ds">' + esc(it.ds) + '</div></div>').join('');
+    el.querySelectorAll('.bag-use').forEach(b => {
+      b.addEventListener('click', () => { if (this.onUseKey) this.onUseKey(); });
     });
   }
 

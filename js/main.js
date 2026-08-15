@@ -103,6 +103,7 @@ class Game {
       miko: () => this.miko.makePortrait()
     });
     this.menu.onChange = () => { Party.save(this.party); this.applyStats(); };
+    this.menu.onUseKey = () => { this.menu.hide(); this.askUseKey(); };
 
     this.audio = new Audio();
     this.voice = new Voice();
@@ -205,6 +206,7 @@ class Game {
       if (e.code === 'KeyE') this.invokeHeal();
       if (e.code === 'KeyR') this.useSkill();
       if (e.code === 'KeyF') { if (this.talking) this.closeTalk(); else this.doTalk(); }
+      if (e.code === 'KeyG') this.askUseKey();
     });
     addEventListener('keyup', e => { this.keys[e.code] = false; });
 
@@ -311,6 +313,12 @@ class Game {
       healBtn.addEventListener('touchstart', go2, { passive: false });
       healBtn.addEventListener('click', go2);
     }
+    const kyb = document.getElementById('btn-key');
+    if (kyb) {
+      const go5 = e => { if (e) e.preventDefault(); this.audio.unlock(); this.askUseKey(); };
+      kyb.addEventListener('touchstart', go5, { passive: false });
+      kyb.addEventListener('click', go5);
+    }
     const tkb = document.getElementById('btn-talk');
     if (tkb) {
       const go4 = e => { if (e) e.preventDefault(); this.audio.unlock(); this.voice.unlock(); this.doTalk(); };
@@ -365,6 +373,48 @@ class Game {
       this.line('solar');
       UI.toast('向日葵の妖精が現れ、天から陽が降りそそぐ', 3400);
       UI.sun(this.sun.value, this.sunLabel(), this.sunIcon());
+    }
+  }
+
+  /** 鍵を使うか尋ねる */
+  askUseKey() {
+    if (!this.hasKey) { UI.toast('鍵を持っていません'); return; }
+    if (!this._nearDoor) { UI.toast('大扉のそばで使ってください'); return; }
+    const box = document.getElementById('talk');
+    if (!box) { this.useKey(); return; }
+    document.getElementById('talk-name').textContent = '大扉の鍵';
+    document.getElementById('talk-role').textContent = '';
+    document.getElementById('talk-txt').textContent = '鍵穴に差し込みますか。';
+    const btns = document.getElementById('talk-btns');
+    btns.innerHTML = '';
+    const add = (label, fn, fill) => {
+      const b = document.createElement('button');
+      b.className = 'btn ' + (fill ? 'btn-fill' : 'btn-line');
+      b.textContent = label;
+      b.addEventListener('click', fn);
+      btns.appendChild(b);
+    };
+    add('はい', () => { box.hidden = true; this.useKey(); }, true);
+    add('いいえ', () => { box.hidden = true; });
+    box.hidden = false;
+  }
+
+  /** 鍵で大扉を開ける */
+  useKey() {
+    const gd = this.world.grandDoor;
+    if (!gd || gd.open) { UI.toast('もう開いています'); return; }
+    if (!this.hasKey) { UI.toast('鍵を持っていません'); return; }
+    if (!this._nearDoor) { UI.toast('大扉のそばで使ってください'); return; }
+    if (this.world.openGrandDoor()) {
+      this.hasKey = false;
+      const kb = document.getElementById('btn-key'); if (kb) kb.hidden = true;
+      this.audio.sfx('phase');
+      this.particles.emit(new THREE.Vector3(gd.x, 3, gd.z), 60,
+        { color: [1, 0.85, 0.5], size: 4.4, up: 2.6 });
+      UI.toast('鍵が回った。大扉が軋みながら開いてゆく……', 4200);
+      this.voice.say(null, 'hero', { segments: [{ t: '開いた……', p: 1.0, r: 0.95, gap: 240 }, { t: '行くぞ、日和！', p: 1.1, r: 1.1 }] });
+      const st = this.world.bossStand;
+      if (st) { this.boss.setFloor(this.floor); this.boss.spawn(st.clone()); this.boss.alive = false; this.boss.group.visible = true; }
     }
   }
 
@@ -577,17 +627,17 @@ class Game {
 
     on('btn-start', () => { this.audio.unlock(); this.voice.unlock(); this.startRun(); });
     on('btn-config', () => { this.syncConfigUI(); UI.show('config'); });
-    on('btn-menu-title', () => { this.menu.show('hero'); });
+    on('btn-menu-title', () => { this.menu.hasKey = this.hasKey; this.menu.show('hero'); });
     on('menu-close', () => { this.menu.hide(); Party.save(this.party); });
     document.querySelectorAll('.menu-page').forEach(b => {
-      b.addEventListener('click', () => this.menu.setPage(b.dataset.page));
+      b.addEventListener('click', () => { this.menu.hasKey = this.hasKey; this.menu.setPage(b.dataset.page); });
     });
     document.querySelectorAll('.menu-tab').forEach(b => {
       b.addEventListener('click', () => { this.menu.who = b.dataset.who; this.menu.show(); });
     });
     const mb = document.getElementById('btn-menu');
     if (mb) {
-      const openMenu = e => { if (e) e.preventDefault(); this.menu.show(); };
+      const openMenu = e => { if (e) e.preventDefault(); this.menu.hasKey = this.hasKey; this.menu.show(); };
       mb.addEventListener('touchstart', openMenu, { passive: false });
       mb.addEventListener('click', openMenu);
     }
@@ -1081,6 +1131,12 @@ class Game {
     // 主人公の霊力
     const hh = this.party.hero;
     this.heroMp = Math.min(hh.maxMp, this.heroMp + hh.mpRegen * dt);
+    const kyb = document.getElementById('btn-key');
+    if (kyb) {
+      const go5 = e => { if (e) e.preventDefault(); this.audio.unlock(); this.askUseKey(); };
+      kyb.addEventListener('touchstart', go5, { passive: false });
+      kyb.addEventListener('click', go5);
+    }
     const tkb = document.getElementById('btn-talk');
     if (tkb) {
       const go4 = e => { if (e) e.preventDefault(); this.audio.unlock(); this.voice.unlock(); this.doTalk(); };
@@ -1279,7 +1335,16 @@ class Game {
       });
       // 豪華な大扉（鍵で開く）
       const gd = this.world.grandDoor;
-      if (gd && !gd.open && Math.hypot(P.pos.x - gd.x, P.pos.z - gd.z) < 8.0) {
+      const nearDoor = gd && !gd.open && Math.hypot(P.pos.x - gd.x, P.pos.z - gd.z) < 11.0;
+      this._nearDoor = nearDoor;
+      const kb = document.getElementById('btn-key');
+      if (kb) kb.hidden = !(nearDoor && this.hasKey);
+      if (nearDoor && !this.hasKey && !this._doorHint) {
+        this._doorHint = true;
+        UI.toast('固く閉ざされた大扉。鍵穴が光っている。中ボスを討て', 4000);
+        setTimeout(() => { this._doorHint = false; }, 6000);
+      }
+      if (false) {
         if (this.hasKey) {
           if (this.world.openGrandDoor()) {
             this.hasKey = false;
