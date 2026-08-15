@@ -154,14 +154,33 @@ export class Boss {
   setFloor(floor) {
     this.floor = Math.max(1, floor || 1);
     const LORD = [
-      { name: '古き吸血鬼',   cape: 0x0d0a12, line: 0x6b0f18, eye: 0xff1a1a },
-      { name: '血啜りの伯',   cape: 0x120a16, line: 0x7a1420, eye: 0xff3a2a },
-      { name: '霧を統べる者', cape: 0x0a1018, line: 0x14506b, eye: 0x4ad0ff },
-      { name: '月喰みの王',   cape: 0x14101c, line: 0x5a3a8a, eye: 0xc07aff },
-      { name: '夜の始祖',     cape: 0x1a0a0a, line: 0x8a1010, eye: 0xff6a1a }
+      { name: '古き吸血鬼',     cape: 0x0d0a12, line: 0x6b0f18, eye: 0xff1a1a },
+      { name: '食屍鬼の長',     cape: 0x2a2418, line: 0x5a4a20, eye: 0xc8ff4a },
+      { name: '霧を統べる者',   cape: 0x0a1018, line: 0x14506b, eye: 0x4ad0ff },
+      { name: '首なし騎士',     cape: 0x14141a, line: 0x3a3a48, eye: 0x8affd0 },
+      { name: '死霊術師',       cape: 0x1a0f24, line: 0x4a1a6b, eye: 0xb07aff },
+      { name: '酒呑童子',       cape: 0x2a0e0e, line: 0x8a2010, eye: 0xffb020 },
+      { name: '九尾の妖狐',     cape: 0x3a1a08, line: 0xc06a10, eye: 0xffd24a },
+      { name: '八岐大蛇',       cape: 0x0e2418, line: 0x1a6b3a, eye: 0x6affa0 },
+      { name: '大天狗',         cape: 0x241010, line: 0x8a2a10, eye: 0xff6a2a },
+      { name: '風の魔王',       cape: 0x241c0a, line: 0x8a7a10, eye: 0xffe24a },
+      { name: '蛇の魔神',       cape: 0x0a2420, line: 0x108a6b, eye: 0x4affd0 },
+      { name: '石化の魔女',     cape: 0x1a2418, line: 0x4a6b20, eye: 0xa0ff6a },
+      { name: '嵐の巨人',       cape: 0x101c2a, line: 0x2050a0, eye: 0x6ab0ff },
+      { name: '骸の王',         cape: 0x1c1a14, line: 0x6b6050, eye: 0xfff0c0 },
+      { name: '泣き叫ぶ妖精',   cape: 0x1a1420, line: 0x5a3a7a, eye: 0xff8ad0 },
+      { name: '這い寄る混沌',   cape: 0x0a0a10, line: 0x2a1a4a, eye: 0x8a4aff },
+      { name: '海淵の旧支配者', cape: 0x0a1a1a, line: 0x106b6b, eye: 0x4affff },
+      { name: '不死者の王',     cape: 0x140a0a, line: 0x8a1010, eye: 0xff4a2a },
+      { name: '堕ちた熾天使',   cape: 0x201c10, line: 0xa08a20, eye: 0xfff0a0 },
+      { name: '夜の始祖',       cape: 0x1a0a0a, line: 0x8a1010, eye: 0xff6a1a }
     ];
+
     const L = LORD[(this.floor - 1) % LORD.length];
-    this.lordName = L.name + (this.floor > LORD.length ? '・第' + this.floor + '相' : '');
+    const cycle = Math.floor((this.floor - 1) / LORD.length);
+    this.lordName = L.name + (cycle > 0 ? '・' + ['','再臨','真','極'][Math.min(3, cycle)] : '');
+    // 姿の大きさも階で変わる
+    this.group.scale.setScalar(1 + Math.min(0.6, (this.floor - 1) * 0.012));
     this.maxHp = Math.round(340 * (1 + (this.floor - 1) * 0.7));
     this.hp = this.maxHp;
     this.power = Math.round(120 * (1 + (this.floor - 1) * 0.3));

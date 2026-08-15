@@ -789,24 +789,67 @@ class Game {
     this.world.spawnPoints.forEach((p, i) => {
       this.enemies.spawn(kinds[i % kinds.length], p);
     });
+    // 中ボス：大扉から離れた部屋に置く。倒すと鍵を落とす
+    const rooms = this.world.rooms;
+    const gateR = this.world.gateRoom;
+    let far = rooms[1] || rooms[0], bestD = -1;
+    rooms.forEach(r => {
+      if (r === this.world.startRoom || r === gateR) return;
+      const d = Math.hypot(r.x - (gateR ? gateR.x : 0), r.z - (gateR ? gateR.z : 0));
+      if (d > bestD) { bestD = d; far = r; }
+    });
+    if (far) {
+      this.eliteRef = this.enemies.spawnElite(new THREE.Vector3(far.x, 0, far.z), this.floor);
+      this.eliteRoom = far;
+    }
     UI.objective('第' + this.floor + '層　――　最深部へ。天窓の光で陽力を補え');
     UI.toast('日光は届かない。天窓の下でのみ陽力が戻る');
   }
 
   async enterBoss() {
+    if (this._bossIntro) return;
+    this._bossIntro = true;
     this.phase = Phase.BOSS;
     const lord = this.boss.setFloor(this.floor);
+    const st = this.world.bossStand || new THREE.Vector3(this.world.bossRoom.x, 0, this.world.bossRoom.z);
+    this.boss.spawn(st.clone());
+    this.boss.alive = false;                 // 会話のあいだは動かない
+    this.audio.stopBGM();
+
+    // ── 対峙の会話 ──
+    await UI.cutin('第 ' + this.floor + ' 層　主 の 間', 1500);
+    const talks = [
+      { who: 'boss', t: lord + '「……よくぞ来た、陽の子よ」' },
+      { who: 'hero', t: '「お前で最後だ。地の底に、もう夜は残さない」' },
+      { who: 'miko', t: '日和「……ご武運を。わたくしが、必ずお守りします」' },
+      { who: 'boss', t: lord + '「その灯り、消してくれよう」' }
+    ];
+    for (const line of talks) {
+      UI.shout('');
+      const box = document.getElementById('talk');
+      document.getElementById('talk-name').textContent = (line.who === 'boss') ? lord : (line.who === 'miko' ? '日和' : '陽光狩人');
+      document.getElementById('talk-role').textContent = (line.who === 'boss') ? '階の主' : '';
+      document.getElementById('talk-txt').textContent = line.t;
+      document.getElementById('talk-btns').innerHTML = '';
+      box.hidden = false;
+      if (line.who === 'hero') this.voice.say(line.t.slice(1, 24), 'hero');
+      else if (line.who === 'miko') this.voice.say('ご武運を', 'miko');
+      await new Promise(r => setTimeout(r, 2100));
+    }
+    const box = document.getElementById('talk');
+    if (box) box.hidden = true;
+
+    // ── 戦闘開始 ──
+    this.audio.startBGM('boss');
+    this.boss.alive = true;
     const bn = document.querySelector('#hud-boss .boss-name');
     if (bn) bn.textContent = lord;
-    this.audio.startBGM('boss');
-    this.line('bossIn');
-    await UI.cutin('第 ' + this.floor + ' 層　' + (this.boss.lordName || '古き吸血鬼'), 1800);
-    const r = this.world.bossRoom;
-    this.boss.spawn(new THREE.Vector3(r.x, 0, r.z - 4));
     const bh = document.getElementById('hud-boss'); if (bh) bh.hidden = false;
     UI.bossBar(1, '第一相');
+    await UI.cutin(lord, 1400);
     UI.objective('第' + this.floor + '層の主　――　霧を散らし、闇を討て');
     this.audio.sfx('phase');
+    this._bossIntro = false;
   }
 
   async onBossPhase(p) {
@@ -1085,7 +1128,16 @@ class Game {
       this.stats.kills++;
       this.audio.sfx('ash');
       // 階が深いほど、レアなら大きく
-      this.coin += Math.round((2 + this.floor) * (e.rare ? 12 : 1));
+      this.coin += Math.round((2 + this.floor) * (e.rare ? 12 : 1) * (e.elite ? 8 : 1));
+      if (e.elite) {
+        this.hasKey = true;
+        this.audio.sfx('refill');
+        this.particles.emit(new THREE.Vector3(e.p.x, 1.5, e.p.z), 44,
+          { color: [1, 0.85, 0.35], size: 4.2, up: 3 });
+        UI.toast('中ボスを討った　――　大扉の鍵を手に入れた', 4200);
+        this.voice.say(null, 'hero', { segments: [{ t: '鍵だ！', p: 1.12, r: 1.2, gap: 140 }, { t: '主の間へ行くぞ', p: 1.02, r: 1.05 }] });
+        this.grantExp(Math.round(260 * (1 + (this.floor - 1) * 0.6)));
+      }
       const base = expOf(e.kind, false) * (1 + (this.floor - 1) * 0.45);
       this.grantExp(Math.round(base * (e.rare ? 9 : 1)));
       if (e.rare) {
@@ -1232,14 +1284,17 @@ class Game {
           if (this.world.openGrandDoor()) {
             this.hasKey = false;
             this.audio.sfx('phase');
-            this.particles.emit(new THREE.Vector3(gd.x, 3, gd.z), 40,
-              { color: [1, 0.85, 0.5], size: 4, up: 2.6 });
-            UI.toast('大扉が開いた　――　主の間へ');
-            this.voice.say(null, 'hero', { segments: [{ t: '開いた……', p: 1.0, r: 1.0, gap: 200 }, { t: '行くぞ！', p: 1.12, r: 1.15 }] });
+            this.particles.emit(new THREE.Vector3(gd.x, 3, gd.z), 60,
+              { color: [1, 0.85, 0.5], size: 4.4, up: 2.6 });
+            UI.toast('大扉が軋みながら開いてゆく……', 4000);
+            this.voice.say(null, 'hero', { segments: [{ t: '開いた……', p: 1.0, r: 0.95, gap: 240 }, { t: '行くぞ、日和！', p: 1.1, r: 1.1 }] });
+            // 主は広間の中央で待っている
+            const st = this.world.bossStand;
+            if (st) { this.boss.setFloor(this.floor); this.boss.spawn(st.clone()); this.boss.alive = false; this.boss.group.visible = true; }
           }
         } else if (!this._doorHint) {
           this._doorHint = true;
-          UI.toast('固く閉ざされた大扉。この階のどこかに鍵がある', 3600);
+          UI.toast('固く閉ざされた大扉。中ボスを討てば鍵が手に入る', 4000);
           setTimeout(() => { this._doorHint = false; }, 6000);
         }
       }

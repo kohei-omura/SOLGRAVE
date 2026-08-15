@@ -382,9 +382,11 @@ export class World {
       }
     }
 
-    this.bossRoom = far.room;
     this.startRoom = cells[0][0].room;
-    this._makeBossHall(this.bossRoom, wallMat, floorMat);
+    // 最奥の部屋の先に、専用の大広間をつなげる
+    const gate = far.room;
+    this.gateRoom = gate;
+    this._buildBossHall(gate);
     this._addBossWindow(this.bossRoom);
 
     // ── 仕掛け ──
@@ -401,9 +403,6 @@ export class World {
       const r = chestPool[Math.floor(rnd() * chestPool.length)];
       if (r && !this.gimmicks.chests.some(c => c.x === r.x && c.z === r.z)) this._addChest(r.x + 4, r.z + 4);
     }
-    // ボスの間の手前に豪華な大扉（この階で拾った鍵で開く）
-    const bx = this.bossRoom.x, bz = this.bossRoom.z;
-    this._addGrandDoor(bx, bz - this.bossRoom.d / 2 - 1.0);
     // 中ほどの部屋に一時記録の祠
     const midRoom = this.rooms[Math.floor(this.rooms.length / 2)] || this.rooms[1];
     if (midRoom && midRoom !== this.startRoom && midRoom !== this.bossRoom) {
@@ -429,6 +428,100 @@ export class World {
     this._addWarp(wx, wz);
     this.exit = { x: wx, z: wz, r: 2.8 };
     return this;
+  }
+
+  /** 迷路の外に、豪華な大広間を建てる。大扉だけが入口 */
+  _buildBossHall(gate) {
+    const HW = 46, HD = 40;                       // とにかく広く
+    const HH = WALL_H + 5.5;                      // 天井も高く
+    const hx = gate.x;
+    const hz = gate.z + gate.d / 2 + 34;          // 最奥の部屋のさらに south
+    this.bossRoom = { x: hx, z: hz, w: HW, d: HD, isHall: true, cell: { N: true, S: false, E: false, W: false } };
+
+    // ── 別素材：磨いた黒曜と金 ──
+    const marble = new THREE.MeshStandardMaterial({
+      color: 0x2e2a3a, roughness: 0.22, metalness: 0.45,
+      emissive: new THREE.Color(0x0e0a14), emissiveIntensity: 0.6
+    });
+    const gold = metalMaterial(130, 0xc9a227);
+    const wallM = new THREE.MeshStandardMaterial({
+      color: 0x3a3448, roughness: 0.3, metalness: 0.35
+    });
+
+    // 床（市松）
+    for (let i = 0; i < 8; i++) for (let k = 0; k < 7; k++) {
+      const t = ((i + k) % 2 === 0);
+      const tile = new THREE.Mesh(new THREE.PlaneGeometry(HW / 8, HD / 7),
+        t ? marble : new THREE.MeshStandardMaterial({ color: 0x4a4258, roughness: 0.25, metalness: 0.4 }));
+      tile.rotation.x = -Math.PI / 2;
+      tile.position.set(hx - HW / 2 + HW / 8 * (i + 0.5), 0.01, hz - HD / 2 + HD / 7 * (k + 0.5));
+      tile.receiveShadow = true;
+      this.group.add(tile);
+    }
+    // 天井
+    const ceil = new THREE.Mesh(new THREE.PlaneGeometry(HW, HD), wallM);
+    ceil.rotation.x = Math.PI / 2; ceil.position.set(hx, HH, hz);
+    this.group.add(ceil);
+
+    // 四方の壁（北面だけ大扉ぶんを空ける）
+    const DOORW = 13;
+    const wall = (w, h, d, x, y, z) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wallM);
+      m.position.set(x, y, z); m.receiveShadow = true;
+      this.group.add(m);
+      this.colliders.push({ min: { x: x - w / 2, z: z - d / 2 }, max: { x: x + w / 2, z: z + d / 2 } });
+    };
+    const side = (HW - DOORW) / 2;
+    wall(side, HH, 1.4, hx - (DOORW / 2 + side / 2), HH / 2, hz - HD / 2);   // 北・左
+    wall(side, HH, 1.4, hx + (DOORW / 2 + side / 2), HH / 2, hz - HD / 2);   // 北・右
+    wall(HW + 2.8, HH, 1.4, hx, HH / 2, hz + HD / 2);                        // 南
+    wall(1.4, HH, HD, hx - HW / 2, HH / 2, hz);                              // 西
+    wall(1.4, HH, HD, hx + HW / 2, HH / 2, hz);                              // 東
+
+    // ── 参道（最奥の部屋から大扉まで） ──
+    const cw = 13;
+    const z0 = gate.z + gate.d / 2, z1 = hz - HD / 2;
+    const cl = new THREE.Mesh(new THREE.PlaneGeometry(cw, z1 - z0 + 4), marble);
+    cl.rotation.x = -Math.PI / 2; cl.position.set(hx, 0.01, (z0 + z1) / 2);
+    this.group.add(cl);
+    const cc = new THREE.Mesh(new THREE.PlaneGeometry(cw, z1 - z0 + 4), wallM);
+    cc.rotation.x = Math.PI / 2; cc.position.set(hx, WALL_H, (z0 + z1) / 2);
+    this.group.add(cc);
+    wall(1.4, WALL_H, z1 - z0 + 4, hx - cw / 2, WALL_H / 2, (z0 + z1) / 2);
+    wall(1.4, WALL_H, z1 - z0 + 4, hx + cw / 2, WALL_H / 2, (z0 + z1) / 2);
+
+    // ── 飾り：金の大紋章・列柱・燭台・玉座の段 ──
+    const seal = new THREE.Mesh(new THREE.RingGeometry(6.0, 12.0, 64),
+      new THREE.MeshBasicMaterial({ color: 0xc9a227, transparent: true, opacity: 0.22,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+    seal.rotation.x = -Math.PI / 2; seal.position.set(hx, 0.06, hz);
+    this.group.add(seal);
+    this.bossSeal = seal;
+
+    for (let i = 0; i < 10; i++) {
+      const a = (i / 10) * Math.PI * 2;
+      const px = hx + Math.cos(a) * 17, pz = hz + Math.sin(a) * 15;
+      const p = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.15, HH - 0.6, 12), gold);
+      p.position.set(px, (HH - 0.6) / 2, pz);
+      this.group.add(p);
+      this.colliders.push({ min: { x: px - 1.0, z: pz - 1.0 }, max: { x: px + 1.0, z: pz + 1.0 } });
+      const fire = new THREE.Mesh(new THREE.SphereGeometry(0.34, 10, 8), glowMaterial(0xff8a3a, 2.6));
+      fire.position.set(px, HH - 0.3, pz);
+      this.group.add(fire);
+      const l = new THREE.PointLight(0xffa860, 3.0, 22, 1.6);
+      l.visible = false; l.position.set(px, HH - 0.3, pz);
+      this.group.add(l);
+      (this.torches = this.torches || []).push({ fire, light: l, phase: Math.random() * 6.28 });
+    }
+    // 奥の玉座段
+    const dais = new THREE.Mesh(new THREE.CylinderGeometry(6.5, 7.5, 0.8, 32), marble);
+    dais.position.set(hx, 0.4, hz + 6);
+    dais.receiveShadow = true;
+    this.group.add(dais);
+
+    // ── 大扉（唯一の入口） ──
+    this._addGrandDoor(hx, hz - HD / 2);
+    this.bossStand = new THREE.Vector3(hx, 0, hz + 6);
   }
 
   /** ボスの間：一番広く、柱と燭台で飾る。手前に豪華な大扉 */
@@ -513,6 +606,7 @@ export class World {
     const d = this.grandDoor;
     if (!d || d.open) return false;
     d.open = true;
+    d.anim = 0;                      // 0→1 で観音開き
     const i = this.colliders.indexOf(d.collider);
     if (i >= 0) this.colliders.splice(i, 1);
     return true;
@@ -922,6 +1016,17 @@ export class World {
     }
     if (this.wardRing) this.wardRing.material.opacity = 0.16 + Math.sin(t * 1.2) * 0.07;
     if (this.doorCrest) this.doorCrest.rotation.z += 0.01;
+    // 扉が開く所作
+    if (this.grandDoor && this.grandDoor.open && this.grandDoor.anim < 1) {
+      this.grandDoor.anim = Math.min(1, this.grandDoor.anim + 0.012);
+      const k = this.grandDoor.anim;
+      const e = 1 - Math.pow(1 - k, 3);
+      if (this.doorLeaves) this.doorLeaves.forEach(L => {
+        L.m.rotation.y = L.sx * e * 1.35;
+        L.m.position.x = L.sx * (3.1 + e * 2.6);
+      });
+      if (this.doorCrest) this.doorCrest.material.opacity = 1 - e;
+    }
     if (this.bossSeal) this.bossSeal.rotation.z += 0.004;
     if (this.restRing) { this.restRing.rotation.z += 0.02; }
     if (this.restOrb) { this.restOrb.position.y = 3.7 + Math.sin(t * 2) * 0.14; }

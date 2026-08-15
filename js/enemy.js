@@ -269,6 +269,19 @@ export class Enemies {
     this.rareRate = Math.min(0.22, 0.03 + (this.floor - 1) * 0.018);
   }
 
+  /** 中ボス：雑魚より強く、階の主より弱い。鍵を落とす */
+  spawnElite(pos, floor) {
+    const f = Math.max(1, floor || 1);
+    const hp = Math.round(40 * (1 + (f - 1) * 0.8));
+    this.list.push({
+      kind: EnemyKind.SHIELD, hp, maxHp: hp,
+      p: pos.clone(), r: 1.5, speed: 2.6 * (this.spMul || 1),
+      burn: 0, stagger: 0, dead: false, ash: 0, y: 0,
+      phase: Math.random() * 6.28, rare: false, elite: true
+    });
+    return this.list[this.list.length - 1];
+  }
+
   spawn(kind, pos, forceRare) {
     const sp = SPEC[kind];
     const rare = forceRare || (Math.random() < (this.rareRate || 0));
@@ -351,7 +364,7 @@ export class Enemies {
       if (e.stagger > 0) { e.stagger -= dt; continue; }
 
       // 天窓の光に入ると浄化される
-      const s = world.inShaft(e.p.x, e.p.z);
+      const s = e.elite ? null : world.inShaft(e.p.x, e.p.z);
       if (s) {
         e.dead = true; e.ash = 0.7;
         if (audio) audio.sfx('ash');
@@ -396,6 +409,7 @@ export class Enemies {
       if (e.dead) continue;
       const dx = e.p.x - px, dz = e.p.z - pz;
       if (dx * dx + dz * dz < r * r) {
+        if (e.elite) { e.hp -= 12; if (e.hp > 0) continue; }
         e.dead = true; e.ash = 0.6; n++;
         if (this.particles) {
           this.particles.emit(new THREE.Vector3(e.p.x, e.y, e.p.z), 14,
@@ -455,7 +469,7 @@ export class Enemies {
       if (!im) continue;
       const idx = counts[e.kind]++;
       if (idx >= im.count) continue;
-      const scale = (e.ash > 0 ? Math.max(0.01, e.ash) : 1) * (e.rare ? 1.35 : 1);
+      const scale = (e.ash > 0 ? Math.max(0.01, e.ash) : 1) * (e.rare ? 1.35 : 1) * (e.elite ? 2.1 : 1);
       this._m.makeTranslation(e.p.x, e.y, e.p.z);
       if (e.facing) {
         this._q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.atan2(e.facing.x, e.facing.z));
