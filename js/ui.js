@@ -4,7 +4,7 @@ const $ = s => document.querySelector(s);
 export const UI = {
   el: {},
   init() {
-    ['rotate','boot','perm','title','hud','pad','cutin','config','records','result','shop','talk','toast']
+    ['rotate','boot','perm','title','hud','pad','cutin','config','records','result','shop','talk','floors','toast']
       .forEach(id => { this.el[id] = document.getElementById(id); });
     this.el.bootFill = $('#boot-fill');
     this.el.bootMsg  = $('#boot-msg');

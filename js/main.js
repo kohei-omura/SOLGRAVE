@@ -41,6 +41,8 @@ class Game {
     this.skillCd = {};
     this.coin = 0;
     this.talking = null;
+    this.maxFloor = 1;      // 到達した最も深い階
+    this.checkpoint = null; // 一時記録 {floor}
     this.camYaw = 0;       // 視点の向き
     this.camPitch = 0.62;  // 見下ろす角度
   }
@@ -84,6 +86,14 @@ class Game {
 
     UI.boot(55, '音を用意しています…');
     // ── 一党（狩人と巫女） ──
+    try {
+      const pr = JSON.parse(localStorage.getItem('solgrave_progress') || 'null');
+      if (pr) {
+        this.maxFloor = Math.max(1, Math.min(100, pr.maxFloor || 1));
+        this.checkpoint = pr.checkpoint || null;
+        this.coin = pr.coin || 0;
+      }
+    } catch (e) {}
     this.party = Party.load({
       hero: { name: '陽光狩人', job: '狩人', bias: { ATK: 1.15, DEX: 1.1, AGI: 1.05, MATK: 0.85, MP: 0.8 } },
       miko: { name: '日和', job: '巫女', bias: { MATK: 1.25, MP: 1.3, MDEF: 1.15, ATK: 0.7, DEF: 0.85 } }
@@ -145,6 +155,37 @@ class Game {
       UI.hp(this.player.hp, this.player.maxHp, this.player.guard, this.player.guardMax);
     }
     if (this.miko) this.miko.applyStats(m);
+  }
+
+  saveProgress() {
+    try {
+      localStorage.setItem('solgrave_progress', JSON.stringify({
+        maxFloor: this.maxFloor, checkpoint: this.checkpoint, coin: this.coin }));
+    } catch (e) {}
+  }
+
+  /** 階層の選択を開く */
+  openFloors() {
+    const el = document.getElementById('fl-list');
+    if (!el) return;
+    let h = '';
+    for (let i = 1; i <= this.maxFloor; i++) {
+      const isRest = this.checkpoint && this.checkpoint.floor === i;
+      h += '<button class="fl-btn' + (i === this.floor ? ' on' : '') + (isRest ? ' rest' : '') +
+        '" data-f="' + i + '">第' + i + '層' +
+        (isRest ? '<small>栞あり</small>' : '') + '</button>';
+    }
+    el.innerHTML = h;
+    el.querySelectorAll('.fl-btn').forEach(b => {
+      b.addEventListener('click', () => {
+        this.floor = +b.dataset.f;
+        UI.hide('floors');
+        this.saveProgress();
+        this.enterDungeon();
+        UI.toast('第' + this.floor + '層へ降りた');
+      });
+    });
+    UI.show('floors');
   }
 
   sunLabel() { return this.sun ? this.sun.label : '—'; }
@@ -276,6 +317,8 @@ class Game {
       tkb.addEventListener('touchstart', go4, { passive: false });
       tkb.addEventListener('click', go4);
     }
+    const fc = document.getElementById('fl-close');
+    if (fc) fc.addEventListener('click', () => UI.hide('floors'));
     const sc = document.getElementById('shop-close');
     if (sc) sc.addEventListener('click', () => UI.hide('shop'));
     const skb = document.getElementById('btn-skill');
@@ -728,6 +771,8 @@ class Game {
     if (this.town) this.town.group.visible = false;   // 地下に街を持ち込まない
     this.pile.group.visible = false;
     this.hasKey = false;
+    if (this.floor > this.maxFloor) { this.maxFloor = this.floor; }
+    this.saveProgress();
     this.world.buildDungeon(Date.now() % 100000, this.floor);
     this.player.reset(this.world.playerStart);
     this.miko.reset(this.world.playerStart);
@@ -816,7 +861,10 @@ class Game {
     UI.toast('浄化率 ' + res.rate + '％　経験 ' + exp + gearMsg, 4200);
 
     // 次の階へ
-    this.floor++;
+    this.floor = Math.min(100, this.floor + 1);
+    if (this.floor > this.maxFloor) this.maxFloor = this.floor;
+    this.checkpoint = null;
+    this.saveProgress();
     UI.toast('地の底がさらに深くなった　――　第 ' + this.floor + ' 層', 4000);
     this.coffin.hide();
     this.pile.active = false; this.pile.done = false;
@@ -859,7 +907,7 @@ class Game {
 
   async gameOver() {
     this.phase = Phase.RESULT;
-    this.floor = 1;                      // 力尽きたら第1層から
+    this.floor = (this.checkpoint && this.checkpoint.floor) ? this.checkpoint.floor : 1;
     await UI.cutin('陽 は 落 ち た', 1500);
     const ttl = document.getElementById('res-ttl');
     if (ttl) ttl.textContent = '力尽きた';
@@ -996,6 +1044,8 @@ class Game {
       tkb.addEventListener('touchstart', go4, { passive: false });
       tkb.addEventListener('click', go4);
     }
+    const fc = document.getElementById('fl-close');
+    if (fc) fc.addEventListener('click', () => UI.hide('floors'));
     const sc = document.getElementById('shop-close');
     if (sc) sc.addEventListener('click', () => UI.hide('shop'));
     const skb = document.getElementById('btn-skill');
@@ -1131,7 +1181,8 @@ class Game {
       // 頂上の祠だけが入口。ふもとで反応しないよう高さも見る
       if (e && Math.hypot(P.pos.x - e.x, P.pos.z - e.z) < e.r
           && Math.abs(P.pos.y - (e.y || 0)) < 3.0) {
-        this.enterDungeon();
+        if (this.maxFloor > 1) this.openFloors();
+        else this.enterDungeon();
         return;                    // この後のBGM判定に上書きされないよう抜ける
       }
       const sc = this.world.sanctuary;
@@ -1145,7 +1196,8 @@ class Game {
         : ('陽力 ' + Math.round(this.sun.value) + '％／遺跡は南の彼方'));
     } else if (this.phase === Phase.DUNGEON) {
       const r = this.world.bossRoom;
-      if (r && Math.hypot(P.pos.x - r.x, P.pos.z - r.z) < Math.max(r.w, r.d) * 0.4) {
+      const doorOpen = !this.world.grandDoor || this.world.grandDoor.open;
+      if (doorOpen && r && Math.hypot(P.pos.x - r.x, P.pos.z - r.z) < Math.max(r.w, r.d) * 0.35) {
         this.enterBoss();
       }
       // 仕掛け（鍵・扉・宝箱）
@@ -1173,6 +1225,43 @@ class Game {
           Party.save(this.party);
         }
       });
+      // 豪華な大扉（鍵で開く）
+      const gd = this.world.grandDoor;
+      if (gd && !gd.open && Math.hypot(P.pos.x - gd.x, P.pos.z - gd.z) < 8.0) {
+        if (this.hasKey) {
+          if (this.world.openGrandDoor()) {
+            this.hasKey = false;
+            this.audio.sfx('phase');
+            this.particles.emit(new THREE.Vector3(gd.x, 3, gd.z), 40,
+              { color: [1, 0.85, 0.5], size: 4, up: 2.6 });
+            UI.toast('大扉が開いた　――　主の間へ');
+            this.voice.say(null, 'hero', { segments: [{ t: '開いた……', p: 1.0, r: 1.0, gap: 200 }, { t: '行くぞ！', p: 1.12, r: 1.15 }] });
+          }
+        } else if (!this._doorHint) {
+          this._doorHint = true;
+          UI.toast('固く閉ざされた大扉。この階のどこかに鍵がある', 3600);
+          setTimeout(() => { this._doorHint = false; }, 6000);
+        }
+      }
+
+      // 一時記録の祠
+      const rs = this.world.rest;
+      if (rs && Math.hypot(P.pos.x - rs.x, P.pos.z - rs.z) < rs.r) {
+        this._restHold = (this._restHold || 0) + dt;
+        if (this._restHold > 1.0 && (!this.checkpoint || this.checkpoint.floor !== this.floor)) {
+          this._restHold = 0;
+          this.checkpoint = { floor: this.floor };
+          this.player.hp = this.player.maxHp;
+          this.player.guard = this.player.guardMax;
+          this.heroMp = this.party.hero.maxMp;
+          this.miko.mp = this.miko.maxMp;
+          UI.hp(this.player.hp, this.player.maxHp, this.player.guard, this.player.guardMax);
+          this.saveProgress();
+          this.audio.sfx('refill');
+          UI.toast('栞を挟んだ　――　次はこの階から始められる', 3600);
+        }
+      } else this._restHold = 0;
+
       // 光の罠
       const hz = this.world.onHazard(P.pos.x, P.pos.z);
       if (hz && !this.solar.active) {

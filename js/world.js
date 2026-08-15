@@ -45,6 +45,8 @@ export class World {
     this.ramps = []; this.plats = [];
     this.gimmicks = null; this.wards = null; this.wardRing = null; this.sanctuary = null;
     this.warp = null; this.warpRings = null; this.warpCol = null;
+    this.grandDoor = null; this.rest = null; this.doorCrest = null;
+    this.bossSeal = null; this.restRing = null; this.restOrb = null;
     this.spawnPoints = []; this.exit = null; this.bossRoom = null;
   }
 
@@ -246,12 +248,22 @@ export class World {
     const rnd = rngFactory(seed || 12345);
 
     // 階が深いほど広くなる
-    const GW = Math.min(6, 3 + Math.floor(this.floor / 2));
-    const GH = Math.min(6, 3 + Math.floor((this.floor + 1) / 2));
+    // 深いほど広がる（上限8×8）。10階ごとに趣が変わる
+    const band = Math.floor((this.floor - 1) / 10);
+    const GW = Math.min(8, 3 + Math.floor(this.floor / 4) + Math.min(2, band));
+    const GH = Math.min(8, 3 + Math.floor((this.floor + 2) / 4) + Math.min(2, band));
+    this.band = band;
     const CELL = 34;                       // 部屋の間隔
 
-    const floorMat = stoneMaterial(21, 0x6f747f);
-    const wallMat  = stoneMaterial(22, 0x7b8291);
+    // 10階ごとに石の色が変わる
+    const TONE = [
+      [0x6f747f, 0x7b8291], [0x7a6f5f, 0x8a8070], [0x5f6f7a, 0x6f8290],
+      [0x7a5f6f, 0x8a7080], [0x5f7a63, 0x708a74], [0x7a7a5f, 0x8a8a70],
+      [0x6a5f7a, 0x7a7090], [0x7a6a5f, 0x8a7a70], [0x5f6a7a, 0x707a8a], [0x7a5f5f, 0x8a7070]
+    ];
+    const tn = TONE[this.band % TONE.length];
+    const floorMat = stoneMaterial(21 + this.band, tn[0]);
+    const wallMat  = stoneMaterial(22 + this.band, tn[1]);
 
     // ── 迷路を掘る（深さ優先） ──
     const cells = [];
@@ -372,6 +384,7 @@ export class World {
 
     this.bossRoom = far.room;
     this.startRoom = cells[0][0].room;
+    this._makeBossHall(this.bossRoom, wallMat, floorMat);
     this._addBossWindow(this.bossRoom);
 
     // ── 仕掛け ──
@@ -388,9 +401,14 @@ export class World {
       const r = chestPool[Math.floor(rnd() * chestPool.length)];
       if (r && !this.gimmicks.chests.some(c => c.x === r.x && c.z === r.z)) this._addChest(r.x + 4, r.z + 4);
     }
-    // ボス部屋の手前に封印扉
+    // ボスの間の手前に豪華な大扉（この階で拾った鍵で開く）
     const bx = this.bossRoom.x, bz = this.bossRoom.z;
-    this._addSealDoor(bx, bz - this.bossRoom.d / 2 - 1.0);
+    this._addGrandDoor(bx, bz - this.bossRoom.d / 2 - 1.0);
+    // 中ほどの部屋に一時記録の祠
+    const midRoom = this.rooms[Math.floor(this.rooms.length / 2)] || this.rooms[1];
+    if (midRoom && midRoom !== this.startRoom && midRoom !== this.bossRoom) {
+      this._addRest(midRoom.x + 5, midRoom.z - 5);
+    }
     // 撃つと開く祭壇
     const sw = this.rooms[Math.floor(this.rooms.length / 2)];
     if (sw && sw !== this.bossRoom) this._addSwitch(sw.x, sw.z);
@@ -411,6 +429,121 @@ export class World {
     this._addWarp(wx, wz);
     this.exit = { x: wx, z: wz, r: 2.8 };
     return this;
+  }
+
+  /** ボスの間：一番広く、柱と燭台で飾る。手前に豪華な大扉 */
+  _makeBossHall(room, wallMat, floorMat) {
+    const cx = room.x, cz = room.z;
+    // 床の紋
+    const seal = new THREE.Mesh(new THREE.RingGeometry(4.5, 9.0, 48),
+      new THREE.MeshBasicMaterial({ color: 0xc9a227, transparent: true, opacity: 0.18,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+    seal.rotation.x = -Math.PI / 2; seal.position.set(cx, 0.05, cz);
+    this.group.add(seal);
+    this.bossSeal = seal;
+    // 列柱
+    const pillar = metalMaterial(120, 0x9a8a6a);
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      const px = cx + Math.cos(a) * 10.5, pz = cz + Math.sin(a) * 10.5;
+      const p = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.78, WALL_H - 0.4, 10), pillar);
+      p.position.set(px, (WALL_H - 0.4) / 2, pz);
+      this.group.add(p);
+      this.colliders.push({ min: { x: px - 0.7, z: pz - 0.7 }, max: { x: px + 0.7, z: pz + 0.7 } });
+      // 燭台
+      const fire = new THREE.Mesh(new THREE.SphereGeometry(0.3, 10, 8), glowMaterial(0xff8a3a, 2.4));
+      fire.position.set(px, WALL_H - 0.2, pz);
+      this.group.add(fire);
+      const l = new THREE.PointLight(0xffa860, 2.6, 16, 1.6);
+      l.visible = false;
+      l.position.set(px, WALL_H - 0.2, pz);
+      this.group.add(l);
+      (this.torches = this.torches || []).push({ fire, light: l, phase: Math.random() * 6.28 });
+    }
+  }
+
+  /** ボスの間の大扉（鍵で開く） */
+  _addGrandDoor(x, z) {
+    const g = new THREE.Group();
+    const frame = metalMaterial(121, 0x8a7a4a);
+    const panel = new THREE.MeshStandardMaterial({
+      color: 0x2a2030, roughness: 0.6, metalness: 0.35,
+      emissive: new THREE.Color(0x5a1020), emissiveIntensity: 0.9
+    });
+    // 両開きの扉
+    this.doorLeaves = [];
+    [-1, 1].forEach(sx => {
+      const leaf = new THREE.Mesh(new THREE.BoxGeometry(6.2, WALL_H - 0.4, 0.7), panel);
+      leaf.position.set(sx * 3.1, (WALL_H - 0.4) / 2, 0);
+      g.add(leaf);
+      this.doorLeaves.push({ m: leaf, sx });
+    });
+    // 縁飾りと柱
+    [-1, 1].forEach(sx => {
+      const p = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.95, WALL_H + 0.6, 10), frame);
+      p.position.set(sx * 6.9, (WALL_H + 0.6) / 2, 0);
+      g.add(p);
+      this.colliders.push({ min: { x: x + sx * 6.9 - 0.9, z: z - 0.9 },
+                            max: { x: x + sx * 6.9 + 0.9, z: z + 0.9 } });
+    });
+    const lintel = new THREE.Mesh(new THREE.BoxGeometry(15.4, 1.2, 1.0), frame);
+    lintel.position.set(0, WALL_H + 0.2, 0);
+    g.add(lintel);
+    // 中央の紋章
+    const crest = new THREE.Mesh(new THREE.TorusGeometry(1.5, 0.18, 12, 30), glowMaterial(0xff3a5a, 2.2));
+    crest.position.set(0, WALL_H / 2, -0.5);
+    g.add(crest);
+    this.doorCrest = crest;
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      const sp = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.6, 6), glowMaterial(0xff5a70, 1.8));
+      sp.position.set(Math.cos(a) * 2.0, WALL_H / 2 + Math.sin(a) * 2.0, -0.5);
+      sp.rotation.z = a - Math.PI / 2;
+      g.add(sp);
+    }
+    g.position.set(x, 0, z);
+    this.group.add(g);
+    const col = { min: { x: x - 6.2, z: z - 0.5 }, max: { x: x + 6.2, z: z + 0.5 } };
+    this.colliders.push(col);
+    this.grandDoor = { x, z, group: g, collider: col, open: false };
+  }
+
+  /** 大扉を開ける */
+  openGrandDoor() {
+    const d = this.grandDoor;
+    if (!d || d.open) return false;
+    d.open = true;
+    const i = this.colliders.indexOf(d.collider);
+    if (i >= 0) this.colliders.splice(i, 1);
+    return true;
+  }
+
+  /** 一時記録の祠（現在の階に置く） */
+  _addRest(x, z) {
+    const g = new THREE.Group();
+    const base = stoneMaterial(122, 0x9a9287);
+    const p = new THREE.Mesh(new THREE.CylinderGeometry(1.7, 2.0, 0.4, 20), base);
+    p.position.y = 0.2;
+    g.add(p);
+    const obelisk = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.45, 3.0, 6), base);
+    obelisk.position.y = 1.9;
+    g.add(obelisk);
+    const orb = new THREE.Mesh(new THREE.SphereGeometry(0.42, 14, 12), glowMaterial(0x9affd0, 2.4));
+    orb.position.y = 3.7;
+    g.add(orb);
+    this.restOrb = orb;
+    const ring = new THREE.Mesh(new THREE.RingGeometry(1.1, 1.5, 32),
+      new THREE.MeshBasicMaterial({ color: 0x9affd0, transparent: true, opacity: 0.4,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+    ring.rotation.x = -Math.PI / 2; ring.position.y = 0.42;
+    g.add(ring);
+    this.restRing = ring;
+    const l = new THREE.PointLight(0x9affd0, 2.4, 14, 2);
+    l.position.set(0, 3.7, 0);
+    g.add(l);
+    g.position.set(x, 0, z);
+    this.group.add(g);
+    this.rest = { x, z, r: 2.6, group: g };
   }
 
   /** 帰還のワープ台（魔法陣） */
@@ -788,6 +921,10 @@ export class World {
       }
     }
     if (this.wardRing) this.wardRing.material.opacity = 0.16 + Math.sin(t * 1.2) * 0.07;
+    if (this.doorCrest) this.doorCrest.rotation.z += 0.01;
+    if (this.bossSeal) this.bossSeal.rotation.z += 0.004;
+    if (this.restRing) { this.restRing.rotation.z += 0.02; }
+    if (this.restOrb) { this.restOrb.position.y = 3.7 + Math.sin(t * 2) * 0.14; }
     if (this.warpRings) {
       for (const w of this.warpRings) w.m.rotation.z += w.dir * 0.016;
       if (this.warpCol) this.warpCol.material.opacity = 0.12 + Math.sin(t * 2) * 0.05;
