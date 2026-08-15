@@ -136,6 +136,24 @@
     <label class="row"><span>ミュート</span>
       <input id="cfg-mute" type="checkbox">
     </label>
+    <label class="row"><span>移動の基準</span>
+      <select id="cfg-relmove">
+        <option value="cam">画面の向き（視点に合わせる）</option>
+        <option value="world">固定（視点を回しても変わらない）</option>
+      </select>
+    </label>
+    <label class="row"><span>回した時の移動</span>
+      <select id="cfg-camflip">
+        <option value="0">標準</option>
+        <option value="1">反転（左右90度でずれる場合）</option>
+      </select>
+    </label>
+    <label class="row"><span>視点の左右</span>
+      <select id="cfg-caminv">
+        <option value="0">標準</option>
+        <option value="1">反転</option>
+      </select>
+    </label>
     <label class="row"><span>キャラクターの声</span>
       <input id="cfg-voice" type="checkbox" checked>
     </label>
