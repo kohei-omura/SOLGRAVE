@@ -889,10 +889,11 @@ class Game {
     const dist = 16.5;
     const h = Math.sin(this.camPitch) * dist;
     const rad = Math.cos(this.camPitch) * dist;
+    // 視点0のとき、従来と同じ「手前(+z)から見下ろす」位置になるようにする
     const camTarget = new THREE.Vector3(
-      p.x - Math.sin(this.camYaw) * rad,
+      p.x + Math.sin(this.camYaw) * rad,
       p.y + h,
-      p.z - Math.cos(this.camYaw) * rad
+      p.z + Math.cos(this.camYaw) * rad
     );
     this.gfx.camera.position.lerp(camTarget, 1 - Math.pow(0.0015, dt));
     this.gfx.camera.lookAt(p.x, p.y + 1.4, p.z);
@@ -903,12 +904,21 @@ class Game {
   updatePlay(dt, now) {
     const P = this.player;
     // 入力を視点の向きに合わせて回す（前が常に画面の奥）
-    const cy = Math.cos(this.camYaw), sy = Math.sin(this.camYaw);
+    // 入力を「カメラから見た向き」に変換する。
+    // 角度の式で組むと符号を間違えやすいので、カメラの実際の位置から
+    // 奥（forward）と右（right）を求めて、それに沿って動かす。
+    const camP = this.gfx.camera.position;
+    let fx = P.pos.x - camP.x, fz = P.pos.z - camP.z;
+    const fl = Math.hypot(fx, fz) || 1;
+    fx /= fl; fz /= fl;                      // 画面の奥
+    const rx = -fz, rz = fx;                 // 画面の右
+    // スティックの上(mz<0)＝奥、右(mx>0)＝右
+    const conv = (x, z) => ({ x: rx * x + fx * (-z), z: rz * x + fz * (-z) });
+    const mv = conv(this.input.mx, this.input.mz);
+    const am = conv(this.input.ax, this.input.az);
     const rot = {
-      mx: this.input.mx * cy - this.input.mz * sy,
-      mz: this.input.mx * sy + this.input.mz * cy,
-      ax: this.input.ax * cy - this.input.az * sy,
-      az: this.input.ax * sy + this.input.az * cy,
+      mx: mv.x, mz: mv.z,
+      ax: am.x, az: am.z,
       fire: this.input.fire, charge: this.input.charge, dash: this.input.dash
     };
     P.update(dt, rot, this.world, now);
