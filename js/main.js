@@ -236,7 +236,7 @@ class Game {
         const list = e.changedTouches ? Array.from(e.changedTouches) : [e];
         const t = list.find(x => ((x.identifier != null) ? x.identifier : 'mouse') === id);
         if (!t) return;
-        this.camYaw += (t.clientX - lx) * 0.006;
+        this.camYaw += (t.clientX - lx) * 0.006 * (this.cfg.caminv ? -1 : 1);
         this.camPitch = Math.max(0.18, Math.min(1.35, this.camPitch - (t.clientY - ly) * 0.004));
         lx = t.clientX; ly = t.clientY;
         e.preventDefault();
@@ -572,6 +572,29 @@ class Game {
     this.voice.setEnabled(this.cfg.voice !== false);
     this.voice.setVolume(this.cfg.volume / 100);
     });
+    const rm = document.getElementById('cfg-relmove');
+    if (rm) {
+      rm.value = this.cfg.relmove || 'cam';
+      rm.addEventListener('change', () => {
+        this.cfg.relmove = rm.value; Config.save(this.cfg);
+        UI.toast(rm.value === 'cam' ? '移動を画面の向きに合わせます' : '移動を固定にしました');
+      });
+    }
+    const cf = document.getElementById('cfg-camflip');
+    if (cf) {
+      cf.value = this.cfg.camflip ? '1' : '0';
+      cf.addEventListener('change', () => {
+        this.cfg.camflip = (cf.value === '1'); Config.save(this.cfg);
+        UI.toast('視点を回した時の移動を切り替えました');
+      });
+    }
+    const ci = document.getElementById('cfg-caminv');
+    if (ci) {
+      ci.value = this.cfg.caminv ? '1' : '0';
+      ci.addEventListener('change', () => {
+        this.cfg.caminv = (ci.value === '1'); Config.save(this.cfg);
+      });
+    }
     const vc = document.getElementById('cfg-voice');
     if (vc) {
       vc.checked = this.cfg.voice !== false;
@@ -625,6 +648,9 @@ class Game {
     set('cfg-mute', 'checked', this.cfg.mute);
     set('cfg-practice', 'checked', this.cfg.practice);
     set('cfg-manual', 'value', this.cfg.manual);
+    set('cfg-relmove', 'value', this.cfg.relmove || 'cam');
+    set('cfg-caminv', 'value', this.cfg.caminv ? '1' : '0');
+    set('cfg-camflip', 'value', this.cfg.camflip ? '1' : '0');
     const row = document.getElementById('row-manual');
     if (row) row.hidden = !this.cfg.practice;
     this.showVoiceNote();
@@ -903,17 +929,15 @@ class Game {
 
   updatePlay(dt, now) {
     const P = this.player;
-    // 入力を視点の向きに合わせて回す（前が常に画面の奥）
-    // 入力を「カメラから見た向き」に変換する。
-    // 角度の式で組むと符号を間違えやすいので、カメラの実際の位置から
-    // 奥（forward）と右（right）を求めて、それに沿って動かす。
-    const camP = this.gfx.camera.position;
-    let fx = P.pos.x - camP.x, fz = P.pos.z - camP.z;
-    const fl = Math.hypot(fx, fz) || 1;
-    fx /= fl; fz /= fl;                      // 画面の奥
-    const rx = -fz, rz = fx;                 // 画面の右
-    // スティックの上(mz<0)＝奥、右(mx>0)＝右
-    const conv = (x, z) => ({ x: rx * x + fx * (-z), z: rz * x + fz * (-z) });
+    // 入力を視点の向きへ回す。
+    // 視点0度では必ず素通し（従来の操作感）になり、回した時だけ効く。
+    // 端末によって回る向きが逆に感じる場合があるため、設定で反転できる。
+    const relCam = (this.cfg.relmove !== 'world');
+    const sgn = this.cfg.camflip ? -1 : 1;
+    const cc = Math.cos(this.camYaw), ss = Math.sin(this.camYaw) * sgn;
+    const conv = relCam
+      ? (x, z) => ({ x: cc * x + ss * z, z: cc * z - ss * x })
+      : (x, z) => ({ x: x, z: z });
     const mv = conv(this.input.mx, this.input.mz);
     const am = conv(this.input.ax, this.input.az);
     const rot = {
