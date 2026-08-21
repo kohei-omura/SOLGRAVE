@@ -297,6 +297,17 @@ export class World {
       if (!cells[y][x].E) { cells[y][x].E = true; cells[y][x + 1].W = true; }
     }
 
+    // ── 大広間へ通じる部屋を先に決める ──
+    // 迷路の一番南の列から、入口から最も遠い部屋を選ぶ。
+    // 先に S を開けておくことで、南壁に必ず戸口ができる。
+    let gateCell = null;
+    for (let x = 0; x < GW; x++) {
+      const c = cells[GH - 1][x];
+      if (!gateCell || c.dist > gateCell.dist) gateCell = c;
+    }
+    gateCell.S = true;
+    this.gateCell = gateCell;
+
     // ── 部屋を建てる ──
     const DOOR = 11;
     const T2 = T;
@@ -361,7 +372,7 @@ export class World {
         });
 
         // 通路
-        if (c.S) this._corridorZ(cx, cz + d / 2, cz + CELL - d / 2, wallMat, floorMat, DOOR);
+        if (c.S && y < GH - 1) this._corridorZ(cx, cz + d / 2, cz + CELL - d / 2, wallMat, floorMat, DOOR);
         if (c.E) this._corridorX(cz, cx + w / 2, cx + CELL - w / 2, wallMat, floorMat, DOOR);
 
         // 松明
@@ -383,8 +394,8 @@ export class World {
     }
 
     this.startRoom = cells[0][0].room;
-    // 最奥の部屋の先に、専用の大広間をつなげる
-    const gate = far.room;
+    // 迷路の南端から、専用の大広間へつなげる
+    const gate = gateCell.room;
     this.gateRoom = gate;
     this._buildBossHall(gate);
     this._addBossWindow(this.bossRoom);
@@ -435,7 +446,7 @@ export class World {
     const HW = 46, HD = 40;                       // とにかく広く
     const HH = WALL_H + 5.5;                      // 天井も高く
     const hx = gate.x;
-    const hz = gate.z + gate.d / 2 + 34;          // 最奥の部屋のさらに south
+    const hz = gate.z + gate.d / 2 + 30 + HD / 2;   // 迷路の外に出す
     this.bossRoom = { x: hx, z: hz, w: HW, d: HD, isHall: true, cell: { N: true, S: false, E: false, W: false } };
 
     // ── 別素材：磨いた黒曜と金 ──
@@ -479,8 +490,8 @@ export class World {
     wall(1.4, HH, HD, hx + HW / 2, HH / 2, hz);                              // 東
 
     // ── 参道（最奥の部屋から大扉まで） ──
-    const cw = 13;
-    const z0 = gate.z + gate.d / 2, z1 = hz - HD / 2;
+    const cw = 11;
+    const z0 = gate.z + gate.d / 2 - 2, z1 = hz - HD / 2 + 2;
     const cl = new THREE.Mesh(new THREE.PlaneGeometry(cw, z1 - z0 + 4), marble);
     cl.rotation.x = -Math.PI / 2; cl.position.set(hx, 0.01, (z0 + z1) / 2);
     this.group.add(cl);
