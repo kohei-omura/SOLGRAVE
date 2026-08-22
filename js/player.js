@@ -94,27 +94,27 @@ export class Player {
     this.gun.add(barrel);
     this.rings = [];
     [0.55, 0.82, 1.08].forEach(z => {
-      const r = new THREE.Mesh(new THREE.TorusGeometry(0.11, 0.022, 8, 16), glowMaterial(0xffd98a, 0.6));
+      const r = new THREE.Mesh(new THREE.TorusGeometry(0.11, 0.022, 8, 16), glowMaterial(0xffd98a, 0.6, true));
       r.position.z = z; r.rotation.y = Math.PI / 2;
       this.gun.add(r);
       this.rings.push(r);
     });
-    this.muzzle = new THREE.Mesh(new THREE.SphereGeometry(0.1, 12, 10), glowMaterial(0xffe9a8, 2.2));
+    this.muzzle = new THREE.Mesh(new THREE.SphereGeometry(0.1, 12, 10), glowMaterial(0xffe9a8, 2.2, true));
     this.muzzle.position.z = 1.28;
     this.gun.add(this.muzzle);
     this.gun.position.set(0.26, 1.36, 0);
     this.group.add(this.gun);
 
     // 溜め演出
-    this.orb = new THREE.Mesh(new THREE.SphereGeometry(0.3, 16, 14), glowMaterial(0xfff0c0, 3.0));
+    this.orb = new THREE.Mesh(new THREE.SphereGeometry(0.3, 16, 14), glowMaterial(0xfff0c0, 3.0, true));
     this.orb.position.set(0.26, 1.36, 1.6);
     this.orb.visible = false;
     this.group.add(this.orb);
-    this.chargeRing = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.045, 8, 28), glowMaterial(0xffd070, 2.4));
+    this.chargeRing = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.045, 8, 28), glowMaterial(0xffd070, 2.4, true));
     this.chargeRing.position.set(0.26, 1.36, 1.6);
     this.chargeRing.visible = false;
     this.group.add(this.chargeRing);
-    this.chargeRing2 = new THREE.Mesh(new THREE.TorusGeometry(0.9, 0.03, 8, 28), glowMaterial(0xfff2c8, 2.0));
+    this.chargeRing2 = new THREE.Mesh(new THREE.TorusGeometry(0.9, 0.03, 8, 28), glowMaterial(0xfff2c8, 2.0, true));
     this.chargeRing2.position.set(0.26, 1.36, 1.6);
     this.chargeRing2.visible = false;
     this.group.add(this.chargeRing2);

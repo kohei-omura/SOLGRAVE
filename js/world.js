@@ -42,12 +42,113 @@ export class World {
     this.group = new THREE.Group();
     this.scene.add(this.group);
     this.colliders = []; this.shafts = []; this.rooms = []; this.torches = [];
+    this._batches = null; this._planes = null;
     this.ramps = []; this.plats = [];
     this.gimmicks = null; this.wards = null; this.wardRing = null; this.sanctuary = null;
     this.warp = null; this.warpRings = null; this.warpCol = null;
     this.grandDoor = null; this.rest = null; this.doorCrest = null;
     this.bossSeal = null; this.restRing = null; this.restOrb = null;
     this.spawnPoints = []; this.exit = null; this.bossRoom = null;
+  }
+
+  /** 壁などをためておき、あとで1つにまとめて描く（描画呼び出しを減らす） */
+  _batch(w, h, d, x, y, z, mat, collide) {
+    if (!this._batches) this._batches = new Map();
+    let arr = this._batches.get(mat);
+    if (!arr) { arr = []; this._batches.set(mat, arr); }
+    arr.push([w, h, d, x, y, z]);
+    if (collide) {
+      this.colliders.push({ min: { x: x - w / 2, z: z - d / 2 },
+                            max: { x: x + w / 2, z: z + d / 2 } });
+    }
+  }
+
+  /** 平らな面（床・天井）をためる */
+  _batchPlane(w, d, x, y, z, faceUp, mat) {
+    if (!this._planes) this._planes = new Map();
+    let arr = this._planes.get(mat);
+    if (!arr) { arr = []; this._planes.set(mat, arr); }
+    arr.push([w, d, x, y, z, faceUp]);
+  }
+
+  /** ためた形を材質ごとに1つのメッシュへ */
+  _flushBatches() {
+    if (!this._batches) return;
+    this._batches.forEach((arr, mat) => {
+      if (!arr.length) return;
+      let total = 0, idxTotal = 0;
+      const geos = arr.map(([w, h, d, x, y, z]) => {
+        const g = new THREE.BoxGeometry(w, h, d);
+        g.translate(x, y, z);
+        total += g.attributes.position.count;
+        idxTotal += g.index ? g.index.count : 0;
+        return g;
+      });
+      const pos = new Float32Array(total * 3);
+      const nor = new Float32Array(total * 3);
+      const uv  = new Float32Array(total * 2);
+      const idx = new Uint32Array(idxTotal);
+      let vo = 0, io = 0;
+      geos.forEach(g => {
+        pos.set(g.attributes.position.array, vo * 3);
+        nor.set(g.attributes.normal.array, vo * 3);
+        if (g.attributes.uv) uv.set(g.attributes.uv.array, vo * 2);
+        const ia = g.index.array;
+        for (let i = 0; i < ia.length; i++) idx[io + i] = ia[i] + vo;
+        vo += g.attributes.position.count;
+        io += ia.length;
+        g.dispose();
+      });
+      const out = new THREE.BufferGeometry();
+      out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+      out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+      out.setIndex(new THREE.BufferAttribute(idx, 1));
+      const m = new THREE.Mesh(out, mat);
+      m.castShadow = false; m.receiveShadow = true;
+      this.group.add(m);
+      arr.length = 0;
+    });
+    this._batches.clear();
+
+    if (this._planes) {
+      this._planes.forEach((arr, mat) => {
+        if (!arr.length) return;
+        let total = 0, idxTotal = 0;
+        const geos = arr.map(([w, d, x, y, z, up]) => {
+          const g = new THREE.PlaneGeometry(w, d);
+          g.rotateX(up ? -Math.PI / 2 : Math.PI / 2);
+          g.translate(x, y, z);
+          total += g.attributes.position.count;
+          idxTotal += g.index ? g.index.count : 0;
+          return g;
+        });
+        const pos = new Float32Array(total * 3);
+        const nor = new Float32Array(total * 3);
+        const uv  = new Float32Array(total * 2);
+        const idx = new Uint32Array(idxTotal);
+        let vo = 0, io = 0;
+        geos.forEach(g => {
+          pos.set(g.attributes.position.array, vo * 3);
+          nor.set(g.attributes.normal.array, vo * 3);
+          if (g.attributes.uv) uv.set(g.attributes.uv.array, vo * 2);
+          const ia = g.index.array;
+          for (let i = 0; i < ia.length; i++) idx[io + i] = ia[i] + vo;
+          vo += g.attributes.position.count; io += ia.length;
+          g.dispose();
+        });
+        const out = new THREE.BufferGeometry();
+        out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+        out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+        out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+        out.setIndex(new THREE.BufferAttribute(idx, 1));
+        const m = new THREE.Mesh(out, mat);
+        m.castShadow = false; m.receiveShadow = true;
+        this.group.add(m);
+        arr.length = 0;
+      });
+      this._planes.clear();
+    }
   }
 
   _box(w, h, d, x, y, z, mat, collide) {
@@ -330,12 +431,8 @@ export class World {
         if (exits === 1 && !(x === 0 && y === 0)) dead.push(room);
 
         // 床と天井
-        const fl = new THREE.Mesh(new THREE.PlaneGeometry(w, d), floorMat);
-        fl.rotation.x = -Math.PI / 2; fl.position.set(cx, 0, cz); fl.receiveShadow = true;
-        this.group.add(fl);
-        const cl = new THREE.Mesh(new THREE.PlaneGeometry(w, d), floorMat);
-        cl.rotation.x = Math.PI / 2; cl.position.set(cx, WALL_H, cz);
-        this.group.add(cl);
+        this._batchPlane(w, d, cx, 0, cz, true, floorMat);
+        this._batchPlane(w, d, cx, WALL_H, cz, false, floorMat);
 
         // 四方の壁（通じている面だけ戸口を空ける）
         const rowZ = (zPos, open) => {
@@ -344,22 +441,20 @@ export class World {
           const total = w + T2 * 2;
           const side = (total - DOOR) / 2;
           if (side > 0.05) {
-            this._box(side + T2, WALL_H, T2 * 1.6, cx - (DOOR / 2 + side / 2), WALL_H / 2, zPos, wallMat, true);
-            this._box(side + T2, WALL_H, T2 * 1.6, cx + (DOOR / 2 + side / 2), WALL_H / 2, zPos, wallMat, true);
+            this._batch(side + T2, WALL_H, T2 * 1.6, cx - (DOOR / 2 + side / 2), WALL_H / 2, zPos, wallMat, true);
+            this._batch(side + T2, WALL_H, T2 * 1.6, cx + (DOOR / 2 + side / 2), WALL_H / 2, zPos, wallMat, true);
           }
-          const lin = new THREE.Mesh(new THREE.BoxGeometry(DOOR + 1.2, 0.7, T2 + 0.2), wallMat);
-          lin.position.set(cx, WALL_H - 0.35, zPos); this.group.add(lin);
+          this._batch(DOOR + 1.2, 0.7, T2 + 0.2, cx, WALL_H - 0.35, zPos, wallMat, false);
         };
         const colX = (xPos, open) => {
-          if (!open) { this._box(T2, WALL_H, d + T2 * 2, xPos, WALL_H / 2, cz, wallMat, true); return; }
+          if (!open) { this._batch(T2, WALL_H, d + T2 * 2, xPos, WALL_H / 2, cz, wallMat, true); return; }
           const total = d + T2 * 2;
           const side = (total - DOOR) / 2;
           if (side > 0.05) {
-            this._box(T2 * 1.6, WALL_H, side + T2, xPos, WALL_H / 2, cz - (DOOR / 2 + side / 2), wallMat, true);
-            this._box(T2 * 1.6, WALL_H, side + T2, xPos, WALL_H / 2, cz + (DOOR / 2 + side / 2), wallMat, true);
+            this._batch(T2 * 1.6, WALL_H, side + T2, xPos, WALL_H / 2, cz - (DOOR / 2 + side / 2), wallMat, true);
+            this._batch(T2 * 1.6, WALL_H, side + T2, xPos, WALL_H / 2, cz + (DOOR / 2 + side / 2), wallMat, true);
           }
-          const lin = new THREE.Mesh(new THREE.BoxGeometry(T2 + 0.2, 0.7, DOOR + 1.2), wallMat);
-          lin.position.set(xPos, WALL_H - 0.35, cz); this.group.add(lin);
+          this._batch(T2 + 0.2, 0.7, DOOR + 1.2, xPos, WALL_H - 0.35, cz, wallMat, false);
         };
         rowZ(cz - d / 2 - T2 / 2, c.N);
         rowZ(cz + d / 2 + T2 / 2, c.S);
@@ -367,7 +462,7 @@ export class World {
         colX(cx + w / 2 + T2 / 2, c.E);
         // 四隅の継ぎ目を塞ぐ（ここに隙間ができて抜けていた）
         [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([sx, sz]) => {
-          this._box(T2 * 2.4, WALL_H, T2 * 2.4,
+          this._batch(T2 * 2.4, WALL_H, T2 * 2.4,
             cx + sx * (w / 2 + T2 / 2), WALL_H / 2, cz + sz * (d / 2 + T2 / 2), wallMat, true);
         });
 
@@ -407,7 +502,7 @@ export class World {
     const candidates = dead.length ? dead : this.rooms.filter(r => r !== this.startRoom && r !== this.bossRoom);
     const pool = candidates.length ? candidates : this.rooms.filter(r => r !== this.startRoom);
     const keyRoom = pool[Math.floor(rnd() * pool.length)] || this.rooms[1];
-    if (keyRoom) this._addKey(keyRoom.x, keyRoom.z);
+    // 鍵は中ボスが落とす。地面には置かない
     // 宝箱も最低2つ
     const chestPool = this.rooms.filter(r => r !== this.startRoom && r !== this.bossRoom && r !== keyRoom);
     for (let i = 0; i < Math.min(3, chestPool.length); i++) {
@@ -428,6 +523,8 @@ export class World {
         this._addHazard(r.x + 3, r.z - 3);
       }
     });
+
+    this._flushBatches();
 
     this.playerStart = new THREE.Vector3(this.startRoom.x, 0, this.startRoom.z);
 
@@ -516,7 +613,7 @@ export class World {
       p.position.set(px, (HH - 0.6) / 2, pz);
       this.group.add(p);
       this.colliders.push({ min: { x: px - 1.0, z: pz - 1.0 }, max: { x: px + 1.0, z: pz + 1.0 } });
-      const fire = new THREE.Mesh(new THREE.SphereGeometry(0.34, 10, 8), glowMaterial(0xff8a3a, 2.6));
+      const fire = new THREE.Mesh(new THREE.SphereGeometry(0.34, 10, 8), glowMaterial(0xff8a3a, 2.6, true));
       fire.position.set(px, HH - 0.3, pz);
       this.group.add(fire);
       const l = new THREE.PointLight(0xffa860, 3.0, 22, 1.6);
@@ -555,7 +652,7 @@ export class World {
       this.group.add(p);
       this.colliders.push({ min: { x: px - 0.7, z: pz - 0.7 }, max: { x: px + 0.7, z: pz + 0.7 } });
       // 燭台
-      const fire = new THREE.Mesh(new THREE.SphereGeometry(0.3, 10, 8), glowMaterial(0xff8a3a, 2.4));
+      const fire = new THREE.Mesh(new THREE.SphereGeometry(0.3, 10, 8), glowMaterial(0xff8a3a, 2.4, true));
       fire.position.set(px, WALL_H - 0.2, pz);
       this.group.add(fire);
       const l = new THREE.PointLight(0xffa860, 2.6, 16, 1.6);
@@ -606,14 +703,14 @@ export class World {
       new THREE.MeshBasicMaterial({ color: 0x120c08 }));
     slot.position.set(0, WALL_H / 2 - 2.2, -0.72);
     kh.add(slot);
-    const halo = new THREE.Mesh(new THREE.TorusGeometry(1.2, 0.09, 10, 26), glowMaterial(0xffd24a, 2.4));
+    const halo = new THREE.Mesh(new THREE.TorusGeometry(1.2, 0.09, 10, 26), glowMaterial(0xffd24a, 2.4, true));
     halo.position.set(0, WALL_H / 2 - 1.9, -0.6);
     kh.add(halo);
     g.add(kh);
     this.keyhole = { group: kh, halo };
 
     // 中央の紋章
-    const crest = new THREE.Mesh(new THREE.TorusGeometry(1.5, 0.18, 12, 30), glowMaterial(0xff3a5a, 2.2));
+    const crest = new THREE.Mesh(new THREE.TorusGeometry(1.5, 0.18, 12, 30), glowMaterial(0xff3a5a, 2.2, true));
     crest.position.set(0, WALL_H / 2 + 1.4, -0.5);
     g.add(crest);
     this.doorCrest = crest;
@@ -652,7 +749,7 @@ export class World {
     const obelisk = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.45, 3.0, 6), base);
     obelisk.position.y = 1.9;
     g.add(obelisk);
-    const orb = new THREE.Mesh(new THREE.SphereGeometry(0.42, 14, 12), glowMaterial(0x9affd0, 2.4));
+    const orb = new THREE.Mesh(new THREE.SphereGeometry(0.42, 14, 12), glowMaterial(0x9affd0, 2.4, true));
     orb.position.y = 3.7;
     g.add(orb);
     this.restOrb = orb;
@@ -847,27 +944,19 @@ export class World {
   _corridorZ(cx, z1, z2, wallMat, floorMat, W) {
     const len = Math.abs(z2 - z1) + 6;   // 部屋の壁と重ねて隙間を無くす
     const mz = (z1 + z2) / 2;
-    const fl = new THREE.Mesh(new THREE.PlaneGeometry(W, len), floorMat);
-    fl.rotation.x = -Math.PI / 2; fl.position.set(cx, 0, mz); fl.receiveShadow = true;
-    this.group.add(fl);
-    const cl = new THREE.Mesh(new THREE.PlaneGeometry(W, len), floorMat);
-    cl.rotation.x = Math.PI / 2; cl.position.set(cx, WALL_H, mz);
-    this.group.add(cl);
-    this._box(T * 1.6, WALL_H, len, cx - W / 2 - T / 2, WALL_H / 2, mz, wallMat, true);
-    this._box(T * 1.6, WALL_H, len, cx + W / 2 + T / 2, WALL_H / 2, mz, wallMat, true);
+    this._batchPlane(W, len, cx, 0, mz, true, floorMat);
+    this._batchPlane(W, len, cx, WALL_H, mz, false, floorMat);
+    this._batch(T * 1.6, WALL_H, len, cx - W / 2 - T / 2, WALL_H / 2, mz, wallMat, true);
+    this._batch(T * 1.6, WALL_H, len, cx + W / 2 + T / 2, WALL_H / 2, mz, wallMat, true);
   }
   /** 東西の通路 */
   _corridorX(cz, x1, x2, wallMat, floorMat, W) {
     const len = Math.abs(x2 - x1) + 6;
     const mx = (x1 + x2) / 2;
-    const fl = new THREE.Mesh(new THREE.PlaneGeometry(len, W), floorMat);
-    fl.rotation.x = -Math.PI / 2; fl.position.set(mx, 0, cz); fl.receiveShadow = true;
-    this.group.add(fl);
-    const cl = new THREE.Mesh(new THREE.PlaneGeometry(len, W), floorMat);
-    cl.rotation.x = Math.PI / 2; cl.position.set(mx, WALL_H, cz);
-    this.group.add(cl);
-    this._box(len, WALL_H, T * 1.6, mx, WALL_H / 2, cz - W / 2 - T / 2, wallMat, true);
-    this._box(len, WALL_H, T * 1.6, mx, WALL_H / 2, cz + W / 2 + T / 2, wallMat, true);
+    this._batchPlane(len, W, mx, 0, cz, true, floorMat);
+    this._batchPlane(len, W, mx, WALL_H, cz, false, floorMat);
+    this._batch(len, WALL_H, T * 1.6, mx, WALL_H / 2, cz - W / 2 - T / 2, wallMat, true);
+    this._batch(len, WALL_H, T * 1.6, mx, WALL_H / 2, cz + W / 2 + T / 2, wallMat, true);
   }
 
   _corridor(x1, z1, x2, z2, wallMat, floorMat) {
@@ -917,7 +1006,7 @@ export class World {
     this._box(0.16, 1.5, 0.16, x, 0.75, z, pole, false);
     const fire = new THREE.Mesh(
       new THREE.SphereGeometry(0.22, 10, 8),
-      glowMaterial(0xff8a3a, 2.6)
+      glowMaterial(0xff8a3a, 2.6, true)
     );
     fire.position.set(x, 1.62, z);
     this.group.add(fire);

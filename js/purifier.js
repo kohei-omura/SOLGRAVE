@@ -115,7 +115,7 @@ export class Purifier {
         const r = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.05, 8, 18), gold);
         r.rotation.y = Math.PI / 2; r.position.z = z; head.add(r);
       });
-      const lens = new THREE.Mesh(new THREE.SphereGeometry(0.26, 14, 12), glowMaterial(0xfff0c0, 0.5));
+      const lens = new THREE.Mesh(new THREE.SphereGeometry(0.26, 14, 12), glowMaterial(0xfff0c0, 0.5, true));
       lens.position.z = 1.92; head.add(lens);
       head.rotation.x = -Math.PI / 2;      // はじめは天を向く
       g.add(head);
@@ -162,7 +162,7 @@ export class Purifier {
     wh.scale.set(0.88, 1.15, 0.9); wh.position.y = 2.8; this.wraith.add(wh);
     this.wraithArms = [];
     [-1, 1].forEach(sx => {
-      const e = new THREE.Mesh(new THREE.SphereGeometry(0.07, 10, 8), glowMaterial(0xff2a2a, 4.2));
+      const e = new THREE.Mesh(new THREE.SphereGeometry(0.07, 10, 8), glowMaterial(0xff2a2a, 4.2, true));
       e.position.set(0.12 * sx, 2.86, 0.27); this.wraith.add(e);
       const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.1, 1.1, 4, 8), wm);
       arm.position.set(0.78 * sx, 1.9, 0); arm.rotation.z = sx * 0.55;

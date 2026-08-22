@@ -180,6 +180,7 @@ class Game {
     el.querySelectorAll('.fl-btn').forEach(b => {
       b.addEventListener('click', () => {
         this.floor = +b.dataset.f;
+        this._floorsOpen = false;
         UI.hide('floors');
         this.saveProgress();
         this.enterDungeon();
@@ -187,6 +188,15 @@ class Game {
       });
     });
     UI.show('floors');
+    this._floorsOpen = true;
+  }
+
+  closeFloors() {
+    UI.hide('floors');
+    this._floorsOpen = false;
+    // 入口から少し離して、すぐ開き直さないようにする
+    const e = this.world.entrance;
+    if (e) { this.player.pos.z -= 6; }
   }
 
   sunLabel() { return this.sun ? this.sun.label : '—'; }
@@ -326,7 +336,7 @@ class Game {
       tkb.addEventListener('click', go4);
     }
     const fc = document.getElementById('fl-close');
-    if (fc) fc.addEventListener('click', () => UI.hide('floors'));
+    if (fc) fc.addEventListener('click', () => this.closeFloors());
     const sc = document.getElementById('shop-close');
     if (sc) sc.addEventListener('click', () => UI.hide('shop'));
     const skb = document.getElementById('btn-skill');
@@ -1100,7 +1110,7 @@ class Game {
       if (this.chargeT >= (1.1 / this.party.hero.chargeMul)) this.fire(true);
       this.chargeT = 0; P.charging = 0; this._chargeSfx = false;
     }
-    if (this.input.fire && !this.input.charge && this.shotCd <= 0 && !P.pushing) {
+    if (this.input.fire && !this.input.charge && this.shotCd <= 0 && !P.pushing && !this.coffin.chained) {
       this.fire(false);
     }
 
@@ -1144,7 +1154,7 @@ class Game {
       tkb.addEventListener('click', go4);
     }
     const fc = document.getElementById('fl-close');
-    if (fc) fc.addEventListener('click', () => UI.hide('floors'));
+    if (fc) fc.addEventListener('click', () => this.closeFloors());
     const sc = document.getElementById('shop-close');
     if (sc) sc.addEventListener('click', () => UI.hide('shop'));
     const skb = document.getElementById('btn-skill');
@@ -1289,8 +1299,9 @@ class Game {
       // 頂上の祠だけが入口。ふもとで反応しないよう高さも見る
       if (e && Math.hypot(P.pos.x - e.x, P.pos.z - e.z) < e.r
           && Math.abs(P.pos.y - (e.y || 0)) < 3.0) {
-        if (this.maxFloor > 1) this.openFloors();
-        else this.enterDungeon();
+        if (this.maxFloor > 1) {
+          if (!this._floorsOpen) { this._floorsOpen = true; this.openFloors(); }
+        } else this.enterDungeon();
         return;                    // この後のBGM判定に上書きされないよう抜ける
       }
       const sc = this.world.sanctuary;
@@ -1312,10 +1323,7 @@ class Game {
       const acts = this.world.interact(P.pos.x, P.pos.z, this.hasKey);
       acts.forEach(a => {
         if (a === 'key') {
-          this.hasKey = true;
-          this.audio.sfx('refill');
-          this.line('key');
-          UI.toast('封印の鍵を手に入れた');
+          // 地面の鍵は廃止。中ボスからのみ手に入る
         } else if (a === 'door') {
           this.audio.sfx('phase');
           UI.toast('封印が解けた');

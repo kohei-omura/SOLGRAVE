@@ -238,7 +238,19 @@ export class Gfx {
 }
 
 /* ── よく使う材質 ───────────────────────────── */
+/* 同じ見た目の材質は使い回す。毎回作ると描画呼び出しが跳ね上がる */
+const _matCache = new Map();
+function _cached(key, make) {
+  let m = _matCache.get(key);
+  if (!m) { m = make(); _matCache.set(key, m); }
+  return m;
+}
+export function clearMatCache() { _matCache.clear(); }
+
 export function stoneMaterial(seed, color) {
+  return _cached('stone|' + (color || 0x3a3d45), () => _makeStone(seed, color));
+}
+function _makeStone(seed, color) {
   const map = noiseTexture(256, 7, seed, [1, 0.98, 0.94]);
   map.repeat.set(4, 4);
   const nrm = normalTexture(256, 7, seed, 2.6); nrm.repeat.set(4, 4);
@@ -249,6 +261,9 @@ export function stoneMaterial(seed, color) {
   });
 }
 export function metalMaterial(seed, color) {
+  return _cached('metal|' + (color || 0x6d727d), () => _makeMetal(seed, color));
+}
+function _makeMetal(seed, color) {
   const nrm = normalTexture(256, 12, seed, 1.4); nrm.repeat.set(2, 2);
   const rgh = roughTexture(256, 9, seed + 5, 0.18, 0.55); rgh.repeat.set(2, 2);
   return new THREE.MeshStandardMaterial({
@@ -257,9 +272,18 @@ export function metalMaterial(seed, color) {
   });
 }
 export function fleshMaterial(color) {
-  return new THREE.MeshStandardMaterial({ color: color || 0x6e7355, roughness: 0.85, metalness: 0.02 });
+  return _cached('flesh|' + (color || 0x6e7355), () =>
+    new THREE.MeshStandardMaterial({ color: color || 0x6e7355, roughness: 0.85, metalness: 0.02 }));
 }
-export function glowMaterial(color, intensity) {
+/* 光る材質：強さを後から変えるものだけ個別に作る */
+export function glowMaterial(color, intensity, unique) {
+  if (!unique) {
+    const k = 'glow|' + (color || 0xffe9a8) + '|' + (intensity == null ? 2.2 : intensity);
+    return _cached(k, () => _makeGlow(color, intensity));
+  }
+  return _makeGlow(color, intensity);
+}
+function _makeGlow(color, intensity) {
   return new THREE.MeshStandardMaterial({
     color: color || 0xffe9a8, emissive: new THREE.Color(color || 0xffe9a8),
     emissiveIntensity: intensity == null ? 2.2 : intensity,
