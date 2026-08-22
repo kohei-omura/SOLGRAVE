@@ -15,6 +15,7 @@ import { Solar, SOLAR_DMG_MUL } from './solar.js';
 import { Party, expOf, STAT_KEYS } from './stats.js';
 import { SKILLS, GEAR, rollGear } from './jobs.js';
 import { Town } from './town.js';
+import { Minimap } from './minimap.js';
 import { Menu } from './menu.js';
 import { UI } from './ui.js';
 import { Save, Config } from './save.js';
@@ -65,6 +66,7 @@ class Game {
     this.miko = new Miko(this.gfx.scene, this.particles);
     this.solar = new Solar(this.gfx.scene, this.particles);
     this.town = new Town(this.gfx.scene, this.particles);
+    this.minimap = new Minimap();
     this.boss = new Boss(this.gfx.scene, this.particles);
     this.coffin = new Coffin(this.gfx.scene, this.particles);
     this.pile = new Purifier(this.gfx.scene, this.particles);
@@ -123,6 +125,7 @@ class Game {
       }
     });
 
+    this.minimap.attach();
     this.bindInput();
     this.bindUI();
     this.applyStats();
@@ -805,6 +808,8 @@ class Game {
 
   enterSurface() {
     this.phase = Phase.SURFACE;
+    const mm = document.getElementById('minimap'); if (mm) mm.hidden = true;
+    if (this.gfx) this.gfx.rescanLights();
     this.audio.startBGM('surface');
     this.enemies.clear();          // 地上に敵を持ち込まない
     this.bullets.clear();
@@ -827,6 +832,7 @@ class Game {
 
   enterDungeon() {
     this.phase = Phase.DUNGEON;
+    const mm2 = document.getElementById('minimap'); if (mm2) mm2.hidden = false;
     this.audio.startBGM('dungeon');
     if (this.town) this.town.group.visible = false;   // 地下に街を持ち込まない
     this.pile.group.visible = false;
@@ -834,6 +840,8 @@ class Game {
     if (this.floor > this.maxFloor) { this.maxFloor = this.floor; }
     this.saveProgress();
     this.world.buildDungeon(Date.now() % 100000, this.floor);
+    this.minimap.reset(this.world);
+    this.gfx.rescanLights();
     this.player.reset(this.world.playerStart);
     this.miko.reset(this.world.playerStart);
     this.sunLight.intensity = 1.1;
@@ -1048,9 +1056,9 @@ class Game {
 
     this.world.update(now);
     const maxL = (this.cfg.quality === 'low') ? 3 : (this.cfg.quality === 'high' ? 8 : 5);
-    if (this.world.cullLights) this.world.cullLights(this.player.pos.x, this.player.pos.z, maxL);
-    if (this.town && this.town.built && this.town.group.visible && this.town.cullLights)
-      this.town.cullLights(this.player.pos.x, this.player.pos.z, maxL);
+    // 場面じゅうの点光源をまとめて絞る（画質は変えずに軽くする）
+    // 個別の間引きはやめ、場面全体でまとめて絞る（後から上書きされないように）
+    this.gfx.cullPointLights(this.player.pos.x, this.player.pos.z, maxL + 1);
     if (this.town && this.town.built && this.phase === Phase.SURFACE) this.town.update(now, this.player.pos);
     this.particles.update(dt);
     this.bullets.update(dt, this.world);
@@ -1074,6 +1082,14 @@ class Game {
     );
     this.gfx.camera.position.lerp(camTarget, 1 - Math.pow(0.0015, dt));
     this.gfx.camera.lookAt(p.x, p.y + 1.4, p.z);
+
+    // 見取り図
+    if (this.minimap && (this.phase === Phase.DUNGEON || this.phase === Phase.BOSS)) {
+      this.minimap.tick(dt);
+      this.minimap.mark(this.player.pos.x, this.player.pos.z);
+      this.minimap.draw(this.player.pos.x, this.player.pos.z, this.camYaw,
+        { elite: this.eliteRef && !this.eliteRef.dead ? this.eliteRef.p : null });
+    }
 
     this.gfx.render(now);
   }
