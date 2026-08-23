@@ -1084,7 +1084,11 @@ class Game {
     this.gfx.camera.lookAt(p.x, p.y + 1.4, p.z);
 
     // 見取り図
-    if (this.minimap && (this.phase === Phase.DUNGEON || this.phase === Phase.BOSS)) {
+    // 見取り図は、地下にいる間ずっと更新する
+    // （封印・運搬の間も止めないこと。止めると自分の印が固まる）
+    const inUnder = (this.phase === Phase.DUNGEON || this.phase === Phase.BOSS
+      || this.phase === Phase.SEAL || this.phase === Phase.CARRY);
+    if (this.minimap && inUnder) {
       this.minimap.tick(dt);
       this.minimap.mark(this.player.pos.x, this.player.pos.z);
       this.minimap.draw(this.player.pos.x, this.player.pos.z, this.camYaw,
