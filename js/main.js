@@ -1194,7 +1194,7 @@ class Game {
       P.invuln = Math.max(P.invuln, 0.3);      // 無敵を維持
       UI.solar(true, this.solar.remain);
       // 触れた不死者はその場で灰になる
-      const burned = this.enemies.burnNear(P.pos.x, P.pos.z, 2.4);
+      const burned = this.enemies.burnNear(P.pos.x, P.pos.z, 2.4, this._onKill);
       if (burned > 0) {
         this.stats.kills += burned;
         this.audio.sfx('ash');
@@ -1209,8 +1209,9 @@ class Game {
     if (hb) hb.disabled = this.miko.healCd > 0;
 
     // 敵
-    this.enemies.update(dt, P.pos, this.world, this.audio);
-    const killed = this.enemies.hitTest(this.bullets, (e) => {
+    this.enemies.update(dt, P.pos, this.world, this.audio, this._onKill);
+    // 撃破時の処理はひとつにまとめ、どの倒し方でも同じように働かせる
+    if (!this._onKill) this._onKill = (e) => {
       this.stats.kills++;
       this.audio.sfx('ash');
       // 階が深いほど、レアなら大きく
@@ -1242,7 +1243,8 @@ class Game {
           Party.save(this.party);
         }
       }
-    }, this.audio);
+    };
+    const killed = this.enemies.hitTest(this.bullets, this._onKill, this.audio);
 
     // 被弾
     const hit = this.enemies.touching(P.pos.x, P.pos.z);

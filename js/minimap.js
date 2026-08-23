@@ -33,13 +33,41 @@ export class Minimap {
     return Math.round(x / this.cell) + ',' + Math.round(z / this.cell);
   }
 
-  /** いまいる場所とその周りを踏破済みにする */
+  /**
+   * いまいる場所とその周りを踏破済みにする。
+   * 壁の向こうまで塗ると「繋がっていない道」が見えてしまうため、
+   * 実際に立てる場所（壁に押し戻されない所）だけを記録する。
+   */
   mark(px, pz) {
-    const r = 3;              // 周囲も少し見える
+    const w = this.world;
+    if (!w || !w.resolve) { this.seen.add(this._key(px, pz)); return; }
+    // 記録の粗さで丸めた点そのものが「立てる場所」かを見る
+    const fits = (x, z) => {
+      const gx = Math.round(x / this.cell) * this.cell;
+      const gz = Math.round(z / this.cell) * this.cell;
+      const t = { x: gx, z: gz };
+      w.resolve(t, 0.75);
+      return Math.hypot(t.x - gx, t.z - gz) < 0.06;
+    };
+    if (fits(px, pz)) this.seen.add(this._key(px, pz));
+    const r = 3;
     for (let dx = -r; dx <= r; dx++) {
       for (let dz = -r; dz <= r; dz++) {
+        if (dx === 0 && dz === 0) continue;
         if (dx * dx + dz * dz > r * r) continue;
-        this.seen.add(this._key(px + dx * this.cell, pz + dz * this.cell));
+        const x = px + dx * this.cell, z = pz + dz * this.cell;
+        if (!fits(x, z)) continue;
+        // 途中に壁が挟まっていないか、線上を刻んで確かめる
+        let blocked = false;
+        const steps = Math.max(2, Math.ceil(Math.hypot(dx, dz)));
+        for (let i = 1; i <= steps; i++) {
+          const k = i / steps;
+          const mx = px + (x - px) * k, mz = pz + (z - pz) * k;
+          const q = { x: mx, z: mz };
+          w.resolve(q, 0.7);
+          if (Math.hypot(q.x - mx, q.z - mz) > 0.05) { blocked = true; break; }
+        }
+        if (!blocked) this.seen.add(this._key(x, z));
       }
     }
   }

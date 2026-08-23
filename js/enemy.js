@@ -272,7 +272,8 @@ export class Enemies {
   /** 中ボス：雑魚より強く、階の主より弱い。鍵を落とす */
   spawnElite(pos, floor) {
     const f = Math.max(1, floor || 1);
-    const hp = Math.round(40 * (1 + (f - 1) * 0.8));
+    // 通常弾1発が約1.2。20発前後（およそ12〜15秒）で倒せる硬さにする
+    const hp = Math.round(18 * (1 + (f - 1) * 0.6));
     this.list.push({
       kind: EnemyKind.SHIELD, hp, maxHp: hp,
       p: pos.clone(), r: 1.5, speed: 2.6 * (this.spMul || 1),
@@ -324,8 +325,8 @@ export class Enemies {
         const cx2 = px + sx * t, cy2 = py + sy * t, cz2 = pz + sz * t;
         const dx = ex - cx2, dy = ey - cy2, dz = ez - cz2;
         // コウモリは高く飛ぶため、縦方向に余裕を持たせる
-        const vAllow = (e.kind === EnemyKind.BAT) ? 1.15 : 0.75;
-        const hitR = e.r + b.r + 0.45;
+        const vAllow = (e.kind === EnemyKind.BAT) ? 1.15 : (e.elite ? 1.6 : 0.75);
+        const hitR = e.r + b.r + (e.elite ? 0.9 : 0.45);
         const dyClamped = Math.max(0, Math.abs(dy) - vAllow);
         if (dx * dx + dyClamped * dyClamped + dz * dz < hitR * hitR) {
           // 盾持ちは正面からの通常弾を弾く
@@ -339,8 +340,8 @@ export class Enemies {
             }
           }
           e.hp -= b.dmg;
-          e.stagger = 0.25;
-          e.burn = Math.max(e.burn, 1.6);
+          e.stagger = e.elite ? 0 : 0.25;
+          if (!e.elite) e.burn = Math.max(e.burn, 1.6);   // 中ボスは燃え尽きで倒れない
           if (this.particles) this.particles.emit(new THREE.Vector3(e.p.x, e.y, e.p.z), 6, { color: [1, 0.7, 0.3], size: 2.2 });
           if (e.hp <= 0 && !e.dead) { e.dead = true; e.ash = 0.9; killed++; if (onKill) onKill(e); }
           if (!b.pierce) { bullets.list.splice(bi, 1); break; }
@@ -350,7 +351,7 @@ export class Enemies {
     return killed;
   }
 
-  update(dt, target, world, audio) {
+  update(dt, target, world, audio, onKill) {
     for (let i = this.list.length - 1; i >= 0; i--) {
       const e = this.list[i];
       if (e.ash > 0) {
@@ -367,6 +368,7 @@ export class Enemies {
       const s = e.elite ? null : world.inShaft(e.p.x, e.p.z);
       if (s) {
         e.dead = true; e.ash = 0.7;
+        if (onKill) onKill(e);          // 天窓の光で祓われた時も数える
         if (audio) audio.sfx('ash');
         if (this.particles) this.particles.emit(new THREE.Vector3(e.p.x, e.y, e.p.z), 22, { color: [1, 0.95, 0.7], size: 3.2, up: 3 });
         continue;
@@ -379,6 +381,7 @@ export class Enemies {
         }
         if (e.burn <= 0) {
           e.dead = true; e.ash = 0.8;
+          if (onKill) onKill(e);        // 燃え尽きた時も撃破として扱う
           if (audio) audio.sfx('ash');
           continue;
         }
@@ -403,7 +406,7 @@ export class Enemies {
   }
 
   /** 陽の化身に触れた不死者を即座に灰へ。消した数を返す */
-  burnNear(px, pz, r) {
+  burnNear(px, pz, r, onKill) {
     let n = 0;
     for (const e of this.list) {
       if (e.dead) continue;
@@ -411,6 +414,7 @@ export class Enemies {
       if (dx * dx + dz * dz < r * r) {
         if (e.elite) { e.hp -= 12; if (e.hp > 0) continue; }
         e.dead = true; e.ash = 0.6; n++;
+        if (onKill) onKill(e);
         if (this.particles) {
           this.particles.emit(new THREE.Vector3(e.p.x, e.y, e.p.z), 14,
             { color: [1, 0.9, 0.5], size: 3.2, up: 2.8 });
