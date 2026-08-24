@@ -154,11 +154,17 @@ class Game {
       this.player.cutPhys = h.defCut;
       this.player.cutMag = h.mdefCut;
       this.player.evade = h.evade;
-      this.player.guardMax = Math.round(100 * h.guardMul);
+      this.player.guardMax = Math.round(150 * h.guardMul);
       if (this.player.guard > this.player.guardMax) this.player.guard = this.player.guardMax;
       UI.hp(this.player.hp, this.player.maxHp, this.player.guard, this.player.guardMax);
     }
     if (this.miko) this.miko.applyStats(m);
+    if (this.player && this.player.applyLook) {
+      const rar = (id) => (id && GEAR[id]) ? GEAR[id].rare : 0;
+      this.player.applyLook({
+        weapon: rar(h.gear.weapon), armor: rar(h.gear.armor), charm: rar(h.gear.charm)
+      });
+    }
   }
 
   saveProgress() {
@@ -841,6 +847,7 @@ class Game {
     this.saveProgress();
     this.world.buildDungeon(Date.now() % 100000, this.floor);
     this.minimap.reset(this.world);
+    this.goldenRef = null;
     this.gfx.rescanLights();
     this.player.reset(this.world.playerStart);
     this.miko.reset(this.world.playerStart);
@@ -1092,7 +1099,8 @@ class Game {
       this.minimap.tick(dt);
       this.minimap.mark(this.player.pos.x, this.player.pos.z);
       this.minimap.draw(this.player.pos.x, this.player.pos.z, this.camYaw,
-        { elite: this.eliteRef && !this.eliteRef.dead ? this.eliteRef.p : null });
+        { elite: this.eliteRef && !this.eliteRef.dead ? this.eliteRef.p : null,
+          secret: this.goldenRef && !this.goldenRef.dead ? this.goldenRef.p : null });
     }
 
     this.gfx.render(now);
@@ -1144,6 +1152,33 @@ class Game {
     // 供の巫女
     const danger = !!this.enemies.touching(P.pos.x, P.pos.z) || (this.phase === Phase.BOSS);
     this.miko.update(dt, P, this.world, now, danger);   // 回復は「祓い」ボタンで手動
+
+    // 隠しの間：罅の入った壁を撃つ
+    if (this.world.shootSecret) {
+      for (let i = this.bullets.list.length - 1; i >= 0; i--) {
+        const bb = this.bullets.list[i];
+        const res = this.world.shootSecret(bb.p.x, bb.p.z);
+        if (res) {
+          this.bullets.list.splice(i, 1);
+          const sc = this.world.secret;
+          if (res === 'crack') {
+            this.audio.sfx('hit');
+            this.particles.emit(new THREE.Vector3(sc.x, 2, sc.z), 10,
+              { color: [1, 0.85, 0.4], size: 2.6, up: 1.4 });
+            UI.toast('壁が軋んだ……もう少し');
+          } else {
+            this.audio.sfx('phase');
+            this.particles.emit(new THREE.Vector3(sc.x, 2.4, sc.z), 60,
+              { color: [1, 0.88, 0.45], size: 4.2, up: 2.6 });
+            UI.toast('隠された路が現れた', 4200);
+            this.voice.say(null, 'hero', { segments: [{ t: '壁の向こうに、', p: 1.0, r: 1.05, gap: 150 }, { t: '何かある！', p: 1.12, r: 1.15 }] });
+            this.goldenRef = this.enemies.spawnGolden(
+              new THREE.Vector3(sc.roomX, 0, sc.roomZ), this.floor);
+          }
+          break;
+        }
+      }
+    }
 
     // 祭壇を撃ったか（迷路の仕掛け）
     if (this.world.shootSwitch) {
@@ -1216,7 +1251,22 @@ class Game {
       this.audio.sfx('ash');
       // 階が深いほど、レアなら大きく
       this.coin += Math.round((2 + this.floor) * (e.rare ? 12 : 1) * (e.elite ? 8 : 1));
-      if (e.elite) {
+      if (e.golden) {
+        const exp = Math.round(9000 * (1 + (this.floor - 1) * 0.8));
+        this.grantExp(exp);
+        this.coin += 1500 + this.floor * 400;
+        const got = [];
+        ['w5', 'a5', 't5'].forEach(id => { if (this.party.hero.pick(id)) got.push(GEAR[id].name); });
+        Party.save(this.party);
+        this.particles.emit(new THREE.Vector3(e.p.x, 2, e.p.z), 120,
+          { color: [1, 0.88, 0.35], size: 5.4, up: 4, life: 2.2 });
+        this.audio.sfx('purify');
+        UI.shout('黄 金 の 守 り 手 を 討 っ た');
+        this.voice.say(null, 'hero', { style: 'shout',
+          segments: [{ t: 'すげぇ……', p: 1.0, r: 0.9, gap: 220 }, { t: 'こいつは伝説の代物だ！', p: 1.08, r: 1.05 }] });
+        UI.toast('経験 ' + exp.toLocaleString() + '　' + got.join('・') + ' を得た', 6000);
+        this.goldenRef = null;
+      } else if (e.elite) {
         this.hasKey = true;
         this.audio.sfx('refill');
         this.particles.emit(new THREE.Vector3(e.p.x, 1.5, e.p.z), 44,
@@ -1279,7 +1329,7 @@ class Game {
         const dx = b.p.x - this.boss.p.x, dz = b.p.z - this.boss.p.z;
         const dy = b.p.y - 1.4;
         if (dx * dx + dy * dy + dz * dz < 1.6 * 1.6) {
-          const ok = this.boss.takeHit(b.dmg * 3, b.pierce);
+          const ok = this.boss.takeHit(b.dmg * (b.pierce ? 6 : 3), b.pierce);
           this.particles.emit(new THREE.Vector3(this.boss.p.x, 1.4, this.boss.p.z), 5,
             { color: ok ? [1, 0.5, 0.4] : [0.6, 0.5, 0.8], size: 2.4 });
           this.audio.sfx('hit');

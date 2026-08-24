@@ -13,8 +13,8 @@ export class Player {
     this.aim = new THREE.Vector3(0, 0, 1);   // 模型の正面は +Z
     this.radius = 0.6;
     this.hp = 3; this.maxHp = 3;
-    this.guard = 100;        // いまの心の耐久。守りが高いほど減りにくい
-    this.guardMax = 100;
+    this.guard = 150;        // いまの心の耐久。守りが高いほど減りにくい
+    this.guardMax = 150;
     this.cutPhys = 0;        // 物理の軽減率（能力値から設定される）
     this.cutMag = 0;
     this.evade = 0;          // 完全回避率
@@ -44,7 +44,8 @@ export class Player {
     skirt.position.y = 0.62; skirt.castShadow = true;
     this.group.add(skirt);
 
-    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.33, 0.62, 6, 12), fleshMaterial(coatC));
+    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.33, 0.62, 6, 12), fleshMaterial(coatC).clone());
+    this._coatMats = [skirt.material, torso.material];
     torso.position.y = 1.32; torso.castShadow = true;
     this.group.add(torso);
 
@@ -66,11 +67,13 @@ export class Player {
     band.rotation.x = Math.PI / 2; band.position.y = 2.09;
     this.group.add(band);
 
+    this._pauldrons = [];
     [-1, 1].forEach(s => {
-      const p = new THREE.Mesh(new THREE.SphereGeometry(0.19, 12, 10), metalMaterial(54, 0x8a7a52));
+      const p = new THREE.Mesh(new THREE.SphereGeometry(0.19, 12, 10), metalMaterial(54, 0x8a7a52).clone());
       p.position.set(0.4 * s, 1.6, 0); p.scale.set(1, 0.72, 1);
       p.castShadow = true;
       this.group.add(p);
+      this._pauldrons.push(p);
     });
 
     this.legs = [];
@@ -216,8 +219,10 @@ export class Player {
   hurt(power, magical) {
     if (this.invuln > 0) return false;
     if (Math.random() < this.evade) { this.invuln = 0.6; return 'evade'; }
-    const cut = Math.min(0.9, (magical ? this.cutMag : this.cutPhys) + (this.wardT > 0 ? this.wardCut : 0));
-    const dmg = Math.max(6, (power || 100) * (1 - cut));   // 最低でも少しは通る
+    // 守りが高いほど、心1つを失うまでに耐えられる回数が増えるようにする。
+    // 最低ダメージを低くし、軽減がそのまま回数に効くようにした。
+    const cut = Math.min(0.92, (magical ? this.cutMag : this.cutPhys) + (this.wardT > 0 ? this.wardCut : 0));
+    const dmg = Math.max(1.5, (power || 100) * (1 - cut));
     this.guard -= dmg;
     this.invuln = 1.2;
     if (this.guard <= 0) {
@@ -323,6 +328,12 @@ export class Player {
       this.muzzleLight.intensity *= 0.86;
     }
 
+    if (this._legend && this.legendAura) {
+      this.legendAura.rotation.y = Math.sin(t * 0.8) * 0.1;
+      if (this.legendRing) this.legendRing.rotation.z += dt * 0.6;
+      if (this.legendCape) this.legendCape.rotation.z = Math.sin(t * 2.2) * 0.06;
+    }
+    if (this.charmGlow && this.charmGlow.visible) this.charmGlow.rotation.z += dt * 0.8;
     this.group.visible = !(this.invuln > 0 && Math.floor(t * 12) % 2 === 0);
     this.muzzle.material.emissiveIntensity = 2.2 + c * 3;
   }
@@ -398,6 +409,81 @@ export class Player {
       }
     });
     return g;
+  }
+
+  /**
+   * 装備に応じて姿を変える。
+   * @param g {weapon, armor, charm} の等級 0〜5
+   */
+  applyLook(g) {
+    g = g || {};
+    const wr = g.weapon || 0, ar = g.armor || 0, cr = g.charm || 0;
+
+    // ── 銃：等級が上がるほど銃身が太く、金環が増え、輝く ──
+    const gunCol = [0x6a6e78, 0x7a7e88, 0x9a8a5a, 0xc0a050, 0xd8b860, 0xffd24a][wr] || 0x6a6e78;
+    this.gun.traverse(o => {
+      if (o.isMesh && o.material && o.material.color && o !== this.muzzle) {
+        if (o.material.metalness > 0.5) o.material.color.setHex(gunCol);
+      }
+    });
+    this.rings.forEach((r, i) => {
+      r.visible = (i < 1 + Math.floor(wr * 0.8));
+      if (r.material.emissive) {
+        r.material.emissive.setHex(wr >= 5 ? 0xffd24a : 0xffd98a);
+        r.material.emissiveIntensity = 0.6 + wr * 0.5;
+      }
+    });
+    this.gun.scale.set(1 + wr * 0.05, 1 + wr * 0.05, 1 + wr * 0.07);
+    this.muzzle.material.emissiveIntensity = 2.2 + wr * 0.8;
+
+    // ── 防具：外套の色と肩当ての大きさ ──
+    const coatCol = [0x2b2f3e, 0x35404f, 0x3a4a5a, 0x4a3a5a, 0x5a4a2a, 0xb08a30][ar] || 0x2b2f3e;
+    if (this._coatMats) this._coatMats.forEach(m => m.color.setHex(coatCol));
+    if (this._pauldrons) this._pauldrons.forEach(p => {
+      p.scale.set(1 + ar * 0.08, 0.72 + ar * 0.05, 1 + ar * 0.08);
+      if (p.material.color) p.material.color.setHex(ar >= 5 ? 0xffd24a : 0x8a7a52);
+    });
+
+    // ── 伝説の装備：黄金の外套と背の光輪 ──
+    const legend = (wr >= 5 || ar >= 5 || cr >= 5);
+    if (!this.legendAura) {
+      const grp = new THREE.Group();
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.75, 0.05, 10, 28),
+        glowMaterial(0xffd24a, 2.6, true));
+      ring.position.set(0, 1.5, -0.35);
+      grp.add(ring);
+      for (let i = 0; i < 10; i++) {
+        const a = (i / 10) * Math.PI * 2;
+        const sp = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.26, 6), glowMaterial(0xffe27a, 2.2, true));
+        sp.position.set(Math.cos(a) * 0.9, 1.5 + Math.sin(a) * 0.9, -0.35);
+        sp.rotation.z = a - Math.PI / 2;
+        grp.add(sp);
+      }
+      // 揺れる金の外套
+      const cape = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.34, 0.9, 1.5, 12, 1, true, 0.7, Math.PI * 1.6),
+        new THREE.MeshStandardMaterial({ color: 0xc9a227, roughness: 0.35, metalness: 0.7,
+          emissive: new THREE.Color(0x6a4a10), emissiveIntensity: 0.8, side: THREE.DoubleSide }));
+      cape.position.set(0, 1.15, -0.24);
+      grp.add(cape);
+      this.legendRing = ring;
+      this.legendCape = cape;
+      this.legendAura = grp;
+      this.group.add(grp);
+    }
+    this.legendAura.visible = legend;
+    this._legend = legend;
+    // 護符の等級で足元が輝く
+    if (!this.charmGlow) {
+      this.charmGlow = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.85, 24),
+        new THREE.MeshBasicMaterial({ color: 0xffd98a, transparent: true, opacity: 0.3,
+          blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+      this.charmGlow.rotation.x = -Math.PI / 2;
+      this.charmGlow.position.y = 0.04;
+      this.group.add(this.charmGlow);
+    }
+    this.charmGlow.visible = cr >= 2;
+    this.charmGlow.material.opacity = 0.12 + cr * 0.07;
   }
 
   muzzleFlash(strong) { this.muzzleLight.intensity = strong ? 8 : 3; }

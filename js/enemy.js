@@ -283,6 +283,26 @@ export class Enemies {
     return this.list[this.list.length - 1];
   }
 
+  /** 隠しの間に眠る黄金の守り手。強く、輝き、稀なる宝を落とす */
+  spawnGolden(pos, floor) {
+    const f = Math.max(1, floor || 1);
+    const hp = Math.round(120 * (1 + (f - 1) * 0.9));
+    const e = {
+      kind: EnemyKind.SHIELD, hp, maxHp: hp,
+      p: pos.clone(), r: 2.2, speed: 3.0,
+      burn: 0, stagger: 0, dead: false, ash: 0, y: 0,
+      phase: 0, rare: false, elite: true, golden: true
+    };
+    this.list.push(e);
+    if (!this.goldMat) {
+      this.goldMat = new THREE.MeshStandardMaterial({
+        color: 0xffd24a, emissive: new THREE.Color(0xffa020), emissiveIntensity: 1.2,
+        roughness: 0.25, metalness: 0.9
+      });
+    }
+    return e;
+  }
+
   spawn(kind, pos, forceRare) {
     const sp = SPEC[kind];
     const rare = forceRare || (Math.random() < (this.rareRate || 0));
@@ -471,9 +491,10 @@ export class Enemies {
     for (const e of this.list) {
       const im = this.meshes[e.kind];
       if (!im) continue;
+      if (e.golden && im.material !== this.goldMat) { /* 見た目は輪で表す */ }
       const idx = counts[e.kind]++;
       if (idx >= im.count) continue;
-      const scale = (e.ash > 0 ? Math.max(0.01, e.ash) : 1) * (e.rare ? 1.35 : 1) * (e.elite ? 2.1 : 1);
+      const scale = (e.ash > 0 ? Math.max(0.01, e.ash) : 1) * (e.rare ? 1.35 : 1) * (e.elite ? 2.1 : 1) * (e.golden ? 1.5 : 1);
       this._m.makeTranslation(e.p.x, e.y, e.p.z);
       if (e.facing) {
         this._q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.atan2(e.facing.x, e.facing.z));
@@ -492,7 +513,7 @@ export class Enemies {
       let n = 0;
       const t = performance.now() / 1000;
       for (const e of this.list) {
-        if (e.dead || !e.rare || n >= this.rareRings.count) continue;
+        if (e.dead || !(e.rare || e.golden) || n >= this.rareRings.count) continue;
         this._m.makeTranslation(e.p.x, e.y + 2.4 + Math.sin(t * 2 + e.phase) * 0.12, e.p.z);
         this._m.multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2));
         this._m.multiply(new THREE.Matrix4().makeRotationZ(t * 1.4));

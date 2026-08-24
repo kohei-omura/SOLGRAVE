@@ -175,8 +175,8 @@ export class Character {
   get maxMp()    { return Math.round((20 + this.get('MP') * 2) * this.skillMod('mp').mul); }
   get atkMul()   { return (1 + this.get('ATK') * 0.035) * this.skillMod('atk').mul; }
   get matkMul()  { return (1 + this.get('MATK') * 0.04) * this.skillMod('matk').mul; }
-  get defCut()   { return Math.min(0.78, this.get('DEF') * 0.0045); }   // 物理の軽減（上限78%）
-  get mdefCut()  { return Math.min(0.78, this.get('MDEF') * 0.0045); }  // 霊的の軽減
+  get defCut()   { return Math.min(0.88, this.get('DEF') * 0.0055); }   // 物理の軽減（上限88%）
+  get mdefCut()  { return Math.min(0.88, this.get('MDEF') * 0.0055); }  // 霊的の軽減
   // 速さは上限を設ける（初期の2.1倍まで）。振りすぎても壊れないように
   get speedMul() { return Math.min(2.4, (1 + this.get('AGI') * 0.009) * this.skillMod('speed').mul); }
   get evade()    { return Math.min(0.45, this.get('AGI') * 0.0011 + this.skillMod('evade').add); }

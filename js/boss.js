@@ -181,7 +181,8 @@ export class Boss {
     this.lordName = L.name + (cycle > 0 ? '・' + ['','再臨','真','極'][Math.min(3, cycle)] : '');
     // 姿の大きさも階で変わる
     this.group.scale.setScalar(1 + Math.min(0.6, (this.floor - 1) * 0.012));
-    this.maxHp = Math.round(340 * (1 + (this.floor - 1) * 0.7));
+    // 溜め撃ち20〜35発ほどで決着がつく硬さにする
+    this.maxHp = Math.round(170 * (1 + (this.floor - 1) * 0.45));
     this.hp = this.maxHp;
     this.power = Math.round(120 * (1 + (this.floor - 1) * 0.3));
     try {
