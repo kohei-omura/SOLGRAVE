@@ -46,7 +46,7 @@ export class World {
     this.ramps = []; this.plats = [];
     this.gimmicks = null; this.wards = null; this.wardRing = null; this.sanctuary = null;
     this.warp = null; this.warpRings = null; this.warpCol = null;
-    this.grandDoor = null; this.rest = null; this.doorCrest = null;
+    this.grandDoor = null; this.rest = null; this.doorCrest = null; this.secret = null;
     this.bossSeal = null; this.restRing = null; this.restOrb = null;
     this.spawnPoints = []; this.exit = null; this.bossRoom = null;
   }
@@ -534,6 +534,10 @@ export class World {
       }
     });
 
+    // ── 隠しの間 ──
+    // 行き止まりの壁のひとつに「罅（ひび）」があり、撃つと崩れて奥へ通じる
+    this._addSecret(dead, rnd, wallMat, floorMat, DOOR);
+
     this._flushBatches();
 
     this.playerStart = new THREE.Vector3(this.startRoom.x, 0, this.startRoom.z);
@@ -779,6 +783,153 @@ export class World {
     g.position.set(x, 0, z);
     this.group.add(g);
     this.rest = { x, z, r: 2.6, group: g };
+  }
+
+  /** 隠しの間：罅の入った壁を撃つと開く */
+  _addSecret(dead, rnd, wallMat, floorMat, DOOR) {
+    const pool = (dead && dead.length) ? dead
+      : this.rooms.filter(r => r !== this.startRoom && r !== this.bossRoom);
+    if (!pool.length) return;
+    // 迷路や大広間と重ならない置き場所を探す。
+    // 部屋ごとに東西南北を試し、他と当たらない向きを選ぶ。
+    const SW = 26, SD = 22;
+    const clash = (cx, cz) => {
+      for (const rm of this.rooms) {
+        if (Math.abs(rm.x - cx) < (rm.w + SW) / 2 + 4 &&
+            Math.abs(rm.z - cz) < (rm.d + SD) / 2 + 4) return true;
+      }
+      const bh = this.bossRoom;
+      if (bh && Math.abs(bh.x - cx) < (bh.w + SW) / 2 + 6 &&
+                Math.abs(bh.z - cz) < (bh.d + SD) / 2 + 6) return true;
+      return false;
+    };
+    let host = null, sx = 0, sz = 0, dir = 'E';
+    // 行き止まりを優先しつつ、見つからなければ全ての部屋を試す。
+    // さらに離れた位置も順に試すので、どの階でも必ず置ける。
+    const cands = pool.concat(this.rooms.filter(r => pool.indexOf(r) < 0 && r !== this.startRoom));
+    const order = cands.slice().sort(() => rnd() - 0.5);
+    outer:
+    for (const gapLen of [10, 16, 24, 34, 46]) {
+      for (const cand of order) {
+        const tries = [
+          ['E', cand.x + cand.w / 2 + gapLen + SW / 2, cand.z],
+          ['W', cand.x - cand.w / 2 - gapLen - SW / 2, cand.z],
+          ['N', cand.x, cand.z - cand.d / 2 - gapLen - SD / 2],
+          ['S', cand.x, cand.z + cand.d / 2 + gapLen + SD / 2]
+        ];
+        for (const [d0, tx, tz] of tries) {
+          if (!clash(tx, tz)) { host = cand; sx = tx; sz = tz; dir = d0; break outer; }
+        }
+      }
+    }
+    if (!host) return;
+
+    // 床と天井
+    this._batchPlane(SW, SD, sx, 0, sz, true, floorMat);
+    this._batchPlane(SW, SD, sx, WALL_H, sz, false, floorMat);
+    // 四方の壁（西側だけ罅の分を空ける）
+    const GAP = 6;
+
+    // 通じる路（東西・南北のどちらでも）
+    const horiz = (dir === 'E' || dir === 'W');
+    const sgn = (dir === 'E' || dir === 'S') ? 1 : -1;
+    const px0 = horiz ? (host.x + sgn * host.w / 2) : host.x;
+    const pz0 = horiz ? host.z : (host.z + sgn * host.d / 2);
+    const px1 = horiz ? (sx - sgn * SW / 2) : sx;
+    const pz1 = horiz ? sz : (sz - sgn * SD / 2);
+    const mxp = (px0 + px1) / 2, mzp = (pz0 + pz1) / 2;
+    const lenA = Math.abs(horiz ? (px1 - px0) : (pz1 - pz0)) + 2;
+    if (horiz) {
+      this._batchPlane(lenA, GAP, mxp, 0, mzp, true, floorMat);
+      this._batchPlane(lenA, GAP, mxp, WALL_H, mzp, false, floorMat);
+      this._batch(lenA, WALL_H, T, mxp, WALL_H / 2, mzp - GAP / 2, wallMat, true);
+      this._batch(lenA, WALL_H, T, mxp, WALL_H / 2, mzp + GAP / 2, wallMat, true);
+    } else {
+      this._batchPlane(GAP, lenA, mxp, 0, mzp, true, floorMat);
+      this._batchPlane(GAP, lenA, mxp, WALL_H, mzp, false, floorMat);
+      this._batch(T, WALL_H, lenA, mxp - GAP / 2, WALL_H / 2, mzp, wallMat, true);
+      this._batch(T, WALL_H, lenA, mxp + GAP / 2, WALL_H / 2, mzp, wallMat, true);
+    }
+
+    // 隠し部屋の四方の壁（通じる面だけ空ける）
+    const sideZ = (SD - GAP) / 2, sideX = (SW - GAP) / 2;
+    const openW = (dir === 'E'), openE = (dir === 'W');
+    const openN = (dir === 'S'), openS = (dir === 'N');
+    const rowW = (xPos, open) => {
+      if (!open) { this._batch(T, WALL_H, SD, xPos, WALL_H / 2, sz, wallMat, true); return; }
+      this._batch(T, WALL_H, sideZ, xPos, WALL_H / 2, sz - (GAP / 2 + sideZ / 2), wallMat, true);
+      this._batch(T, WALL_H, sideZ, xPos, WALL_H / 2, sz + (GAP / 2 + sideZ / 2), wallMat, true);
+    };
+    const rowN = (zPos, open) => {
+      if (!open) { this._batch(SW, WALL_H, T, sx, WALL_H / 2, zPos, wallMat, true); return; }
+      this._batch(sideX, WALL_H, T, sx - (GAP / 2 + sideX / 2), WALL_H / 2, zPos, wallMat, true);
+      this._batch(sideX, WALL_H, T, sx + (GAP / 2 + sideX / 2), WALL_H / 2, zPos, wallMat, true);
+    };
+    rowW(sx - SW / 2, openW);
+    rowW(sx + SW / 2, openE);
+    rowN(sz - SD / 2, openN);
+    rowN(sz + SD / 2, openS);
+
+    // ── 罅の入った壁（これを撃つと崩れる） ──
+    const cx0 = horiz ? (px0 + sgn * 0.6) : px0;
+    const cz0 = horiz ? pz0 : (pz0 + sgn * 0.6);
+    const seal = new THREE.Mesh(
+      horiz ? new THREE.BoxGeometry(T + 0.4, WALL_H, GAP) : new THREE.BoxGeometry(GAP, WALL_H, T + 0.4),
+      wallMat);
+    seal.position.set(cx0, WALL_H / 2, cz0);
+    this.group.add(seal);
+    // 罅の意匠（うっすら光る筋）
+    const crack = new THREE.Group();
+    for (let i = 0; i < 7; i++) {
+      const h = 0.8 + rnd() * 1.6;
+      const bar = new THREE.Mesh(new THREE.PlaneGeometry(0.09, h),
+        new THREE.MeshBasicMaterial({ color: 0xffd24a, transparent: true, opacity: 0.5,
+          blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+      const off = -GAP / 2 + 0.6 + rnd() * (GAP - 1.2);
+      bar.position.set(horiz ? cx0 + sgn * 0.5 : cx0 + off, 0.9 + rnd() * 3.4,
+                       horiz ? cz0 + off : cz0 + sgn * 0.5);
+      if (horiz) bar.rotation.y = -Math.PI / 2;
+      bar.rotation.z = (rnd() - 0.5) * 1.2;
+      crack.add(bar);
+    }
+    this.group.add(crack);
+    const cl = new THREE.PointLight(0xffd24a, 1.6, 10, 2);
+    cl.position.set(cx0, 2.4, cz0);
+    cl.visible = false;
+    this.group.add(cl);
+
+    const col = horiz
+      ? { min: { x: cx0 - 1.0, z: cz0 - GAP / 2 }, max: { x: cx0 + 1.0, z: cz0 + GAP / 2 } }
+      : { min: { x: cx0 - GAP / 2, z: cz0 - 1.0 }, max: { x: cx0 + GAP / 2, z: cz0 + 1.0 } };
+    this.colliders.push(col);
+    this.secret = { x: cx0, z: cz0, seal, crack, light: cl, collider: col,
+      open: false, roomX: sx, roomZ: sz, w: SW, d: SD, hp: 3 };
+    if (this.mapAreas) {
+      this._secretAreas = [
+        { x: sx, z: sz, w: SW, d: SD, kind: 'secret' },
+        { x: mxp, z: mzp, w: horiz ? lenA : GAP, d: horiz ? GAP : lenA, kind: 'hall' }
+      ];
+    }
+  }
+
+  /** 罅を撃つ。崩れたら true */
+  shootSecret(bx, bz) {
+    const sc = this.secret;
+    if (!sc || sc.open) return false;
+    if (Math.hypot(bx - sc.x, bz - sc.z) > 3.2) return false;
+    sc.hp--;
+    if (sc.hp > 0) return 'crack';
+    sc.open = true;
+    sc.seal.visible = false;
+    sc.crack.visible = false;
+    const i = this.colliders.indexOf(sc.collider);
+    if (i >= 0) this.colliders.splice(i, 1);
+    // 見取り図にも現れる
+    if (this.mapAreas && this._secretAreas) {
+      this._secretAreas.forEach(a => this.mapAreas.push(a));
+      this._secretAreas = null;
+    }
+    return 'open';
   }
 
   /** 帰還のワープ台（魔法陣） */
