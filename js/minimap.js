@@ -34,55 +34,32 @@ export class Minimap {
   }
 
   /**
-   * いまいる場所とその周りを踏破済みにする。
-   * 壁の向こうまで塗ると「繋がっていない道」が見えてしまうため、
-   * 実際に立てる場所（壁に押し戻されない所）だけを記録する。
+   * いま踏み入れている区画を覚える。
+   * 点を塗るのではなく「部屋」「通路」という単位で覚えるので、
+   * 部屋どうしの壁が黒いまま残り、繋がって見えることがない。
    */
   mark(px, pz) {
     const w = this.world;
-    if (!w || !w.resolve) { this.seen.add(this._key(px, pz)); return; }
-    // 記録の粗さで丸めた点そのものが「立てる場所」かを見る
-    const fits = (x, z) => {
-      const gx = Math.round(x / this.cell) * this.cell;
-      const gz = Math.round(z / this.cell) * this.cell;
-      const t = { x: gx, z: gz };
-      w.resolve(t, 0.75);
-      return Math.hypot(t.x - gx, t.z - gz) < 0.06;
-    };
-    if (fits(px, pz)) this.seen.add(this._key(px, pz));
-    const r = 3;
-    for (let dx = -r; dx <= r; dx++) {
-      for (let dz = -r; dz <= r; dz++) {
-        if (dx === 0 && dz === 0) continue;
-        if (dx * dx + dz * dz > r * r) continue;
-        const x = px + dx * this.cell, z = pz + dz * this.cell;
-        if (!fits(x, z)) continue;
-        // 途中に壁が挟まっていないか、線上を刻んで確かめる
-        let blocked = false;
-        const steps = Math.max(2, Math.ceil(Math.hypot(dx, dz)));
-        for (let i = 1; i <= steps; i++) {
-          const k = i / steps;
-          const mx = px + (x - px) * k, mz = pz + (z - pz) * k;
-          const q = { x: mx, z: mz };
-          w.resolve(q, 0.7);
-          if (Math.hypot(q.x - mx, q.z - mz) > 0.05) { blocked = true; break; }
-        }
-        if (!blocked) this.seen.add(this._key(x, z));
+    if (!w || !w.mapAreas) return;
+    w.mapAreas.forEach((a, i) => {
+      if (this.seen.has(i)) return;
+      if (Math.abs(px - a.x) < a.w / 2 - 0.5 && Math.abs(pz - a.z) < a.d / 2 - 0.5) {
+        this.seen.add(i);
       }
-    }
+    });
   }
 
   /** 地図の広がりを求める */
   _calcBounds() {
     const w = this.world;
-    if (!w || !w.rooms || !w.rooms.length) return null;
+    if (!w) return null;
     let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
     const add = (x, z, m) => {
       x0 = Math.min(x0, x - m); x1 = Math.max(x1, x + m);
       z0 = Math.min(z0, z - m); z1 = Math.max(z1, z + m);
     };
-    w.rooms.forEach(r => add(r.x, r.z, Math.max(r.w, r.d) / 2 + 4));
-    if (w.bossRoom) add(w.bossRoom.x, w.bossRoom.z, Math.max(w.bossRoom.w, w.bossRoom.d) / 2 + 4);
+    (w.mapAreas || []).forEach(a => add(a.x, a.z, Math.max(a.w, a.d) / 2 + 3));
+    if (!isFinite(x0) && w.rooms) w.rooms.forEach(r => add(r.x, r.z, Math.max(r.w, r.d) / 2 + 4));
     return { x0, x1, z0, z1 };
   }
 
@@ -106,32 +83,47 @@ export class Minimap {
     c.fillStyle = 'rgba(6,7,10,0.55)';
     c.fillRect(0, 0, W, H);
 
-    // 踏破した場所
-    const s = Math.max(1.6, this.cell * k);
-    c.fillStyle = 'rgba(180,196,220,0.42)';
-    this.seen.forEach(key => {
-      const p = key.split(',');
-      const x = toX(+p[0] * this.cell), z = toZ(+p[1] * this.cell);
-      c.fillRect(x - s / 2, z - s / 2, s, s);
-    });
-
+    // 踏み入れた区画だけを描く。区画の外は黒いまま＝壁
     const w = this.world;
-    const inSeen = (x, z) => this.seen.has(this._key(x, z));
-
-    // 踏破した部屋だけ輪郭を描く
-    c.strokeStyle = 'rgba(201,162,39,0.5)';
-    c.lineWidth = 1;
-    (w.rooms || []).forEach(r => {
-      if (!inSeen(r.x, r.z)) return;
-      c.strokeRect(toX(r.x - r.w / 2), toZ(r.z - r.d / 2), r.w * k, r.d * k);
+    const areas = (w && w.mapAreas) || [];
+    const inset = 0.6;
+    this.seen.forEach(i => {
+      const a = areas[i];
+      if (!a) return;
+      c.fillStyle = (a.kind === 'boss') ? 'rgba(210,170,90,0.32)'
+        : (a.kind === 'hall') ? 'rgba(150,168,196,0.34)'
+        : 'rgba(176,194,220,0.40)';
+      const x = toX(a.x - a.w / 2 + inset), z = toZ(a.z - a.d / 2 + inset);
+      const ww = Math.max(1, (a.w - inset * 2) * k), dd = Math.max(1, (a.d - inset * 2) * k);
+      c.fillRect(x, z, ww, dd);
+      if (a.kind !== 'hall') {
+        c.strokeStyle = (a.kind === 'boss') ? 'rgba(201,162,39,0.75)' : 'rgba(201,162,39,0.45)';
+        c.lineWidth = 1;
+        c.strokeRect(x, z, ww, dd);
+      }
     });
 
     // 目印
+    // 目印を出すかどうか（踏み入れた区画の近くだけ）
+    const inSeen = (x, z) => {
+      const ar = (w && w.mapAreas) || [];
+      for (const i of this.seen) {
+        const a = ar[i];
+        if (!a) continue;
+        if (Math.abs(x - a.x) < a.w / 2 + 3 && Math.abs(z - a.z) < a.d / 2 + 3) return true;
+      }
+      return false;
+    };
+
     const dot = (x, z, col, rad, ring) => {
       c.beginPath(); c.arc(toX(x), toZ(z), rad, 0, 6.284);
       c.fillStyle = col; c.fill();
-      if (ring) { c.strokeStyle = col; c.lineWidth = 1.4; c.beginPath();
-        c.arc(toX(x), toZ(z), rad + 2.6 + Math.sin(this._t * 3) * 1.2, 0, 6.284); c.stroke(); }
+      if (ring) {
+        c.strokeStyle = col; c.lineWidth = 1.4;
+        c.beginPath();
+        c.arc(toX(x), toZ(z), rad + 2.6 + Math.sin(this._t * 3) * 1.2, 0, 6.284);
+        c.stroke();
+      }
     };
     if (w.warp && inSeen(w.warp.x, w.warp.z)) dot(w.warp.x, w.warp.z, '#9ad8ff', 3);
     if (w.rest && inSeen(w.rest.x, w.rest.z)) dot(w.rest.x, w.rest.z, '#9affd0', 3);

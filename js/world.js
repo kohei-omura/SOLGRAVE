@@ -42,7 +42,7 @@ export class World {
     this.group = new THREE.Group();
     this.scene.add(this.group);
     this.colliders = []; this.shafts = []; this.rooms = []; this.torches = [];
-    this._batches = null; this._planes = null;
+    this._batches = null; this._planes = null; this.mapAreas = null;
     this.ramps = []; this.plats = [];
     this.gimmicks = null; this.wards = null; this.wardRing = null; this.sanctuary = null;
     this.warp = null; this.warpRings = null; this.warpCol = null;
@@ -413,6 +413,7 @@ export class World {
     const DOOR = 11;
     const T2 = T;
     this.grid = cells; this.gw = GW; this.gh = GH; this.cellSize = CELL;
+    this.mapAreas = [];   // 見取り図に描く区画 {x,z,w,d,kind}
     let far = cells[0][0];
     const dead = [];
 
@@ -426,6 +427,7 @@ export class World {
         const room = { x: cx, z: cz, w, d, gx: x, gy: y, cell: c };
         this.rooms.push(room);
         c.room = room;
+        this.mapAreas.push({ x: cx, z: cz, w, d, kind: 'room' });
         if (c.dist > far.dist) far = c;
         const exits = (c.N ? 1 : 0) + (c.S ? 1 : 0) + (c.E ? 1 : 0) + (c.W ? 1 : 0);
         if (exits === 1 && !(x === 0 && y === 0)) dead.push(room);
@@ -467,8 +469,16 @@ export class World {
         });
 
         // 通路
-        if (c.S && y < GH - 1) this._corridorZ(cx, cz + d / 2, cz + CELL - d / 2, wallMat, floorMat, DOOR);
-        if (c.E) this._corridorX(cz, cx + w / 2, cx + CELL - w / 2, wallMat, floorMat, DOOR);
+        if (c.S && y < GH - 1) {
+          this._corridorZ(cx, cz + d / 2, cz + CELL - d / 2, wallMat, floorMat, DOOR);
+          this.mapAreas.push({ x: cx, z: (cz + d / 2 + cz + CELL - d / 2) / 2,
+            w: DOOR, d: Math.abs(CELL - d) + 2, kind: 'hall' });
+        }
+        if (c.E) {
+          this._corridorX(cz, cx + w / 2, cx + CELL - w / 2, wallMat, floorMat, DOOR);
+          this.mapAreas.push({ x: (cx + w / 2 + cx + CELL - w / 2) / 2, z: cz,
+            w: Math.abs(CELL - w) + 2, d: DOOR, kind: 'hall' });
+        }
 
         // 松明
         this._addTorch(cx - w / 2 + 1.8, cz - d / 2 + 1.8);
@@ -630,6 +640,10 @@ export class World {
     // ── 大扉（唯一の入口） ──
     this._addGrandDoor(hx, hz - HD / 2);
     this.bossStand = new THREE.Vector3(hx, 0, hz + 6);
+    if (this.mapAreas) {
+      this.mapAreas.push({ x: hx, z: hz, w: HW, d: HD, kind: 'boss' });
+      this.mapAreas.push({ x: hx, z: (z0 + z1) / 2, w: cw, d: Math.abs(z1 - z0), kind: 'hall' });
+    }
   }
 
   /** ボスの間：一番広く、柱と燭台で飾る。手前に豪華な大扉 */
