@@ -537,6 +537,20 @@ export class World {
     // ── 隠しの間 ──
     // 行き止まりの壁のひとつに「罅（ひび）」があり、撃つと崩れて奥へ通じる
     this._addSecret(dead, rnd, wallMat, floorMat, DOOR);
+    // 宿主の部屋の壁を、路のぶんだけ取り除く
+    if (this.secretCut) {
+      const { dir: d0, host: hs, gap } = this.secretCut;
+      const hx0 = (d0 === 'E') ? hs.x + hs.w / 2 : (d0 === 'W') ? hs.x - hs.w / 2 : hs.x;
+      const hz0 = (d0 === 'S') ? hs.z + hs.d / 2 : (d0 === 'N') ? hs.z - hs.d / 2 : hs.z;
+      const horizC = (d0 === 'E' || d0 === 'W');
+      this.colliders = this.colliders.filter(c => {
+        const cx = (c.min.x + c.max.x) / 2, cz = (c.min.z + c.max.z) / 2;
+        if (horizC) {
+          return !(Math.abs(cx - hx0) < 2.6 && Math.abs(cz - hz0) < gap / 2 + 0.4);
+        }
+        return !(Math.abs(cz - hz0) < 2.6 && Math.abs(cx - hx0) < gap / 2 + 0.4);
+      });
+    }
 
     this._flushBatches();
 
@@ -830,6 +844,10 @@ export class World {
     // 四方の壁（西側だけ罅の分を空ける）
     const GAP = 6;
 
+    // 宿主の部屋の壁を、路の幅ぶんだけ取り除く。
+    // ここを開けないと、罅を壊しても部屋から出られない。
+    this.secretCut = { dir, host, gap: GAP };
+
     // 通じる路（東西・南北のどちらでも）
     const horiz = (dir === 'E' || dir === 'W');
     const sgn = (dir === 'E' || dir === 'S') ? 1 : -1;
@@ -873,29 +891,33 @@ export class World {
     // ── 罅の入った壁（これを撃つと崩れる） ──
     const cx0 = horiz ? (px0 + sgn * 0.6) : px0;
     const cz0 = horiz ? pz0 : (pz0 + sgn * 0.6);
+    // 罅の入った壁は、周りより荒れた色にして目立たせる
+    const sealMat = new THREE.MeshStandardMaterial({
+      color: 0x8a7a5a, roughness: 0.95, metalness: 0.05,
+      emissive: new THREE.Color(0x3a2a08), emissiveIntensity: 0.5
+    });
     const seal = new THREE.Mesh(
-      horiz ? new THREE.BoxGeometry(T + 0.4, WALL_H, GAP) : new THREE.BoxGeometry(GAP, WALL_H, T + 0.4),
-      wallMat);
+      horiz ? new THREE.BoxGeometry(T + 0.6, WALL_H, GAP) : new THREE.BoxGeometry(GAP, WALL_H, T + 0.6),
+      sealMat);
     seal.position.set(cx0, WALL_H / 2, cz0);
     this.group.add(seal);
     // 罅の意匠（うっすら光る筋）
     const crack = new THREE.Group();
     for (let i = 0; i < 7; i++) {
-      const h = 0.8 + rnd() * 1.6;
-      const bar = new THREE.Mesh(new THREE.PlaneGeometry(0.09, h),
+      const h = 1.0 + rnd() * 2.0;
+      const bar = new THREE.Mesh(new THREE.PlaneGeometry(0.16, h),
         new THREE.MeshBasicMaterial({ color: 0xffd24a, transparent: true, opacity: 0.5,
           blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
       const off = -GAP / 2 + 0.6 + rnd() * (GAP - 1.2);
-      bar.position.set(horiz ? cx0 + sgn * 0.5 : cx0 + off, 0.9 + rnd() * 3.4,
-                       horiz ? cz0 + off : cz0 + sgn * 0.5);
+      bar.position.set(horiz ? cx0 - sgn * 0.75 : cx0 + off, 0.9 + rnd() * 3.4,
+                       horiz ? cz0 + off : cz0 - sgn * 0.75);
       if (horiz) bar.rotation.y = -Math.PI / 2;
       bar.rotation.z = (rnd() - 0.5) * 1.2;
       crack.add(bar);
     }
     this.group.add(crack);
-    const cl = new THREE.PointLight(0xffd24a, 1.6, 10, 2);
-    cl.position.set(cx0, 2.4, cz0);
-    cl.visible = false;
+    const cl = new THREE.PointLight(0xffd24a, 2.6, 14, 2);
+    cl.position.set(horiz ? cx0 - sgn * 1.2 : cx0, 2.4, horiz ? cz0 : cz0 - sgn * 1.2);
     this.group.add(cl);
 
     const col = horiz
@@ -1300,6 +1322,11 @@ export class World {
     }
     if (this.wardRing) this.wardRing.material.opacity = 0.16 + Math.sin(t * 1.2) * 0.07;
     if (this.doorCrest) this.doorCrest.rotation.z += 0.01;
+    if (this.secret && !this.secret.open && this.secret.crack) {
+      const f = 0.45 + Math.abs(Math.sin(t * 1.8)) * 0.5;
+      this.secret.crack.children.forEach(c => { c.material.opacity = f; });
+      if (this.secret.light) this.secret.light.intensity = 1.8 + Math.sin(t * 2.4) * 0.8;
+    }
     if (this.keyhole && this.grandDoor && !this.grandDoor.open) {
       this.keyhole.halo.rotation.z += 0.02;
       this.keyhole.halo.material.emissiveIntensity = 2.0 + Math.sin(t * 3) * 0.9;

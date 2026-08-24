@@ -250,6 +250,20 @@ export class Enemies {
     this.meshes[EnemyKind.BAT]    = mk(bat,    skin(0x4a3a52));
 
     // レア個体の輪（頭上に浮かぶ）
+    // 黄金の守り手だけを描く専用の姿
+    this.goldMesh = new THREE.InstancedMesh(
+      this.meshes[EnemyKind.SHIELD].geometry,
+      new THREE.MeshStandardMaterial({
+        color: 0xffcf4a, emissive: new THREE.Color(0xff9a10), emissiveIntensity: 1.6,
+        roughness: 0.2, metalness: 0.95
+      }), 2);
+    this.goldMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.goldMesh.frustumCulled = false;
+    this.goldMesh.castShadow = true;
+    this.scene.add(this.goldMesh);
+    this.goldLight = new THREE.PointLight(0xffc040, 0, 26, 2);
+    this.scene.add(this.goldLight);
+
     this.rareRings = new THREE.InstancedMesh(
       new THREE.TorusGeometry(0.55, 0.06, 8, 20),
       new THREE.MeshBasicMaterial({ color: 0x9affd0, transparent: true, opacity: 0.85,
@@ -294,12 +308,6 @@ export class Enemies {
       phase: 0, rare: false, elite: true, golden: true
     };
     this.list.push(e);
-    if (!this.goldMat) {
-      this.goldMat = new THREE.MeshStandardMaterial({
-        color: 0xffd24a, emissive: new THREE.Color(0xffa020), emissiveIntensity: 1.2,
-        roughness: 0.25, metalness: 0.9
-      });
-    }
     return e;
   }
 
@@ -489,9 +497,9 @@ export class Enemies {
     const counts = {};
     Object.keys(this.meshes).forEach(k => counts[k] = 0);
     for (const e of this.list) {
+      if (e.golden) continue;          // 黄金は専用の姿で描く
       const im = this.meshes[e.kind];
       if (!im) continue;
-      if (e.golden && im.material !== this.goldMat) { /* 見た目は輪で表す */ }
       const idx = counts[e.kind]++;
       if (idx >= im.count) continue;
       const scale = (e.ash > 0 ? Math.max(0.01, e.ash) : 1) * (e.rare ? 1.35 : 1) * (e.elite ? 2.1 : 1) * (e.golden ? 1.5 : 1);
@@ -508,6 +516,27 @@ export class Enemies {
       for (let i = counts[k]; i < im.count; i++) im.setMatrixAt(i, this._hide);
       im.instanceMatrix.needsUpdate = true;
     });
+    // 黄金の守り手
+    if (this.goldMesh) {
+      let gn = 0;
+      const tt = performance.now() / 1000;
+      for (const e of this.list) {
+        if (e.dead || !e.golden || gn >= this.goldMesh.count) continue;
+        const sc = (e.ash > 0 ? Math.max(0.01, e.ash) : 1) * 3.2;
+        this._m.makeRotationY(Math.atan2(e.dir ? e.dir.x : 0, e.dir ? e.dir.z : 1));
+        this._m.setPosition(e.p.x, e.y + Math.sin(tt * 1.6) * 0.12, e.p.z);
+        this._m.scale(new THREE.Vector3(sc, sc, sc));
+        this.goldMesh.setMatrixAt(gn++, this._m);
+        if (this.goldLight) {
+          this.goldLight.position.set(e.p.x, e.y + 2.4, e.p.z);
+          this.goldLight.intensity = 4.5 + Math.sin(tt * 3) * 1.2;
+        }
+      }
+      for (let i = gn; i < this.goldMesh.count; i++) this.goldMesh.setMatrixAt(i, this._hide);
+      this.goldMesh.instanceMatrix.needsUpdate = true;
+      if (gn === 0 && this.goldLight) this.goldLight.intensity = 0;
+    }
+
     // レアの輪
     if (this.rareRings) {
       let n = 0;
