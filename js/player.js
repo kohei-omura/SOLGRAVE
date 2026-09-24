@@ -394,8 +394,8 @@ export class Player {
       this.body.position.y *= 0.7; this.body.position.z *= 0.7;
     }
     if (this._victory <= 0) this._animWeapon(dt, t);
-    this._reachArms(t);
-    this.fig.update(t, { moving: mag > 0.05 });
+    this._reachArms(t, dt, mag > 0.05);
+    if (!this.avatar) this.fig.update(t, { moving: mag > 0.05 });
 
     const c = this.charging;
     if (c > 0) {
@@ -444,8 +444,16 @@ export class Player {
     this.muzzle.material.emissiveIntensity = 2.2 + c * 3;
   }
 
+  /** 外部の人物モデルに差し替える（null で元の姿へ） */
+  useAvatar(rig) {
+    if (this.avatar) this.body.remove(this.avatar.root);
+    this.avatar = rig || null;
+    this.fig.root.visible = !rig;
+    if (rig) this.body.add(rig.root);
+  }
+
   /** 腕を握る物へ伸ばす（二関節の逆運動学） */
-  _reachArms(t) {
+  _reachArms(t, dt, moving) {
     const F = this.fig;
     const R = F.arms[0], L = F.arms[1];
     const v = (x, y, z) => new THREE.Vector3(x, y, z);
@@ -462,6 +470,18 @@ export class Player {
       rt = this.hand.position.clone();
       if (this.wtype === 'katar' || this.wtype === 'claw' || this.wtype === 'bow' || this.wtype === 'lute' || this.wtype === 'tome') lt = this.offHand.position.clone();
       else lt = v(-0.27, 1.0 + Math.sin(t * 2) * 0.01, 0.06 + Math.sin(this.walkT) * 0.08);
+    }
+    if (this.avatar) {
+      // 外部モデル：体の座標をワールドへ直して、同じ手先へ腕を伸ばす
+      const relaxed = !(this._victory > 0) && this.wtype !== 'gun' && !(this.wtype === 'katar' || this.wtype === 'claw' || this.wtype === 'bow' || this.wtype === 'lute' || this.wtype === 'tome');
+      const hip = this.wtype === 'gun' && this.stance === 'hip';
+      this.body.updateMatrixWorld(true);
+      this.avatar.update(dt || 0.016, t, {
+        moving, walkT: this.walkT,
+        right: this.body.localToWorld(rt.clone()),
+        left: (relaxed || hip) ? null : this.body.localToWorld(lt.clone())
+      });
+      return;
     }
     F.setArm(R, rt); F.setArm(L, lt);
   }
@@ -521,6 +541,7 @@ export class Player {
 
   /** 陣中帳に映すための姿（本編とは別に組み直す） */
   makePortrait() {
+    if (this.avatar) return this.avatar.makePortrait();
     const g = this.group.clone(true);
     // 演出用の飾りは外し、素の立ち姿にする
     g.traverse(o => {

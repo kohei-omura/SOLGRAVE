@@ -21,7 +21,8 @@
 {
   "imports": {
     "three": "https://unpkg.com/three@0.169.0/build/three.module.js",
-    "three/addons/": "https://unpkg.com/three@0.169.0/examples/jsm/"
+    "three/addons/": "https://unpkg.com/three@0.169.0/examples/jsm/",
+    "@pixiv/three-vrm": "https://unpkg.com/@pixiv/three-vrm@3.5.5/lib/three-vrm.module.min.js"
   }
 }
 </script>
@@ -169,6 +170,18 @@
       <button id="cfg-voice-test" class="btn btn-line btn-sm" style="flex:0 0 auto;min-width:110px">試す</button>
     </div>
     <div id="voice-note" class="note" style="margin:2px 0 10px"></div>
+    <div class="mdl-box">
+      <div class="mdl-hd">人物のモデル（VRM・GLB）</div>
+      <div class="mdl-row"><span>主人公</span><b id="mdl-hero-st">標準の姿</b>
+        <label class="btn btn-line btn-sm mdl-pick">選ぶ<input type="file" id="mdl-hero" accept=".vrm,.glb,.gltf,model/gltf-binary,application/octet-stream" hidden></label>
+        <button class="btn btn-line btn-sm" id="mdl-hero-flip">向き</button>
+        <button class="btn btn-line btn-sm" id="mdl-hero-del">外す</button></div>
+      <div class="mdl-row"><span>日和</span><b id="mdl-heroine-st">標準の姿</b>
+        <label class="btn btn-line btn-sm mdl-pick">選ぶ<input type="file" id="mdl-heroine" accept=".vrm,.glb,.gltf,model/gltf-binary,application/octet-stream" hidden></label>
+        <button class="btn btn-line btn-sm" id="mdl-heroine-flip">向き</button>
+        <button class="btn btn-line btn-sm" id="mdl-heroine-del">外す</button></div>
+      <p class="note">VRoid Hub などで入手したモデルを選ぶと、その姿で遊べます。ファイルはこの端末の中にだけ保存され、どこにも送られません。モデルごとの利用条件をご確認ください。</p>
+    </div>
     <label class="row"><span>練習モード</span>
       <input id="cfg-practice" type="checkbox">
     </label>

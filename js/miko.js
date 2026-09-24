@@ -221,8 +221,18 @@ export class Miko {
     L.traverse(o => { if (o.isMesh) o.castShadow = true; });
   }
 
+  /** 外部の人物モデルに差し替える（null で元の姿へ） */
+  useAvatar(rig) {
+    if (this.avatar) this.group.remove(this.avatar.root);
+    this.avatar = rig || null;
+    this.fig.root.visible = !rig;
+    if (this.bell) this.bell.visible = !rig;
+    if (rig) this.group.add(rig.root);
+  }
+
   /** 陣中帳に映すための姿 */
   makePortrait() {
+    if (this.avatar) return this.avatar.makePortrait();
     const g = this.group.clone(true);
     g.traverse(o => { if (o.isLight) o.visible = false; });
     g.scale.setScalar(1);
@@ -298,7 +308,14 @@ export class Miko {
     this.sleeves[0].rotation.x = Math.sin(this.walkT) * 0.35;
     this.sleeves[1].rotation.x = -Math.sin(this.walkT) * 0.35;
     this.bell.position.y = 1.64 + Math.sin(t * 6) * 0.008;
-    this.fig.update(t, { moving: sp !== 0 });
+    if (this.avatar) {
+      // 右手は杖を握り、祓いの舞では左手も掲げる
+      this.group.updateMatrixWorld(true);
+      const grip = this.staff.localToWorld(new THREE.Vector3(0, 0.3, 0));
+      const lift = this.healing > 0 ? this.group.localToWorld(new THREE.Vector3(-0.28, 1.45, 0.25)) : null;
+      const dtA = this._lastA ? Math.min(0.1, t - this._lastA) : 0.016; this._lastA = t;
+      this.avatar.update(dtA, t, { moving: sp !== 0, walkT: this.walkT, right: grip, left: lift });
+    } else this.fig.update(t, { moving: sp !== 0 });
     // 杖は歩くとわずかに揺れ、鈴が鳴るように動く
     this.staff.rotation.z = -0.16 + Math.sin(t * 2.2) * 0.05;
     this.staffBells.forEach((b, i) => {

@@ -10,6 +10,7 @@ import { Enemies, Bullets, Particles, EnemyKind, Hostile, specOf } from './enemy
 import { WEAPONS, WEAPON_ORDER, GUN_STANCES, STANCE_ORDER, SlashFX, inShape } from './weapons.js';
 import { Interior } from './interior.js';
 import { ELITES } from './forms.js';
+import { ModelStore, loadAvatar } from './avatar.js';
 import { Boss } from './boss.js';
 import { Coffin } from './coffin.js';
 import { Purifier, Step } from './purifier.js';
@@ -154,6 +155,8 @@ class Game {
     this.bindUI();
     this.applyStats();
 
+    this.bindModelUI();
+    this.loadAvatars();
     UI.boot(100, '準備ができました');
     setTimeout(() => {
       UI.hide('boot');
@@ -969,6 +972,61 @@ class Game {
       this.sun.setManual(this.cfg.manual);
     });
   }
+  /* ── 外部の人物モデル ──────────────────── */
+  /** 保存してあるモデル（または models/ に置いた物）を読み込む */
+  async loadAvatars(only) {
+    const list = [['hero', 1.8, this.player], ['heroine', 1.6, this.miko]];
+    for (const [key, h, who] of list) {
+      if (only && only !== key) continue;
+      const st = document.getElementById('mdl-' + key + '-st');
+      try {
+        const rig = await loadAvatar(key, h);
+        who.useAvatar(rig);
+        if (st) st.textContent = rig ? (rig.name || '読み込み済み') : '標準の姿';
+      } catch (e) {
+        who.useAvatar(null);
+        if (st) st.textContent = '読み込めませんでした';
+        UI.toast((key === 'hero' ? '主人公' : '日和') + 'のモデルを読み込めませんでした（' + (e && e.message ? e.message : e) + '）', 5000);
+      }
+    }
+    if (this.gfx) this.gfx.rescanLights();
+  }
+  bindModelUI() {
+    ['hero', 'heroine'].forEach(key => {
+      const inp = document.getElementById('mdl-' + key);
+      const st = document.getElementById('mdl-' + key + '-st');
+      if (inp) inp.addEventListener('change', async () => {
+        const f = inp.files && inp.files[0];
+        if (!f) return;
+        if (st) st.textContent = '読み込み中…';
+        try {
+          const buf = await f.arrayBuffer();
+          await ModelStore.save(key, buf, f.name);
+          await this.loadAvatars(key);
+          UI.toast(f.name + ' を' + (key === 'hero' ? '主人公' : '日和') + 'に使います', 3000);
+        } catch (e) {
+          if (st) st.textContent = '保存できませんでした';
+          UI.toast('モデルを保存できませんでした（' + (e && e.message ? e.message : e) + '）', 5000);
+        }
+        inp.value = '';
+      });
+      const fl = document.getElementById('mdl-' + key + '-flip');
+      if (fl) fl.addEventListener('click', async () => {
+        const r = await ModelStore.load(key);
+        if (!r) { UI.toast('先にモデルを選んでください'); return; }
+        await ModelStore.setFlip(key, !r.flip);
+        await this.loadAvatars(key);
+        UI.toast('モデルの向きを反転しました');
+      });
+      const del = document.getElementById('mdl-' + key + '-del');
+      if (del) del.addEventListener('click', async () => {
+        await ModelStore.remove(key);
+        await this.loadAvatars(key);
+        UI.toast('標準の姿に戻しました');
+      });
+    });
+  }
+
   /** 声の状態を設定画面に出す */
   showVoiceNote() {
     const el = document.getElementById('voice-note');
