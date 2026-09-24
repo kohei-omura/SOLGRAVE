@@ -319,12 +319,30 @@ class Game {
       addEventListener('mousemove', e => { if (active !== null) move(e); });
       addEventListener('mouseup', end);
     };
+    // 二本指でつまむ／ホイールで寄る・引く（人物の顔まで寄れる）
+    (() => {
+      const cv = document.getElementById('view');
+      if (!cv) return;
+      this.zoom = 1;
+      cv.addEventListener('wheel', e => {
+        this.zoom = Math.max(0.3, Math.min(1.35, this.zoom * (e.deltaY > 0 ? 1.1 : 0.9)));
+        e.preventDefault();
+      }, { passive: false });
+      let d0 = 0, z0 = 1;
+      const dist = ts => Math.hypot(ts[0].clientX - ts[1].clientX, ts[0].clientY - ts[1].clientY);
+      cv.addEventListener('touchstart', e => { if (e.touches.length === 2) { d0 = dist(e.touches); z0 = this.zoom; } }, { passive: true });
+      cv.addEventListener('touchmove', e => {
+        if (e.touches.length === 2 && d0 > 0) { this.zoom = Math.max(0.3, Math.min(1.35, z0 * d0 / dist(e.touches))); }
+      }, { passive: true });
+      cv.addEventListener('touchend', e => { if (e.touches.length < 2) d0 = 0; });
+    })();
     // 何も無い所を指でなぞると視点が回る
     (() => {
       const cv = document.getElementById('view');
       if (!cv) return;
       let id = null, lx = 0, ly = 0;
       const start = e => {
+        if (e.touches && e.touches.length > 1) return;
         const t = e.changedTouches ? e.changedTouches[0] : e;
         id = (t.identifier != null) ? t.identifier : 'mouse';
         lx = t.clientX; ly = t.clientY;
@@ -1307,7 +1325,7 @@ class Game {
 
     // カメラ追従（指でなぞると360度まわる）
     const p = this.player.pos;
-    const dist = this.camDist || 16.5;
+    const dist = (this.camDist || 16.5) * (this.zoom || 1);
     const h = Math.sin(this.camPitch) * dist;
     const rad = Math.cos(this.camPitch) * dist;
     // 視点0のとき、従来と同じ「手前(+z)から見下ろす」位置になるようにする
@@ -1316,9 +1334,32 @@ class Game {
       p.y + h,
       p.z + Math.cos(this.camYaw) * rad
     );
+    // 壁が視線を遮るなら、遮る手前まで寄せる（壁の裏に回り込まない）
+    {
+      const wallH = this.phase === Phase.INTERIOR ? 2.9 : (this.world.isSurface ? 4.5 : 6.5);
+      const ox = p.x, oy = p.y + 1.4, oz = p.z;
+      const dx = camTarget.x - ox, dy = camTarget.y - oy, dz = camTarget.z - oz;
+      const L = Math.hypot(dx, dz);
+      let k = 1;
+      const cols = this.world.colliders;
+      for (let sgm = 0.8; sgm < L; sgm += 0.45) {
+        const f = sgm / L;
+        const x = ox + dx * f, z = oz + dz * f, y = oy + dy * f;
+        if (y > wallH + 0.3) break;
+        let hit = false;
+        for (let i = 0; i < cols.length; i++) {
+          const c = cols[i];
+          if (x > c.min.x - 0.2 && x < c.max.x + 0.2 && z > c.min.z - 0.2 && z < c.max.z + 0.2) { hit = true; break; }
+        }
+        if (hit) { k = Math.max(0.18, (sgm - 0.6) / L); break; }
+      }
+      this._camK = (this._camK == null ? k : this._camK + (k - this._camK) * (k < this._camK ? 0.5 : 0.08));
+      camTarget.set(ox + dx * this._camK, oy + dy * this._camK, oz + dz * this._camK);
+    }
     if (this._snapCam) { this.gfx.camera.position.copy(camTarget); this._snapCam = false; }   // 場面が変わったら一息に
     else this.gfx.camera.position.lerp(camTarget, 1 - Math.pow(0.0015, dt));
-    this.gfx.camera.lookAt(p.x, p.y + 1.4, p.z);
+    const zk = Math.max(0, Math.min(1, (0.8 - (this.zoom || 1)) / 0.5));   // 寄るほど顔の高さを見る
+    this.gfx.camera.lookAt(p.x, p.y + 1.4 + zk * 0.2, p.z);
 
     // 見取り図
     // 見取り図は、地下にいる間ずっと更新する

@@ -8,6 +8,10 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 /* ── 値ノイズ（決定論） ───────────────────────── */
 function hash2(x, y, seed) {
@@ -106,8 +110,8 @@ export const GradeShader = {
     tDiffuse: { value: null },
     time: { value: 0 },
     vignette: { value: 0.82 },
-    grain: { value: 0.055 },
-    aberr: { value: 0.0016 }
+    grain: { value: 0.03 },
+    aberr: { value: 0.0007 }
   },
   vertexShader: `
     varying vec2 vUv;
@@ -129,9 +133,18 @@ export const GradeShader = {
       col.g = texture2D(tDiffuse, uv).g;
       col.b = texture2D(tDiffuse, uv - off).b;
       col.a = 1.0;
+      // 映画のような色：暗部は青く、明部は暖かく、ゆるいS字で締める
+      float l = dot(col.rgb, vec3(0.2126, 0.7152, 0.0722));
+      col.rgb = mix(col.rgb, col.rgb * vec3(0.92, 0.98, 1.08), (1.0 - smoothstep(0.0, 0.45, l)) * 0.55);
+      col.rgb = mix(col.rgb, col.rgb * vec3(1.06, 1.01, 0.93), smoothstep(0.55, 1.0, l) * 0.5);
+      col.rgb = clamp(col.rgb, 0.0, 1.0);
+      col.rgb = mix(col.rgb, col.rgb * col.rgb * (3.0 - 2.0 * col.rgb), 0.28);
+      // 彩度を少しだけ持ち上げる
+      float l2 = dot(col.rgb, vec3(0.2126, 0.7152, 0.0722));
+      col.rgb = mix(vec3(l2), col.rgb, 1.08);
       // ビネット
       float v = smoothstep(0.85, 0.18, length(d) * vignette);
-      col.rgb *= mix(0.80, 1.0, v);
+      col.rgb *= mix(0.78, 1.0, v);
       // フィルムグレイン
       float g = rand(uv * 800.0 + time) - 0.5;
       col.rgb += g * grain;
@@ -149,9 +162,10 @@ export class Gfx {
     });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.85;
+    this.renderer.toneMappingExposure = 0.62;
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFShadowMap;   // 柔らかい影は重いので通常の影に
+    // 中・高は輪郭のやわらかい影
+    this.renderer.shadowMap.type = this.quality === 'low' ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
     // 影は毎フレーム焼き直さず、数フレームに一度でよい
     this.renderer.shadowMap.autoUpdate = false;
     this.renderer.shadowMap.needsUpdate = true;
@@ -162,6 +176,13 @@ export class Gfx {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x05070b);
     this.scene.fog = new THREE.FogExp2(0x05070b, 0.028);
+    // 映り込み：外部画像を使わず、仮想の部屋から環境光を作る（金属・髪・肌に照り返しが乗る）
+    try {
+      const pm = new THREE.PMREMGenerator(this.renderer);
+      this.scene.environment = pm.fromScene(new RoomEnvironment(), 0.04).texture;
+      this.scene.environmentIntensity = 0.45;
+      pm.dispose();
+    } catch (e) {}
 
     this.camera = new THREE.PerspectiveCamera(62, 16 / 9, 0.1, 260);
     this.camera.position.set(0, 6, 9);
@@ -181,22 +202,43 @@ export class Gfx {
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
 
-    const strength = this.quality === 'low' ? 0.55 : this.quality === 'high' ? 0.95 : 0.75;
+    // 高画質：物の接地や凹みに落ちる柔らかな陰（環境遮蔽）
+    this.gtao = null;
+    if (this.quality === 'high') {
+      try {
+        this.gtao = new GTAOPass(this.scene, this.camera, w, h);
+        this.gtao.blendIntensity = 0.85;
+        this.gtao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.4, thickness: 1.2, scale: 1.0, samples: 12 });
+        this.gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 4, rings: 2, samples: 12 });
+        this.composer.addPass(this.gtao);
+      } catch (e) { this.gtao = null; }
+    }
+    const strength = this.quality === 'low' ? 0.45 : this.quality === 'high' ? 0.7 : 0.58;
     // ブルームは半分の解像度で十分。滲みの見た目は変わらず負荷が大きく下がる
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(w * 0.5, h * 0.5), strength, 0.72, 0.62);
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(w * 0.5, h * 0.5), strength, 0.6, 0.85);
     this.composer.addPass(this.bloom);
+    // 色の正しい変換（ACESの階調とsRGB）。これが無いと全体が眠い画になる
+    this.composer.addPass(new OutputPass());
 
     if (this.quality !== 'low') {
       this.grade = new ShaderPass(GradeShader);
       this.composer.addPass(this.grade);
-      this.fxaa = new ShaderPass(FXAAShader);
-      this.composer.addPass(this.fxaa);
+      if (this.quality === 'high') {
+        try { this.smaa = new SMAAPass(w * this.renderer.getPixelRatio(), h * this.renderer.getPixelRatio()); this.composer.addPass(this.smaa); }
+        catch (e) { this.fxaa = new ShaderPass(FXAAShader); this.composer.addPass(this.fxaa); }
+      } else {
+        this.fxaa = new ShaderPass(FXAAShader);
+        this.composer.addPass(this.fxaa);
+      }
     }
     this.resize();
   }
 
   setQuality(q) {
     this.quality = q;
+    this.renderer.shadowMap.type = q === 'low' ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.needsUpdate = true;
+    this.fxaa = null; this.smaa = null;
     // パスを組み直す
     this.composer.passes.length = 0;
     this._setupPost();

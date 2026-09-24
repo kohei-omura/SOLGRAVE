@@ -5,6 +5,7 @@
    ══════════════════════════════════════════════════════════════ */
 import * as THREE from 'three';
 import { fleshMaterial, glowMaterial, metalMaterial } from './gfx.js';
+import { buildHeroine } from './figure.js';
 
 export class Miko {
   constructor(scene, particles) {
@@ -34,59 +35,13 @@ export class Miko {
   }
 
   _build() {
-    const hakama = 0xb3424a, haku = 0xf4efe6, hair = 0x1b1620;
-
-    // 緋袴
-    const skirt = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.26, 0.52, 0.82, 12, 1, true),
-      new THREE.MeshStandardMaterial({ color: hakama, roughness: 0.8, side: THREE.DoubleSide })
-    );
-    skirt.position.y = 0.5; skirt.castShadow = true;
-    this.group.add(skirt);
-
-    // 白衣
-    const top = new THREE.Mesh(new THREE.CapsuleGeometry(0.25, 0.42, 6, 12), fleshMaterial(haku));
-    top.position.y = 1.08; top.castShadow = true;
-    this.group.add(top);
-    // 袖
-    this.sleeves = [];
-    [-1, 1].forEach(s => {
-      const sl = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.17, 0.46, 10), fleshMaterial(haku));
-      sl.position.set(0.3 * s, 1.06, 0);
-      sl.castShadow = true;
-      this.group.add(sl);
-      this.sleeves.push(sl);
-    });
-
-    // 頭
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.21, 16, 14), fleshMaterial(0xf6dcc8));
-    head.position.y = 1.52; head.castShadow = true;
-    this.group.add(head);
-
-    // 前髪
-    const bang = new THREE.Mesh(new THREE.SphereGeometry(0.225, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.55), fleshMaterial(hair));
-    bang.position.y = 1.55;
-    this.group.add(bang);
-    // 後ろ髪（長い黒髪）
-    const back = new THREE.Mesh(new THREE.CapsuleGeometry(0.17, 0.62, 6, 10), fleshMaterial(hair));
-    back.position.set(0, 1.18, -0.16);
-    back.castShadow = true;
-    this.group.add(back);
-    // 結い紐
-    const tie = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.035, 8, 16), fleshMaterial(0xf4efe6));
-    tie.rotation.x = Math.PI / 2; tie.position.set(0, 1.32, -0.16);
-    this.group.add(tie);
-
-    // 目（伏し目がちの点目）
-    [-1, 1].forEach(s => {
-      const e = new THREE.Mesh(new THREE.SphereGeometry(0.032, 8, 6), fleshMaterial(0x241c26));
-      e.position.set(0.075 * s, 1.5, 0.19);
-      this.group.add(e);
-    });
-
-    // 髪飾り（鈴）
-    const bell = new THREE.Mesh(new THREE.SphereGeometry(0.055, 10, 8), metalMaterial(91, 0xc9a227));
-    bell.position.set(0.18, 1.62, 0.06);
+    // ── 人の姿（figure.js）：腰まで届く黒髪、白衣に緋袴 ──
+    this.fig = buildHeroine();
+    this.group.add(this.fig.root);
+    this.sleeves = this.fig.sleeves;
+    // 髪飾りの小さな鈴
+    const bell = new THREE.Mesh(new THREE.SphereGeometry(0.022, 10, 8), metalMaterial(91, 0xc9a227));
+    bell.position.set(0.1, 1.64, -0.03);
     this.group.add(bell);
     this.bell = bell;
 
@@ -133,7 +88,7 @@ export class Miko {
       sh.position.set(0.1 * sx, 0.66, 0);
       this.staff.add(sh);
     });
-    this.staff.position.set(0.34, 0.62, 0.1);
+    this.staff.position.set(0.34, 0.66, 0.12);
     this.staff.rotation.z = -0.16;
     this.group.add(this.staff);
 
@@ -198,20 +153,20 @@ export class Miko {
     // ── 装束 ──
     const robeCol = [0, 0xfaf6ee, 0xe8a0b0, 0xe8eef8, 0xf4f0ff, 0xfff4d8][ar];
     if (ar >= 1) {            // 千早（透ける上衣）
-      const ch = add(new THREE.CylinderGeometry(0.3, 0.46, 0.72, 14, 1, true),
-        new THREE.MeshStandardMaterial({ color: robeCol, transparent: true, opacity: 0.55, side: THREE.DoubleSide, roughness: 0.6 }), 0, 1.0, 0);
+      const ch = add(new THREE.CylinderGeometry(0.17, 0.3, 0.5, 18, 1, true),
+        new THREE.MeshStandardMaterial({ color: robeCol, transparent: true, opacity: 0.55, side: THREE.DoubleSide, roughness: 0.6 }), 0, 1.2, 0);
       ch.castShadow = false;
-      add(new THREE.TorusGeometry(0.27, 0.02, 6, 16), fleshMaterial(0xb3424a), 0, 1.3, 0.02).rotation.x = Math.PI / 2;
+      add(new THREE.TorusGeometry(0.15, 0.012, 6, 16), fleshMaterial(0xb3424a), 0, 1.3, 0.0).rotation.x = Math.PI / 2;
     }
     if (ar >= 3) {            // 長い打掛の裾
-      const uk = add(new THREE.CylinderGeometry(0.34, 0.66, 1.3, 16, 1, true, Math.PI * 0.2, Math.PI * 1.6),
+      const uk = add(new THREE.CylinderGeometry(0.2, 0.44, 1.3, 20, 1, true, Math.PI * 0.2, Math.PI * 1.6),
         new THREE.MeshStandardMaterial({ color: robeCol, roughness: 0.5, side: THREE.DoubleSide,
           emissive: new THREE.Color(ar >= 5 ? 0x6a4a10 : 0x202030), emissiveIntensity: 0.4 }), 0, 0.7, -0.02);
       uk.rotation.y = 0;   // 前を開けて緋袴を見せる
     }
     if (ar >= 4) {            // 宙に揺れる羽衣
       [-1, 1].forEach(sx => {
-        const rib = new THREE.Group(); rib.position.set(0.35 * sx, 1.25, -0.1); L.add(rib);
+        const rib = new THREE.Group(); rib.position.set(0.22 * sx, 1.28, -0.1); L.add(rib);
         const segs = [];
         for (let i = 0; i < 8; i++) {
           const sgm = add(new THREE.BoxGeometry(0.16, 0.02, 0.2),
@@ -224,14 +179,14 @@ export class Miko {
       });
     }
     if (ar >= 5) {            // 黄金の冠と背の光輪
-      const crown = new THREE.Group(); crown.position.set(0, 1.74, 0); L.add(crown);
+      const crown = new THREE.Group(); crown.position.set(0, 1.66, -0.01); crown.scale.setScalar(0.72); L.add(crown);
       add(new THREE.CylinderGeometry(0.2, 0.22, 0.06, 16), gold, 0, 0, 0, crown);
       for (let i = 0; i < 9; i++) {
         const a = i / 9 * Math.PI * 2;
         add(new THREE.ConeGeometry(0.03, i % 2 ? 0.14 : 0.24, 5), gold, Math.cos(a) * 0.2, 0.1, Math.sin(a) * 0.2, crown);
       }
       add(new THREE.SphereGeometry(0.04, 8, 6), glowMaterial(0xff6a6a, 2.6), 0, 0.05, 0.22, crown);
-      const halo = add(new THREE.TorusGeometry(0.62, 0.03, 8, 32), glowMaterial(0xffd24a, 2.6), 0, 1.4, -0.35);
+      const halo = add(new THREE.TorusGeometry(0.5, 0.025, 8, 32), glowMaterial(0xffd24a, 2.6), 0, 1.5, -0.32);
       this._lookAnim.push((t) => { halo.rotation.z = t * 0.5; });
     }
 
@@ -239,18 +194,18 @@ export class Miko {
     if (cr >= 1) {            // 桜の簪
       for (let i = 0; i < 5; i++) {
         const a = i / 5 * Math.PI * 2;
-        add(new THREE.SphereGeometry(0.035, 6, 5), fleshMaterial(0xffb0c8), -0.18 + Math.cos(a) * 0.05, 1.66 + Math.sin(a) * 0.05, 0.02);
+        add(new THREE.SphereGeometry(0.022, 6, 5), fleshMaterial(0xffb0c8), -0.1 + Math.cos(a) * 0.03, 1.64 + Math.sin(a) * 0.03, -0.02);
       }
     }
     if (cr >= 2) {            // 勾玉の首飾り
       for (let i = 0; i < 7; i++) {
         const a = Math.PI * 0.2 + i / 6 * Math.PI * 0.6;
-        add(new THREE.SphereGeometry(0.03, 6, 5), glowMaterial(0x6affa0, 1.2), Math.cos(a) * 0.2, 1.28 - Math.sin(a) * 0.05, Math.sin(a) * 0.2);
+        add(new THREE.SphereGeometry(0.016, 6, 5), glowMaterial(0x6affa0, 1.2), Math.cos(a) * 0.1, 1.36 - Math.sin(a) * 0.04, Math.sin(a) * 0.1);
       }
     }
     if (cr >= 3 && ar < 5) {  // 前天冠
-      add(new THREE.BoxGeometry(0.3, 0.06, 0.03), gold, 0, 1.7, 0.18);
-      add(new THREE.ConeGeometry(0.04, 0.12, 4), gold, 0, 1.78, 0.18);
+      add(new THREE.BoxGeometry(0.18, 0.035, 0.02), gold, 0, 1.655, 0.1);
+      add(new THREE.ConeGeometry(0.025, 0.08, 4), gold, 0, 1.7, 0.1);
     }
     if (cr >= 5) {            // 宙に浮かぶ勾玉の輪
       const ring = new THREE.Group(); ring.position.y = 1.1; L.add(ring);
@@ -342,7 +297,8 @@ export class Miko {
     // 袖と鈴の揺れ
     this.sleeves[0].rotation.x = Math.sin(this.walkT) * 0.35;
     this.sleeves[1].rotation.x = -Math.sin(this.walkT) * 0.35;
-    this.bell.position.y = 1.62 + Math.sin(t * 6) * 0.012;
+    this.bell.position.y = 1.64 + Math.sin(t * 6) * 0.008;
+    this.fig.update(t, { moving: sp !== 0 });
     // 杖は歩くとわずかに揺れ、鈴が鳴るように動く
     this.staff.rotation.z = -0.16 + Math.sin(t * 2.2) * 0.05;
     this.staffBells.forEach((b, i) => {

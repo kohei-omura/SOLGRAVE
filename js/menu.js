@@ -58,7 +58,7 @@ export class Menu {
     this.renderer.setPixelRatio(Math.min(1.5, window.devicePixelRatio || 1));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.5;
+    this.renderer.toneMappingExposure = 1.05;
 
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(34, 1, 0.1, 60);
@@ -85,6 +85,17 @@ export class Menu {
 
     this.holder = new THREE.Group();
     this.scene.add(this.holder);
+    // 環境の照り返し（髪の艶・金具の光）
+    try {
+      const pm = new THREE.PMREMGenerator(this.renderer);
+      import('three/addons/environments/RoomEnvironment.js').then(m => {
+        this.scene.environment = pm.fromScene(new m.RoomEnvironment(), 0.04).texture;
+        this.scene.environmentIntensity = 0.5;
+      }).catch(() => {});
+    } catch (e) {}
+    // 絵をたたくと顔に寄る／全身に戻る
+    this.closeUp = false;
+    cv.addEventListener('click', () => { this.closeUp = !this.closeUp; });
     this._built = true;
     return true;
   }
@@ -129,7 +140,14 @@ export class Menu {
         this.camera.aspect = w / h;
         this.camera.updateProjectionMatrix();
       }
-      this.holder.rotation.y += 0.006;
+      this.holder.rotation.y += this.closeUp ? 0.002 : 0.006;
+      // 顔に寄る（主人公は背が高いので少し上）
+      const fy = this.who === 'hero' ? 1.78 : 1.56;
+      const want = this.closeUp ? { y: fy, z: 0.95, ly: fy - 0.03 } : { y: 1.5, z: 5.4, ly: 1.2 };
+      this.camera.position.y += (want.y - this.camera.position.y) * 0.2;
+      this.camera.position.z += (want.z - this.camera.position.z) * 0.2;
+      this._ly = (this._ly == null ? 1.2 : this._ly) + (want.ly - (this._ly == null ? 1.2 : this._ly)) * 0.12;
+      this.camera.lookAt(0, this._ly, 0);
       this.renderer.render(this.scene, this.camera);
     };
     step();
