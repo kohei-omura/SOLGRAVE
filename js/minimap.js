@@ -132,6 +132,8 @@ export class Minimap {
     (w.gimmicks && w.gimmicks.chests || []).forEach(ch => {
       if (!ch.opened && inSeen(ch.x, ch.z)) dot(ch.x, ch.z, '#e8c060', 2.4);
     });
+    // 仕掛けの目印（踏み入れた所だけ）
+    if (w.gimmickMarks) w.gimmickMarks().forEach(m => { if (inSeen(m.x, m.z)) dot(m.x, m.z, m.c, 2.8, m.ring); });
     if (opts && opts.elite && inSeen(opts.elite.x, opts.elite.z))
       dot(opts.elite.x, opts.elite.z, '#ff8a3a', 3.2, true);
     if (opts && opts.secret && inSeen(opts.secret.x, opts.secret.z))

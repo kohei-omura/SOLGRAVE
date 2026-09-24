@@ -6,15 +6,18 @@ import { Gfx, glowMaterial } from './gfx.js';
 import { Sun } from './sun.js';
 import { World } from './world.js';
 import { Player, SHOT_COST, CHARGE_COST } from './player.js';
-import { Enemies, Bullets, Particles, EnemyKind } from './enemy.js';
+import { Enemies, Bullets, Particles, EnemyKind, Hostile, specOf } from './enemy.js';
+import { WEAPONS, WEAPON_ORDER, GUN_STANCES, STANCE_ORDER, SlashFX, inShape } from './weapons.js';
+import { Interior } from './interior.js';
+import { ELITES } from './forms.js';
 import { Boss } from './boss.js';
 import { Coffin } from './coffin.js';
 import { Purifier, Step } from './purifier.js';
 import { Miko } from './miko.js';
 import { Solar, SOLAR_DMG_MUL } from './solar.js';
 import { Party, expOf, STAT_KEYS } from './stats.js';
-import { SKILLS, GEAR, rollGear } from './jobs.js';
-import { Town } from './town.js';
+import { SKILLS, GEAR, JOBS, rollGear, wtypeOf } from './jobs.js';
+import { Town, talkTo } from './town.js';
 import { Minimap } from './minimap.js';
 import { Menu } from './menu.js';
 import { UI } from './ui.js';
@@ -23,7 +26,8 @@ import { Audio, Voice, LINES } from './audio.js';
 
 const Phase = {
   TITLE: 'title', SURFACE: 'surface', DUNGEON: 'dungeon',
-  BOSS: 'boss', SEAL: 'seal', CARRY: 'carry', PILE: 'pile', RESULT: 'result'
+  BOSS: 'boss', SEAL: 'seal', CARRY: 'carry', PILE: 'pile', RESULT: 'result',
+  INTERIOR: 'interior'
 };
 
 class Game {
@@ -46,6 +50,11 @@ class Game {
     this.checkpoint = null; // 一時記録 {floor}
     this.camYaw = 0;       // 視点の向き
     this.camPitch = 0.62;  // 見下ろす角度
+    this.camDist = 16.5;   // 視点の距離（家の中では寄る）
+    this.wtype = 'gun';    // 持っている武器の種類
+    this.stance = 'normal';
+    this._combo = 0;
+    this._rapidK = 0;
   }
 
   async boot() {
@@ -70,6 +79,16 @@ class Game {
     this.boss = new Boss(this.gfx.scene, this.particles);
     this.coffin = new Coffin(this.gfx.scene, this.particles);
     this.pile = new Purifier(this.gfx.scene, this.particles);
+    // 敵の弾（主・中ボス・撃つ雑魚・思念体が共用）
+    this.hostile = new Hostile(this.gfx.scene, 110);
+    this.enemies.hostile = this.hostile;
+    this.boss.hostile = this.hostile;
+    this.boss.summon = (p, n) => this.summonAround(p, n);
+    this.pile.hostile = this.hostile;
+    this.pile.onDark = () => { this.audio.sfx('bad'); UI.toast('主が照射機を黒ずませた！　紫に翳った機を撃て', 2600); };
+    this.slash = new SlashFX(this.gfx.scene);
+    this.interior = new Interior(this.gfx.scene, this.particles);
+    this._onKill = (e) => this.onKill(e);
 
     // 光
     this.sunLight = new THREE.DirectionalLight(0xfff0d0, 2.2);
@@ -104,6 +123,11 @@ class Game {
       hero: () => this.player.makePortrait(),
       miko: () => this.miko.makePortrait()
     });
+    // はじめての装備（日和にも三枠）
+    const h0 = this.party.hero, m0 = this.party.miko;
+    if (h0.bag.indexOf('w0') < 0) h0.pick('w0');
+    if (!h0.gear.weapon) h0.equip('w0');
+    ['mw0', 'ma0', 'mt0'].forEach(id => { m0.pick(id); if (!m0.gear[GEAR[id].slot] || (GEAR[m0.gear[GEAR[id].slot]] || {}).who !== 'miko') m0.equip(id); });
     this.menu.onChange = () => { Party.save(this.party); this.applyStats(); };
     this.menu.onUseKey = () => { this.menu.hide(); this.askUseKey(); };
 
@@ -159,11 +183,19 @@ class Game {
       UI.hp(this.player.hp, this.player.maxHp, this.player.guard, this.player.guardMax);
     }
     if (this.miko) this.miko.applyStats(m);
+    const rar = (id) => (id && GEAR[id]) ? GEAR[id].rare : 0;
     if (this.player && this.player.applyLook) {
-      const rar = (id) => (id && GEAR[id]) ? GEAR[id].rare : 0;
       this.player.applyLook({
         weapon: rar(h.gear.weapon), armor: rar(h.gear.armor), charm: rar(h.gear.charm)
       });
+      // 持つ武器の種類と手元の模型
+      this.wtype = wtypeOf(h.gear.weapon);
+      this.player.setWeapon(this.wtype, rar(h.gear.weapon));
+      this.player.setStance(this.stance);
+      this.updateWeaponUI();
+    }
+    if (this.miko && this.miko.applyLook) {
+      this.miko.applyLook({ weapon: rar(m.gear.weapon), armor: rar(m.gear.armor), charm: rar(m.gear.charm) });
     }
   }
 
@@ -226,6 +258,10 @@ class Game {
       if (e.code === 'KeyR') this.useSkill();
       if (e.code === 'KeyF') { if (this.talking) this.closeTalk(); else this.doTalk(); }
       if (e.code === 'KeyG') this.askUseKey();
+      if (e.code === 'Tab') { e.preventDefault(); this.cycleWeapon(1); }
+      if (e.code === 'KeyC') this.cycleStance();
+      if (e.code === 'KeyZ') this.toggleObjective();
+      if (e.code === 'KeyM') { this.menu.hasKey = this.hasKey; if (this.menu.open) this.menu.hide(); else this.menu.show(); }
     });
     addEventListener('keyup', e => { this.keys[e.code] = false; });
 
@@ -354,11 +390,92 @@ class Game {
       skb.addEventListener('touchstart', go3, { passive: false });
       skb.addEventListener('click', go3);
     }
+    const tap = (id, fn) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const go = e => { if (e) { e.preventDefault(); e.stopPropagation(); } this.audio.unlock(); fn(); };
+      el.addEventListener('touchstart', go, { passive: false });
+      el.addEventListener('click', go);
+    };
+    tap('btn-weapon', () => this.toggleWeaponStrip());
+    tap('btn-stance', () => this.cycleStance());
+    tap('hud-obj-toggle', () => this.toggleObjective());
     const chg = document.getElementById('btn-charge');
     if (chg) {
       chg.addEventListener('touchstart', e => { this.input.charge = true; this.onAction(); e.preventDefault(); }, { passive: false });
       chg.addEventListener('touchend', () => { this.input.charge = false; });
     }
+  }
+
+  /* ── 武器の持ち替え ─────────────────────── */
+  /** 持っている武器を種類ごとに（同じ種類は最も等級の高い物） */
+  ownedWeapons() {
+    const h = this.party.hero, best = {}, held = {};
+    h.bag.forEach(id => {
+      const g = GEAR[id];
+      if (!g || g.slot !== 'weapon' || (g.who || 'hero') !== 'hero') return;
+      const t = wtypeOf(id);
+      if (h.gear.weapon === id) { best[t] = id; held[t] = true; return; }
+      if (held[t]) return;
+      if (!best[t] || GEAR[best[t]].rare < g.rare) best[t] = id;
+    });
+    return WEAPON_ORDER.filter(t => best[t]).map(t => ({ type: t, id: best[t] }));
+  }
+  equipWeapon(id) {
+    const h = this.party.hero;
+    if (!h.equip(id)) return;
+    Party.save(this.party);
+    this.applyStats();
+    const W = WEAPONS[this.wtype];
+    this.audio.sfx('good');
+    UI.toast(W.name + '　' + GEAR[id].name + '　―　' + W.desc, 2200);
+  }
+  cycleWeapon(dir) {
+    const list = this.ownedWeapons();
+    if (list.length < 2) { UI.toast('他の武器を持っていません（鍛冶場で打ってもらえます）'); return; }
+    let i = list.findIndex(w => w.type === this.wtype);
+    i = (i + (dir || 1) + list.length) % list.length;
+    this.equipWeapon(list[i].id);
+  }
+  toggleWeaponStrip(force) {
+    const el = document.getElementById('wpn-strip');
+    if (!el) return;
+    const open = force != null ? force : el.hidden;
+    if (!open) { el.hidden = true; return; }
+    const list = this.ownedWeapons();
+    el.innerHTML = list.map(w => {
+      const W = WEAPONS[w.type], g = GEAR[w.id];
+      return '<button class="wpn-it' + (w.type === this.wtype ? ' on' : '') + ' r' + g.rare + '" data-id="' + w.id + '">' +
+        '<b>' + W.icon + '</b><span>' + W.name + '</span></button>';
+    }).join('') || '<span class="wpn-none">武器がありません</span>';
+    el.querySelectorAll('.wpn-it').forEach(b => {
+      const go = e => { e.preventDefault(); e.stopPropagation(); this.equipWeapon(b.dataset.id); this.toggleWeaponStrip(false); };
+      b.addEventListener('touchstart', go, { passive: false });
+      b.addEventListener('click', go);
+    });
+    el.hidden = false;
+  }
+  cycleStance() {
+    if (this.wtype !== 'gun') { UI.toast('構えは銃だけのものです'); return; }
+    const i = STANCE_ORDER.indexOf(this.stance);
+    this.stance = STANCE_ORDER[(i + 1) % STANCE_ORDER.length];
+    this.player.setStance(this.stance);
+    this.updateWeaponUI();
+    const S = GUN_STANCES[this.stance];
+    UI.toast('構え：' + S.name + ({ normal: '　― 狙いの定まった基本の構え', rapid: '　― 撃ち続けるほど速くなる', dual: '　― 左右の銃を交互に', hip: '　― 散るが、駆けながら撃てる' })[this.stance], 2000);
+  }
+  updateWeaponUI() {
+    const W = WEAPONS[this.wtype] || WEAPONS.gun;
+    const wb = document.getElementById('btn-weapon');
+    if (wb) wb.innerHTML = '<b>' + W.icon + '</b>' + W.name;
+    const sb = document.getElementById('btn-stance');
+    if (sb) { sb.hidden = this.wtype !== 'gun'; sb.textContent = '構 ' + GUN_STANCES[this.stance].name; }
+    const cb = document.getElementById('btn-charge');
+    if (cb) cb.textContent = this.wtype === 'gun' ? '溜め' : (W.kind === 'melee' ? '大技' : '連撃');
+  }
+  toggleObjective() {
+    const el = document.getElementById('hud-obj');
+    if (el) el.classList.toggle('fold');
   }
 
   /** 決定操作（QTE・杭打ちなど） */
@@ -441,7 +558,7 @@ class Game {
   doTalk() {
     const n = this._nearNpc;
     if (!n) return;
-    const r = this.town.talk(n);
+    const r = talkTo(n);
     if (!r) return;
     this.talking = n;
     const box = document.getElementById('talk');
@@ -457,13 +574,16 @@ class Game {
       b.addEventListener('click', fn);
       btns.appendChild(b);
     };
-    if (r.kind === 'shop') add('品を見る', () => { this.closeTalk(); this.openShop(); }, true);
+    if (r.kind === 'shop') add('品を見る', () => { this.closeTalk(); this.openShop('shop'); }, true);
     if (r.kind === 'inn') add('休む（20陽貨）', () => this.restAtInn(), true);
-    if (r.kind === 'smith') add('銃を磨く（30陽貨）', () => this.polishGun(), true);
+    if (r.kind === 'smith') {
+      add('武器を打つ', () => { this.closeTalk(); this.openShop('smith'); }, true);
+      add('銃を磨く（30陽貨）', () => this.polishGun());
+    }
     add('もう少し話す', () => this.doTalk());
     add('離れる', () => this.closeTalk());
     box.hidden = false;
-    const male = ['kid', 'friend', 'smith', 'old'].indexOf(n.def.id) >= 0;
+    const male = ['kid', 'friend', 'smith', 'old', 'guest', 'appr', 'gp', 'farmer', 'boy'].indexOf(n.def.id) >= 0;
     this.voice.say(r.text.slice(0, 22), male ? 'hero' : 'miko');
   }
   closeTalk() {
@@ -494,17 +614,31 @@ class Game {
     this.audio.sfx('good');
     this.closeTalk();
   }
-  openShop() {
+  /**
+   * 店を開く。
+   * 'shop' 道具屋：護符と日和の装束・道具／'smith' 鍛冶：十四の武器と防具
+   */
+  openShop(kind) {
+    kind = kind || this._shopKind || 'shop';
+    this._shopKind = kind;
     const el = document.getElementById('shop-list');
     if (!el) return;
-    const stock = ['w1', 'a1', 't1', 'w2', 'a2', 't2'];
-    const price = (g) => (g.rare + 1) * 60;
+    const ttl = document.querySelector('#shop h2');
+    if (ttl) ttl.textContent = kind === 'smith' ? '鍛冶場 ― 武器を打つ' : '道具屋';
+    const stock = kind === 'smith'
+      ? Object.keys(GEAR).filter(id => GEAR[id].wtype && GEAR[id].rare <= 1).concat(['w1', 'w2', 'a1', 'a2', 'a3'])
+      : ['t1', 't2', 't3', 'mw1', 'mw2', 'ma1', 'ma2', 'mt1', 'mt2', 'mw3', 'ma3'];
+    const price = (g) => (g.rare + 1) * 60 + (g.rare >= 3 ? 200 : 0);
     document.getElementById('shop-coin').textContent = this.coin;
     el.innerHTML = stock.map(id => {
       const g = GEAR[id];
-      const have = this.party.hero.bag.indexOf(id) >= 0;
+      if (!g) return '';
+      const who = (g.who || 'hero');
+      const owner = this.party[who];
+      const have = owner.bag.indexOf(id) >= 0;
       const mods = Object.keys(g.mods).filter(k => g.mods[k]).map(k => k + '+' + g.mods[k]).join(' ');
-      return '<div class="sh-row"><span class="sh-nm">' + g.name + '<span class="sh-md">' + mods + '</span></span>' +
+      const tag = g.wtype ? '〔' + WEAPONS[g.wtype].name + '〕' : (who === 'miko' ? '〔日和〕' : '');
+      return '<div class="sh-row"><span class="sh-nm">' + tag + g.name + '<span class="sh-md">' + mods + '</span></span>' +
         '<span class="sh-pr">' + price(g) + '</span>' +
         (have ? '<span class="sh-md">所持</span>'
               : '<button class="sh-bt" data-id="' + id + '"' + (this.coin >= price(g) ? '' : ' disabled') + '>買う</button>') +
@@ -513,17 +647,96 @@ class Game {
     el.querySelectorAll('.sh-bt').forEach(b => {
       b.addEventListener('click', () => {
         const id = b.dataset.id, g = GEAR[id];
-        const pr = (g.rare + 1) * 60;
+        const pr = price(g);
         if (this.coin < pr) return;
         this.coin -= pr;
-        this.party.hero.pick(id);
+        this.party[g.who || 'hero'].pick(id);
         Party.save(this.party);
+        this.saveProgress();
         this.audio.sfx('good');
-        UI.toast(g.name + ' を買った');
-        this.openShop();
+        UI.toast(g.name + ' を手に入れた' + (g.wtype ? '（武器の持ち替えボタン、または陣中帳で装備）' : (g.who === 'miko' ? '（陣中帳の巫女の頁で装備）' : '')), 3000);
+        this.openShop(kind);
       });
     });
     UI.show('shop');
+  }
+
+  /* ── 家の中 ───────────────────────────── */
+  fade(ms) {
+    const f = document.getElementById('fade');
+    if (!f) return Promise.resolve();
+    f.hidden = false;
+    f.classList.add('on');
+    return new Promise(r => setTimeout(r, ms || 320));
+  }
+  unfade() {
+    const f = document.getElementById('fade');
+    if (!f) return;
+    f.classList.remove('on');
+    setTimeout(() => { if (!f.classList.contains('on')) f.hidden = true; }, 400);
+  }
+  async enterInterior(door) {
+    if (this._entering) return;
+    this._entering = true;
+    await this.fade(320);
+    this._door = door;
+    this._outCol = this.world.colliders;
+    this.interior.build(door.kind, door.variant);
+    this.world.colliders = this.interior.colliders;
+    this.phase = Phase.INTERIOR;
+    const sp = this.interior.spawn;
+    this.player.pos.copy(sp); this.player.vel.set(0, 0, 0);
+    this.player.aim.set(0, 0, -1);
+    this.miko.pos.set(sp.x + 1.4, 0, sp.z + 0.6);
+    this.enemies.clear(); this.bullets.clear(); this.hostile.clear();
+    this.town.group.visible = false;
+    this.pile.group.visible = false;
+    this.sunLight.intensity = 0.25;
+    this.ambient.intensity = 1.2;
+    this.hemi.intensity = 1.3;
+    this.gfx.scene.background.setHex(0x120c08);
+    this.gfx.scene.fog.color.setHex(0x120c08);
+    this.gfx.scene.fog.density = 0.012;
+    this.gfx.rescanLights();
+    this._snapCam = true;
+    this.camDist = 12.5; this.camYaw = 0; this.camPitch = Math.max(this.camPitch, 0.85);
+    this.audio.startBGM(this.interior.def.bgm);
+    UI.objective(this.interior.def.name + '　―　南の暖簾から外へ');
+    UI.toast(this.interior.def.name, 1800);
+    this.unfade();
+    this._entering = false;
+  }
+  async exitInterior() {
+    if (this._entering) return;
+    this._entering = true;
+    await this.fade(320);
+    const d = this._door;
+    this.world.colliders = this._outCol || this.world.colliders;
+    this.interior.clear();
+    this.phase = Phase.SURFACE;
+    this.town.group.visible = true;
+    this.pile.group.visible = true;
+    this.player.pos.set(d.x, 0, d.outZ); this.player.vel.set(0, 0, 0);
+    this.player.aim.set(0, 0, 1);
+    this.miko.pos.set(d.x + 1.4, 0, d.outZ + 0.8);
+    this.surfaceLights();
+    this.gfx.rescanLights();
+    this._snapCam = true;
+    this.camDist = 16.5;
+    this._inSanct = null;
+    this.audio.startBGM('surface');
+    this._doorCool = 1.2;
+    this.unfade();
+    this._entering = false;
+  }
+  surfaceLights() {
+    this.sunLight.intensity = 3.0;
+    this.ambient.intensity = 1.5;
+    this.hemi.intensity = 1.1;
+    this.hemi.color.setHex(0xa8bcd8); this.hemi.groundColor.setHex(0x5a5348);
+    this.gfx.scene.fog.density = 0.008;
+    this.gfx.scene.background.setHex(0x05070b);
+    this.gfx.scene.fog.color.setHex(0x05070b);
   }
 
   /* ── 技 ───────────────────────────────── */
@@ -567,16 +780,14 @@ class Game {
       this.particles.emit(from, 26, { color: [1, 0.95, 0.7], size: 4.4, up: 0.6 });
     } else if (e.slash || e.nova) {
       const r = e.slash || e.nova;
-      const n = this.enemies.burnNear(P.pos.x, P.pos.z, r);
-      this.stats.kills += n;
+      this.enemies.burnNear(P.pos.x, P.pos.z, r, this._onKill);
       this.particles.emit(P.pos, 24, { color: [1, 0.9, 0.5], size: 3.6, up: 2.2, yOff: 0.8 });
     } else if (e.orb) {
       this.bullets.fire(from, P.aim, { speed: 20, life: 2.4, dmg: dmg * 1.4, r: 0.5 });
     } else if (e.rush || e.blink) {
       P.pos.addScaledVector(P.aim, e.blink ? 8 : 5.5);
       this.world.resolve(P.pos, P.radius);
-      const n = this.enemies.burnNear(P.pos.x, P.pos.z, 3.4);
-      this.stats.kills += n;
+      this.enemies.burnNear(P.pos.x, P.pos.z, 3.4, this._onKill);
       P.invuln = Math.max(P.invuln, 0.5);
       this.particles.emit(P.pos, 20, { color: [1, 0.85, 0.4], size: 3.4, up: 1.6 });
     } else if (e.shield) {
@@ -592,8 +803,7 @@ class Game {
       P.invuln = Math.max(P.invuln, 1.2);
     } else if (e.pillar) {
       const t = P.pos.clone().addScaledVector(P.aim, 6);
-      const n = this.enemies.burnNear(t.x, t.z, 5);
-      this.stats.kills += n;
+      this.enemies.burnNear(t.x, t.z, 5, this._onKill);
       this.particles.emit(t, 40, { color: [1, 0.98, 0.85], size: 5, up: -4, yOff: 9, life: 1.4 });
     }
   }
@@ -786,7 +996,9 @@ class Game {
 
   /* ── 進行 ─────────────────────────────── */
   toTitle() {
+    if (this.phase === Phase.INTERIOR) { this.world.colliders = this._outCol || this.world.colliders; this.interior.clear(); }
     this.phase = Phase.TITLE;
+    this.hostile.clear();
     UI.hide('hud'); UI.hide('pad');
     UI.show('title');
     this.enemies.clear(); this.bullets.clear();
@@ -819,14 +1031,16 @@ class Game {
     this.audio.startBGM('surface');
     this.enemies.clear();          // 地上に敵を持ち込まない
     this.bullets.clear();
+    this.hostile.clear();
     this.boss.despawn(); this.boss.cleanup();
+    if (this.interior.active) this.interior.clear();
     this.world.buildSurface();
     this.player.reset(this.world.playerStart);
     this.miko.reset(this.world.playerStart);
-    this.sunLight.intensity = 3.0;
-    this.ambient.intensity = 1.5;
-    this.hemi.intensity = 1.1;
-    this.gfx.scene.fog.density = 0.008;
+    this._snapCam = true;
+    this.surfaceLights();
+    this.camDist = 16.5;
+    this.eliteRef = null;
     this.town.build(this.world.colliders);
     this.town.group.visible = true;
     this.pile.place(this.world.purifierSpot ? this.world.purifierSpot.clone() : new THREE.Vector3(-52, 0, 0));
@@ -838,8 +1052,9 @@ class Game {
 
   enterDungeon() {
     this.phase = Phase.DUNGEON;
+    this._snapCam = true;
     const mm2 = document.getElementById('minimap'); if (mm2) mm2.hidden = false;
-    this.audio.startBGM('dungeon');
+    this.camDist = 16.5;
     if (this.town) this.town.group.visible = false;   // 地下に街を持ち込まない
     this.pile.group.visible = false;
     this.hasKey = false;
@@ -851,39 +1066,37 @@ class Game {
     this.gfx.rescanLights();
     this.player.reset(this.world.playerStart);
     this.miko.reset(this.world.playerStart);
+    // 趣ごとの霧と灯り
+    const B = this.world.biome;
+    this.audio.startBGM(B.bgm === 'grave' ? 'dungeon' : B.bgm);
     this.sunLight.intensity = 1.1;
     this.ambient.intensity = 2.6;
     this.hemi.intensity = 2.3;
-    this.gfx.scene.fog.density = 0.013;
-    this.gfx.scene.background.setHex(0x1d2531);
-    this.gfx.scene.fog.color.setHex(0x1d2531);
+    this.hemi.color.setHex(B.sky); this.hemi.groundColor.setHex(B.ground);
+    this.gfx.scene.fog.density = B.fogD;
+    this.gfx.scene.background.setHex(B.fog);
+    this.gfx.scene.fog.color.setHex(B.fog);
     this.enemies.clear();
+    this.hostile.clear();
     this.enemies.setFloor(this.floor);
-    // 湧き
-    const kinds = [EnemyKind.WALKER, EnemyKind.RUNNER, EnemyKind.SHIELD, EnemyKind.BAT];
+    // 湧き（趣ごとの顔ぶれ）
+    const kinds = B.roster;
     this.world.spawnPoints.forEach((p, i) => {
-      this.enemies.spawn(kinds[i % kinds.length], p);
+      this.enemies.spawn(kinds[(i * 7 + (i >> 2)) % kinds.length], p);
     });
-    // 中ボス：大扉から離れた部屋に置く。倒すと鍵を落とす
-    const rooms = this.world.rooms;
-    const gateR = this.world.gateRoom;
-    let far = rooms[1] || rooms[0], bestD = -1;
-    rooms.forEach(r => {
-      if (r === this.world.startRoom || r === gateR) return;
-      const d = Math.hypot(r.x - (gateR ? gateR.x : 0), r.z - (gateR ? gateR.z : 0));
-      if (d > bestD) { bestD = d; far = r; }
-    });
-    if (far) {
-      this.eliteRef = this.enemies.spawnElite(new THREE.Vector3(far.x, 0, far.z), this.floor);
-      this.eliteRoom = far;
-    }
-    UI.objective('第' + this.floor + '層　――　最深部へ。天窓の光で陽力を補え');
-    UI.toast('日光は届かない。天窓の下でのみ陽力が戻る');
+    // 中ボスは仕掛けを解くと目覚める（最初は居ない）
+    this.eliteRef = null;
+    this._eliteWoke = false;
+    const band = Math.floor((this.floor - 1) / 10);
+    UI.cutin('第 ' + this.floor + ' 層 ・ ' + B.name, 1300);
+    UI.objective('第' + this.floor + '層 ' + B.name + '　―　封印の仕掛けを解き、中ボスを討て');
+    UI.toast(B.sub + '。天窓の下でのみ陽力が戻る', 3200);
   }
 
   async enterBoss() {
     if (this._bossIntro) return;
     this._bossIntro = true;
+    this._bossDying = false;
     this.phase = Phase.BOSS;
     const lord = this.boss.setFloor(this.floor);
     const st = this.world.bossStand || new THREE.Vector3(this.world.bossRoom.x, 0, this.world.bossRoom.z);
@@ -922,21 +1135,28 @@ class Game {
     const bh = document.getElementById('hud-boss'); if (bh) bh.hidden = false;
     UI.bossBar(1, '第一相');
     await UI.cutin(lord, 1400);
-    UI.objective('第' + this.floor + '層の主　――　霧を散らし、闇を討て');
+    UI.objective('第' + this.floor + '層の主 ' + lord + '　―　' + (this.boss.lord.moves.indexOf('mist') >= 0 ? '霧を散らし、闇を討て' : '攻めを見切り、陽を撃ち込め'));
     this.audio.sfx('phase');
     this._bossIntro = false;
   }
 
   async onBossPhase(p) {
-    const txt = p === 2 ? '第 二 相 ／ 影 を 見 極 め よ' : '第 三 相 ／ 天 窓 を 撃 て';
+    const txt = p === 2 ? '第 二 相 ／ ' + this.boss.p2text : '第 三 相 ／ 天 窓 を 撃 て';
     await UI.cutin(txt, 1500);
     UI.bossBar(this.boss.hp / this.boss.maxHp, p === 2 ? '第二相' : '第三相');
-    UI.objective(p === 2 ? '最も影の濃い個体が本体' : '天井の窓を撃ち割り、光の柱で縛れ');
+    const p2 = this.boss.lord.p2;
+    UI.objective(p === 2 ? ({ clone: '最も影の濃い個体が本体', summon: '眷属を祓いつつ本体を撃て', zones: '赤い輪の外へ逃れよ', spiral: '渦を巻く弾の隙間を抜けよ', rage: '猛る主の突進をかわせ' })[p2] || '主を討て'
+      : '天井の窓を撃ち割り、光の柱で縛れ');
     this.audio.sfx('phase');
   }
 
   async onBossDead() {
+    if (this._bossDying) return;
+    this._bossDying = true;
+    setTimeout(() => { this._bossDying = false; }, 3000);
     this.grantExp(expOf(0, true));
+    this.player.cheer();
+    this.hostile.clear();
     this.boss.cleanup();
     this.boss.despawn();
     const bh = document.getElementById('hud-boss'); if (bh) bh.hidden = true;
@@ -987,7 +1207,9 @@ class Game {
     this.coffin.hide();
     this.pile.active = false; this.pile.done = false;
     this.pile.group.visible = false;
+    this.pile.setWraith(null);
     this.enterSurface();
+    this.player.cheer();
     UI.objective('陽力を溜め、第' + this.floor + '層へ');
     this._finishing = false;
   }
@@ -1025,6 +1247,7 @@ class Game {
 
   async gameOver() {
     this.phase = Phase.RESULT;
+    this.hostile.clear();
     this.floor = (this.checkpoint && this.checkpoint.floor) ? this.checkpoint.floor : 1;
     await UI.cutin('陽 は 落 ち た', 1500);
     const ttl = document.getElementById('res-ttl');
@@ -1067,10 +1290,16 @@ class Game {
     // 個別の間引きはやめ、場面全体でまとめて絞る（後から上書きされないように）
     this.gfx.cullPointLights(this.player.pos.x, this.player.pos.z, maxL + 1);
     if (this.town && this.town.built && this.phase === Phase.SURFACE) this.town.update(now, this.player.pos);
+    if (this.phase === Phase.INTERIOR) this.interior.update(now, this.player.pos);
     this.particles.update(dt);
-    this.bullets.update(dt, this.world);
+    this.bullets.update(dt, this.world, this._bulletCtx || (this._bulletCtx = {
+      seek: (b) => this.seekTarget(b),
+      home: this.player.pos
+    }));
+    this.hostile.update(dt, this.world);
+    this.slash.update(dt);
     this.coffin.update(dt, now);
-    this.pile.update(dt, now, this.coffin.p);
+    this.pile.update(dt, now, this.coffin.p, this.phase === Phase.PILE ? this.player.pos : null);
 
     if (this.phase !== Phase.TITLE && this.phase !== Phase.RESULT) {
       this.updatePlay(dt, now);
@@ -1078,7 +1307,7 @@ class Game {
 
     // カメラ追従（指でなぞると360度まわる）
     const p = this.player.pos;
-    const dist = 16.5;
+    const dist = this.camDist || 16.5;
     const h = Math.sin(this.camPitch) * dist;
     const rad = Math.cos(this.camPitch) * dist;
     // 視点0のとき、従来と同じ「手前(+z)から見下ろす」位置になるようにする
@@ -1087,7 +1316,8 @@ class Game {
       p.y + h,
       p.z + Math.cos(this.camYaw) * rad
     );
-    this.gfx.camera.position.lerp(camTarget, 1 - Math.pow(0.0015, dt));
+    if (this._snapCam) { this.gfx.camera.position.copy(camTarget); this._snapCam = false; }   // 場面が変わったら一息に
+    else this.gfx.camera.position.lerp(camTarget, 1 - Math.pow(0.0015, dt));
     this.gfx.camera.lookAt(p.x, p.y + 1.4, p.z);
 
     // 見取り図
@@ -1124,23 +1354,38 @@ class Game {
       ax: am.x, az: am.z,
       fire: this.input.fire, charge: this.input.charge, dash: this.input.dash
     };
+    // 銃の構え（腰だめは駆けやすく、連射は足が鈍る）
+    P.moveMul = this.wtype === 'gun' ? GUN_STANCES[this.stance].move : 1;
     P.update(dt, rot, this.world, now);
 
-    // 射撃
+    // ── 家の中：歩いて話すだけ。暖簾から外へ ──
+    if (this.phase === Phase.INTERIOR) {
+      this.miko.update(dt, P, this.world, now, false);
+      const near = this.interior.near(P.pos.x, P.pos.z, 3.0);
+      const tb0 = document.getElementById('btn-talk');
+      if (tb0) tb0.hidden = !near || !!this.talking;
+      this._nearNpc = near;
+      if (this.interior.atExit(P.pos.x, P.pos.z)) this.exitInterior();
+      return;
+    }
+
+    // 攻撃
     this.shotCd -= dt;
-    const wantCharge = this.input.charge || this.keys['ShiftLeft'] === undefined && false;
+    const chargeNeed = 1.1 / this.party.hero.chargeMul;
     if (this.input.charge) {
       this.chargeT += dt;
-      P.charging = Math.min(1, this.chargeT / (1.1 / this.party.hero.chargeMul));
-      if (this.chargeT > (1.1 / this.party.hero.chargeMul) && !this._chargeSfx) { this.audio.sfx('charge'); this._chargeSfx = true; }
+      P.charging = Math.min(1, this.chargeT / chargeNeed);
+      if (this.chargeT > chargeNeed && !this._chargeSfx) { this.audio.sfx('charge'); this._chargeSfx = true; }
     } else if (this.chargeT > 0) {
-      // 離した瞬間に撃つ
-      if (this.chargeT >= (1.1 / this.party.hero.chargeMul)) this.fire(true);
+      // 離した瞬間に放つ（銃は溜め弾、他は大技）
+      if (this.chargeT >= chargeNeed) { if (this.wtype === 'gun') this.fire(true); else this.attack(true); }
       this.chargeT = 0; P.charging = 0; this._chargeSfx = false;
     }
-    if (this.input.fire && !this.input.charge && this.shotCd <= 0 && !P.pushing && !this.coffin.chained) {
-      this.fire(false);
-    }
+    const canAtk = !P.pushing && !this.coffin.chained && !(this.phase === Phase.CARRY || (this.phase === Phase.PILE && this.pile.step === Step.WAIT));
+    if (this.input.fire && !this.input.charge && canAtk) {
+      this._holdT = (this._holdT || 0) + dt;
+      if (this.shotCd <= 0) { if (this.wtype === 'gun') this.fire(false); else this.attack(false); }
+    } else { this._holdT = 0; this._rapidK = 0; }
 
     // 天窓で補給
     const s = this.world.inShaft(P.pos.x, P.pos.z);
@@ -1193,25 +1438,38 @@ class Game {
       }
     }
 
+    // 中ボスを目覚めさせる仕掛け（陽光弾で祭壇を灯す／鏡を回す）
+    if (this.phase === Phase.DUNGEON && this.world.shootGimmick) {
+      // 置物に当たって消えた弾も数える（祭壇や鏡には当たりがある）
+      const shots = this.bullets.list.concat(this.bullets.impacts || []);
+      for (let i = shots.length - 1; i >= 0; i--) {
+        const bb = shots[i];
+        const r = this.world.shootGimmick(bb.p.x, bb.p.z);
+        if (!r) continue;
+        const li = this.bullets.list.indexOf(bb);
+        if (li >= 0) this.bullets.list.splice(li, 1);
+        if (r.kind === 'altar') {
+          this.audio.sfx('refill');
+          this.particles.emit(new THREE.Vector3(r.x, 1.6, r.z), 24, { color: [1, 0.85, 0.4], size: 3.2, up: 2.4 });
+          UI.toast(r.left ? '祭壇が灯った（残り ' + r.left + '）' : '四つの祭壇が灯った……封印が解ける', 3000);
+        } else if (r.kind === 'mirror') {
+          this.audio.sfx(r.ok ? 'refill' : 'hit');
+          if (r.ok) UI.toast('光が水晶に届いた……封印が砕ける', 3000);
+        }
+      }
+      const stv = this.world.stoneStep(P.pos.x, P.pos.z, dt);
+      if (stv === 'trap' && !this.solar.active && P.invuln <= 0) {
+        const res = P.hurt(70, true);
+        if (res && res !== 'evade') { this.stats.hits++; UI.hp(P.hp, P.maxHp, P.guard, P.guardMax); this.audio.sfx('hurt'); if (P.hp <= 0) { this.gameOver(); return; } }
+      } else if (stv === 'hold' && !this._holdHint) { this._holdHint = true; UI.toast('封印石に触れている……離れるな'); setTimeout(() => { this._holdHint = false; }, 3000); }
+      const G = this.world.eliteG;
+      if (G && G.solved && !this._eliteWoke) this.wakeElite();
+    }
+
     // 主人公の霊力
     const hh = this.party.hero;
     this.heroMp = Math.min(hh.maxMp, this.heroMp + hh.mpRegen * dt);
-    const kyb = document.getElementById('btn-key');
-    if (kyb) {
-      const go5 = e => { if (e) e.preventDefault(); this.audio.unlock(); this.askUseKey(); };
-      kyb.addEventListener('touchstart', go5, { passive: false });
-      kyb.addEventListener('click', go5);
-    }
-    const tkb = document.getElementById('btn-talk');
-    if (tkb) {
-      const go4 = e => { if (e) e.preventDefault(); this.audio.unlock(); this.voice.unlock(); this.doTalk(); };
-      tkb.addEventListener('touchstart', go4, { passive: false });
-      tkb.addEventListener('click', go4);
-    }
-    const fc = document.getElementById('fl-close');
-    if (fc) fc.addEventListener('click', () => this.closeFloors());
-    const sc = document.getElementById('shop-close');
-    if (sc) sc.addEventListener('click', () => UI.hide('shop'));
+    // （以前はここで毎フレーム押下の受け口を足しており、押すたびに何重にも動いていた）
     const skb = document.getElementById('btn-skill');
     if (skb) {
       const list = hh.activeSkills();
@@ -1231,7 +1489,6 @@ class Game {
       // 触れた不死者はその場で灰になる
       const burned = this.enemies.burnNear(P.pos.x, P.pos.z, 2.4, this._onKill);
       if (burned > 0) {
-        this.stats.kills += burned;
         this.audio.sfx('ash');
         this.particles.emit(P.pos, 10 * burned, { color: [1, 0.85, 0.35], size: 3.6, up: 2.6, yOff: 0.8 });
       }
@@ -1245,56 +1502,42 @@ class Game {
 
     // 敵
     this.enemies.update(dt, P.pos, this.world, this.audio, this._onKill);
-    // 撃破時の処理はひとつにまとめ、どの倒し方でも同じように働かせる
-    if (!this._onKill) this._onKill = (e) => {
-      this.stats.kills++;
-      this.audio.sfx('ash');
-      // 階が深いほど、レアなら大きく
-      this.coin += Math.round((2 + this.floor) * (e.rare ? 12 : 1) * (e.elite ? 8 : 1));
-      if (e.golden) {
-        const exp = Math.round(9000 * (1 + (this.floor - 1) * 0.8));
-        this.grantExp(exp);
-        this.coin += 1500 + this.floor * 400;
-        const got = [];
-        ['w5', 'a5', 't5'].forEach(id => { if (this.party.hero.pick(id)) got.push(GEAR[id].name); });
-        Party.save(this.party);
-        this.particles.emit(new THREE.Vector3(e.p.x, 2, e.p.z), 120,
-          { color: [1, 0.88, 0.35], size: 5.4, up: 4, life: 2.2 });
-        this.audio.sfx('purify');
-        UI.shout('黄 金 の 守 り 手 を 討 っ た');
-        this.voice.say(null, 'hero', { style: 'shout',
-          segments: [{ t: 'すげぇ……', p: 1.0, r: 0.9, gap: 220 }, { t: 'こいつは伝説の代物だ！', p: 1.08, r: 1.05 }] });
-        UI.toast('経験 ' + exp.toLocaleString() + '　' + got.join('・') + ' を得た', 6000);
-        this.goldenRef = null;
-      } else if (e.elite) {
-        this.hasKey = true;
-        this.audio.sfx('refill');
-        this.particles.emit(new THREE.Vector3(e.p.x, 1.5, e.p.z), 44,
-          { color: [1, 0.85, 0.35], size: 4.2, up: 3 });
-        UI.toast('中ボスを討った　――　大扉の鍵を手に入れた', 4200);
-        this.voice.say(null, 'hero', { segments: [{ t: '鍵だ！', p: 1.12, r: 1.2, gap: 140 }, { t: '主の間へ行くぞ', p: 1.02, r: 1.05 }] });
-        this.grantExp(Math.round(260 * (1 + (this.floor - 1) * 0.6)));
-      }
-      const base = expOf(e.kind, false) * (1 + (this.floor - 1) * 0.45);
-      this.grantExp(Math.round(base * (e.rare ? 9 : 1)));
-      if (e.rare) {
-        this.particles.emit(new THREE.Vector3(e.p.x, e.y + 1, e.p.z), 30,
-          { color: [0.6, 1, 0.82], size: 4, up: 3, life: 1.6 });
-        const gid = rollGear(this.floor + 3, this.party.hero.get('LUK'));
-        if (gid && this.party.hero.pick(gid)) {
-          UI.toast('稀なる者を祓った　' + GEAR[gid].name + ' を得た', 3800);
-          this.voice.say(null, 'hero', { segments: [{ t: 'すげぇ、', p: 1.15, r: 1.25, gap: 100 }, { t: 'いい物だ！', p: 1.1, r: 1.15 }] });
-        } else UI.toast('稀なる者を祓った');
-        Party.save(this.party);
-      } else if (Math.random() < 0.05 + this.floor * 0.012) {
-        const gid = rollGear(this.floor, this.party.hero.get('LUK'));
-        if (gid && this.party.hero.pick(gid)) {
-          UI.toast(GEAR[gid].name + ' を拾った', 2600);
-          Party.save(this.party);
+    const killed = this.enemies.hitTest(this.bullets, this._onKill, this.audio);
+
+    // 敵の弾・範囲攻撃
+    const hshot = this.hostile.hitTest(P.pos.x, P.pos.y + 1.1, P.pos.z, 0.55);
+    let hurtBy = hshot ? hshot.power : 0;
+    for (const z of this.hostile.blasts) {
+      this.particles.emit(new THREE.Vector3(z.x, 0.2, z.z), 18, { color: [1, 0.3, 0.3], size: 3.4, up: 3, spread: z.r * 1.4 });
+      if (Math.hypot(P.pos.x - z.x, P.pos.z - z.z) < z.r) hurtBy = Math.max(hurtBy, z.power);
+    }
+    if (this.hostile.blasts.length) this.audio.sfx('hit');
+    if (hurtBy && !this.solar.active) {
+      const res = P.hurt(hurtBy, true);
+      if (res === 'evade') UI.toast('かわした');
+      else if (res) {
+        this.stats.hits++;
+        if (this.phase === Phase.PILE) this.pile.hitsTaken = (this.pile.hitsTaken || 0) + 1;
+        UI.hp(P.hp, P.maxHp, P.guard, P.guardMax);
+        this.audio.sfx('hurt');
+        if (res === 'lost') this.line('hurt');
+        if (P.hp <= 0) {
+          if (this.phase === Phase.PILE) { this.failPurify(); return; }
+          this.gameOver(); return;
         }
       }
-    };
-    const killed = this.enemies.hitTest(this.bullets, this._onKill, this.audio);
+    }
+
+    // 中ボスの体力（近くにいる間だけ上に出す）
+    if (this.phase === Phase.DUNGEON) {
+      const el = this.eliteRef;
+      const bh = document.getElementById('hud-boss');
+      const show = el && !el.dead && Math.hypot(el.p.x - P.pos.x, el.p.z - P.pos.z) < 30;
+      if (bh && show) {
+        if (bh.hidden) { bh.hidden = false; const nm = bh.querySelector('.boss-name'); if (nm) nm.textContent = el.name || '中ボス'; }
+        UI.bossBar(el.hp / el.maxHp, el.ward ? '守りの殻 ― 弾が通らない' : '中ボス');
+      } else if (bh && !bh.hidden && this.eliteRef) bh.hidden = true;
+    }
 
     // 被弾
     const hit = this.enemies.touching(P.pos.x, P.pos.z);
@@ -1308,6 +1551,7 @@ class Game {
         if (res === 'lost') this.line('hurt');
         if (res === 'lost' && P.hp <= 0) { this.gameOver(); return; }
       }
+      if (hit.elite && hit.power && res && res !== 'evade') { /* 中ボスの体当たりは重い */ P.guard -= hit.power * 0.3; }
     }
     const mhit = this.enemies.touching(this.miko.pos.x, this.miko.pos.z);
     if (mhit && this.miko.stagger <= 0) {
@@ -1326,9 +1570,11 @@ class Game {
       // 弾がボスに当たるか
       for (let i = this.bullets.list.length - 1; i >= 0; i--) {
         const b = this.bullets.list[i];
+        if (b.probe) continue;
         const dx = b.p.x - this.boss.p.x, dz = b.p.z - this.boss.p.z;
-        const dy = b.p.y - 1.4;
-        if (dx * dx + dy * dy + dz * dz < 1.6 * 1.6) {
+        const dy = Math.max(0, Math.abs(b.p.y - this.boss.hitY) - this.boss.hitY * 0.6);
+        const R = this.boss.hitR + b.r;
+        if (dx * dx + dy * dy + dz * dz < R * R) {
           const ok = this.boss.takeHit(b.dmg * (b.pierce ? 6 : 3), b.pierce);
           this.particles.emit(new THREE.Vector3(this.boss.p.x, 1.4, this.boss.p.z), 5,
             { color: ok ? [1, 0.5, 0.4] : [0.6, 0.5, 0.8], size: 2.4 });
@@ -1351,7 +1597,7 @@ class Game {
           }
         }
       }
-      if (act === 'claw' && P.hurt(this.boss.power || 120, true)) {
+      if (act === 'claw' && !this.solar.active && P.hurt(this.boss.power || 120, true)) {
         this.stats.hits++; UI.hp(P.hp, P.maxHp, P.guard, P.guardMax); this.audio.sfx('hurt');
         if (P.hp <= 0) { this.gameOver(); return; }
       }
@@ -1376,6 +1622,10 @@ class Game {
         } else this.enterDungeon();
         return;                    // この後のBGM判定に上書きされないよう抜ける
       }
+      // 家の戸口：くぐると家の中へ場面が移る
+      if (this._doorCool > 0) this._doorCool -= dt;
+      const dr = this.town.doorAt && this.town.doorAt(P.pos.x, P.pos.z);
+      if (dr && !(this._doorCool > 0) && !this.talking) { this.enterInterior(dr); return; }
       const sc = this.world.sanctuary;
       const inSanct = sc && Math.hypot(P.pos.x - sc.x, P.pos.z - sc.z) < sc.r;
       if (inSanct !== this._inSanct) {
@@ -1421,7 +1671,7 @@ class Game {
       if (kb) kb.hidden = !(nearDoor && this.hasKey);
       if (nearDoor && !this.hasKey && !this._doorHint) {
         this._doorHint = true;
-        UI.toast('固く閉ざされた大扉。鍵穴が光っている。中ボスを討て', 4000);
+        UI.toast('固く閉ざされた大扉。鍵穴が光っている。封印の仕掛けを解き、中ボスを討て', 4000);
         setTimeout(() => { this._doorHint = false; }, 6000);
       }
       if (false) {
@@ -1566,21 +1816,24 @@ class Game {
       else if (pl.step === Step.LOCKED) {
         for (let i = this.bullets.list.length - 1; i >= 0; i--) {
           const bb = this.bullets.list[i];
-          const hit = pl.hitEmitter(bb.p.x, bb.p.z);
+          const hit = pl.hitEmitter(bb.p.x, bb.p.z, bb.probe ? 0.14 : (bb.pierce ? 0.34 : 0.12));
           if (hit) {
             this.bullets.list.splice(i, 1);
-            this.audio.sfx('refill');
+            if (hit.full) continue;
             const e = pl.emitters[hit.index];
-            this.particles.emit(new THREE.Vector3(pl.socket.x + e.x, e.y, pl.socket.z + e.z), 18,
-              { color: [1, 0.95, 0.7], size: 3.2, up: 1.6 });
-            if (hit.left === 0) {
-              UI.toast('四基すべてが棺を捉えた。陣の下端へ', 4000);
-              this.voice.say(null, 'hero', { segments: [{ t: '全機、', p: 1.05, r: 1.15, gap: 120 }, { t: '照準よし！', p: 1.12, r: 1.1 }] });
-            } else UI.toast('照射機が向いた（残り ' + hit.left + '）');
-            break;
+            this.particles.emit(new THREE.Vector3(pl.socket.x + e.x, 2.5, pl.socket.z + e.z), hit.aimed ? 30 : 6,
+              { color: [1, 0.95, 0.7], size: hit.aimed ? 3.6 : 2.2, up: 1.6 });
+            if (hit.aimed) {
+              this.audio.sfx('refill');
+              if (hit.left === 0) {
+                UI.toast('四基すべてが棺を捉えた。陣の下端（集光台）へ', 4000);
+                this.voice.say(null, 'hero', { segments: [{ t: '全機、', p: 1.05, r: 1.15, gap: 120 }, { t: '照準よし！', p: 1.12, r: 1.1 }] });
+              } else UI.toast('ゲージが満ち、照射機が棺へ倒れた（残り ' + hit.left + '）');
+            } else this.audio.sfx('hit');
           }
         }
-        UI.objective('四隅の照射機を撃て　（' + pl.aimedCount + ' / 4）');
+        const gsum = pl.emitters.map(e => Math.round(e.gauge * 100) + '%').join(' ');
+        UI.objective('照射機に陽光弾を当て、ゲージを満たせ（' + pl.aimedCount + '/4）　' + gsum);
       }
 
       // ③ 集光台で陽を集める
@@ -1595,7 +1848,9 @@ class Game {
             this.voice.say(null, 'hero', { style: 'shout', segments: [{ t: '陽よ、', p: 1.0, r: 0.8, gap: 160 }, { t: '満ちよ！', p: 0.9, r: 0.62 }] });
             this.particles.emit(pl.focusPos, 40, { color: [1, 0.98, 0.8], size: 4.4, up: 3.4, life: 1.6 });
             const bh = document.getElementById('hud-boss');
-            if (bh) { bh.hidden = false; const nm = bh.querySelector('.boss-name'); if (nm) nm.textContent = '吸血鬼の思念体'; }
+            if (bh) { bh.hidden = false; const nm = bh.querySelector('.boss-name'); if (nm) nm.textContent = (this.boss.lordName || '主') + 'の思念体'; }
+            UI.cutin('思 念 体 が 現 れ た', 1200);
+            UI.toast('主の思念体が照射機を一基ずつ黒ずませる。紫の機を撃って戻せ。反発の弾は避けよ', 5200);
           }
           UI.objective('陽を集めている……　' + Math.round(pl.charge * 100) + '％');
         } else {
@@ -1608,20 +1863,177 @@ class Game {
       else if (pl.step === Step.PURIFY) {
         for (let i = this.bullets.list.length - 1; i >= 0; i--) {
           const bb = this.bullets.list[i];
-          if (pl.hitDevice(bb.p.x, bb.p.z)) {
-            this.bullets.list.splice(i, 1);
+          const r = pl.hitEmitter(bb.p.x, bb.p.z, bb.probe ? 0.14 : (bb.pierce ? 0.34 : 0.12));
+          if (!r) continue;
+          this.bullets.list.splice(i, 1);
+          if (r.clean) continue;
+          const e = pl.emitters[r.index];
+          this.particles.emit(new THREE.Vector3(pl.socket.x + e.x, 3, pl.socket.z + e.z), r.restored ? 30 : 6,
+            { color: [1, 0.95, 0.7], size: 3, up: 2 });
+          if (r.restored) {
             this.audio.sfx('refill');
-            this.particles.emit(pl.corePos, 14, { color: [1, 0.95, 0.7], size: 3.2, up: 2.6, yOff: 1.0 });
-          }
+            UI.toast('輝きが戻った！　主は別の機を狙っている', 2400);
+          } else this.audio.sfx('hit');
         }
-        const pur = Math.round(pl.purity * 100);
-        UI.bossBar(pl.hp / 100, '陽光の輝き ' + pur + '％');
-        UI.objective(pur < 25 ? '陽光が黒ずんでいる！　機器を撃て' : '浄化中　――　翳ったら機器を撃て');
+        const left = Math.round((1 - pl.hp / 100) * 100);
+        UI.bossBar(pl.hp / 100, '浄化 ' + left + '％' + (pl.darkIdx >= 0 ? '　― 黒ずみで止まりかけている' : ''));
+        UI.objective(pl.darkIdx >= 0 ? '紫に黒ずんだ照射機を撃ち、ゲージを戻せ！' : '浄化中　―　反発の弾を避けよ（HPが尽きるとやり直し）');
       }
 
-      pl.update(dt, now, this.coffin.p);
       if (pl.done) this.finishPile();
     }
+  }
+
+  /** 浄化に失敗：照射機からやり直し */
+  async failPurify() {
+    if (this._failing) return;
+    this._failing = true;
+    this.hostile.clear();
+    this.pile.fail();
+    this.player.hp = this.player.maxHp; this.player.guard = this.player.guardMax;
+    this.player.invuln = 2.5;
+    UI.hp(this.player.hp, this.player.maxHp, this.player.guard, this.player.guardMax);
+    const bh = document.getElementById('hud-boss'); if (bh) bh.hidden = true;
+    this.audio.sfx('bad');
+    await UI.cutin('浄 化 失 敗', 1500);
+    UI.toast('思念体に押し返された。照射機のゲージを満たし直せ', 4000);
+    this._failing = false;
+  }
+
+  /** 仕掛けが解け、中ボスが目覚める */
+  async wakeElite() {
+    this._eliteWoke = true;
+    const G = this.world.eliteG;
+    const B = this.world.biome;
+    const ids = (B && B.elites) || ['deathknight'];
+    const id = ids[(this.floor - 1) % ids.length];
+    this.world.releaseGimmick();
+    this.audio.sfx('phase');
+    this.particles.emit(G.spot, 80, { color: [1, 0.3, 0.4], size: 4.6, up: 4, life: 1.8 });
+    this.eliteRef = this.enemies.spawnElite(G.spot.clone(), this.floor, id);
+    UI.cutin('封 印 が 解 け た ― ' + ELITES[id].name, 1500);
+    UI.objective(ELITES[id].name + 'を討ち、大扉の鍵を奪え');
+    this.voice.say(null, 'hero', { segments: [{ t: '来るぞ、', p: 1.0, r: 1.05, gap: 120 }, { t: '日和、下がってろ！', p: 1.08, r: 1.12 }] });
+  }
+
+  /** 主が眷属を呼ぶ */
+  summonAround(p, n) {
+    if (this.enemies.alive > 14) return;
+    const B = this.world.biome;
+    const roster = (B && B.roster) || [EnemyKind.WALKER];
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const q = new THREE.Vector3(p.x + Math.cos(a) * 3.5, 0, p.z + Math.sin(a) * 3.5);
+      this.world.resolve(q, 0.6);
+      this.enemies.spawn(roster[Math.floor(Math.random() * roster.length)], q);
+      this.particles.emit(q, 14, { color: [0.6, 0.2, 0.5], size: 3, up: 2 });
+    }
+  }
+
+  /** 追尾弾の行き先 */
+  seekTarget(b) {
+    if (this.phase === Phase.BOSS && this.boss.alive) return new THREE.Vector3(this.boss.p.x, this.boss.hitY, this.boss.p.z);
+    if (this.phase === Phase.PILE && this.pile.darkIdx >= 0) {
+      const e = this.pile.emitters[this.pile.darkIdx];
+      return new THREE.Vector3(this.pile.socket.x + e.x, 3, this.pile.socket.z + e.z);
+    }
+    return this.enemies.nearest(b.p, 16, 0.2, b.d);
+  }
+
+  /**
+   * 銃以外の武器の攻撃。
+   * 近接は扇形／直線の判定で当て、遠隔は弾・矢・投擲を放つ。
+   * charged: 溜めの大技（近接は回転斬り、遠隔は連撃）
+   */
+  attack(charged) {
+    const W = WEAPONS[this.wtype];
+    if (!W) return;
+    const P = this.player, h = this.party.hero;
+    const cost = this.solar.active ? 0 : (charged ? CHARGE_COST * 0.6 : W.cost);
+    if (cost > 0 && !this.sun.consume(cost)) {
+      this.audio.sfx('empty');
+      UI.toast('陽力が足りない。天窓を探せ');
+      this.shotCd = 0.4;
+      return;
+    }
+    const job = JOBS[h.job];
+    const fit = !!(job && job.arms && job.arms.indexOf(W.id) >= 0);   // 得意な武器
+    let mul = (this.solar.active ? SOLAR_DMG_MUL : 1) * (W.stat === 'MATK' ? h.matkMul : h.atkMul) * (fit ? 1.2 : 1);
+    const crit = Math.random() < h.critRate + (W.crit || 0);
+    if (crit) mul *= h.critMul;
+    const dmg = W.dmg * mul * (charged ? 2.6 : 1);
+    // 狙い（近くの敵へ少し寄せる）
+    let dir = P.aim.clone();
+    const help = this.enemies.assistAim(new THREE.Vector3(P.pos.x, 1.3, P.pos.z), P.aim, W.kind === 'melee' ? 0.5 : 0.2);
+    if (help) { dir.set(help.x, 0, help.z).normalize(); P.aim.copy(dir); }
+    const yaw = Math.atan2(dir.x, dir.z);
+    const step = this._combo++;
+    this.shotCd = W.cd * h.fireRateMul * (fit ? 0.9 : 1) * (charged ? 2.2 : 1);
+
+    if (W.kind === 'melee') {
+      let opts = {};
+      let shape = W.shape;
+      // 忍者刀：駆けながら振ると居合の一閃
+      if (W.dashLine && P.dashT > 0) { opts = { range: W.dashLine, width: 1.4 }; shape = 'line'; }
+      if (charged) { opts = { range: W.range * 1.35, arc: Math.PI, width: W.width }; shape = 'arc'; }
+      const WW = Object.assign({}, W, { shape });
+      const hits = this.enemies.strike(P.pos.x, P.pos.z, dir.x, dir.z, WW, dmg, this._onKill, this.audio, opts);
+      // 主にも届く
+      if (this.phase === Phase.BOSS && this.boss.alive) {
+        const range = (opts.range || W.range);
+        if (inShape(P.pos.x, P.pos.z, dir.x, dir.z, this.boss.p.x, this.boss.p.z, shape, range,
+          shape === 'line' ? (opts.width || W.width) : (opts.arc || W.arc), this.boss.hitR)) {
+          const ok = this.boss.takeHit(dmg * 3, charged);
+          this.particles.emit(new THREE.Vector3(this.boss.p.x, this.boss.hitY, this.boss.p.z), 8, { color: ok ? [1, 0.5, 0.4] : [0.6, 0.5, 0.8], size: 2.6, yOff: 0 });
+          UI.bossBar(this.boss.hp / this.boss.maxHp);
+          if (this.boss.hp <= 0) this.onBossDead();
+        }
+      }
+      // 仕掛け・罅・照射機にも届くよう、見えない当たりを先端へ走らせる
+      const reach = (opts.range || W.range);
+      this.bullets.fire(new THREE.Vector3(P.pos.x, 1.3, P.pos.z), dir, { probe: true, speed: 70, life: reach / 70, r: 0.6, dmg: 0 });
+      // 見た目
+      const col = crit ? 0xffe070 : (this.solar.active ? 0xffc040 : 0xfff0c0);
+      if (charged) {
+        this.slash.arc(P.pos, yaw, reach, Math.PI, col, false, 1.1);
+        this.slash.ring(P.pos, reach, col);
+        P.playAttack('swing', step);
+        P.body.rotation.y = 0;
+      } else if (shape === 'line') {
+        this.slash.line(P.pos, yaw, opts.range || W.range, opts.width || W.width, col);
+        P.playAttack(W.anim === 'iai' ? 'iai' : W.anim, step);
+      } else {
+        this.slash.arc(P.pos, yaw, W.range, W.arc, col, step % 2 === 1);
+        P.playAttack(W.anim, step);
+      }
+      // 鈍器は地を打ち、周りも揺らす
+      if (W.quake) {
+        const fwd = new THREE.Vector3(P.pos.x + dir.x * 1.6, 0, P.pos.z + dir.z * 1.6);
+        this.slash.ring(fwd, W.quake, 0xffb050);
+        this.enemies.burnNear && this.enemies.list.forEach(e => {
+          if (!e.dead && !e.elite && Math.hypot(e.p.x - fwd.x, e.p.z - fwd.z) < W.quake) e.stagger = Math.max(e.stagger, W.stun || 0.8);
+        });
+        this.particles.emit(fwd, 16, { color: [0.8, 0.7, 0.5], size: 3, up: 1.4, spread: 3, yOff: 0.1 });
+      }
+      this.audio.sfx(hits.length ? 'slashHit' : 'slash');
+      if (crit && hits.length) UI.toast('会心！', 700);
+      return;
+    }
+
+    // ── 遠隔（杖・弓・本・楽器・手裏剣） ──
+    const pr = W.proj;
+    const from = P.muzzleWorld();
+    const n = (pr.count || 1) * (charged ? 3 : 1);
+    for (let i = 0; i < n; i++) {
+      const spread = pr.spread || (charged ? 0.18 : 0);
+      const a = n === 1 ? 0 : (i - (n - 1) / 2) * (spread || 0.12);
+      const d = dir.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), a);
+      this.bullets.fire(from, d, { speed: pr.speed, life: pr.life, r: pr.r, dmg, pierce: pr.pierce, look: pr.look,
+        homing: pr.homing, boomerang: pr.boomerang, grow: pr.grow });
+    }
+    P.playAttack(W.anim, step);
+    this.audio.sfx(W.id === 'bow' ? 'arrow' : W.id === 'lute' ? 'strum' : W.id === 'shuriken' ? 'throw' : 'shot');
+    this.particles.emit(from, 4, { color: [1, 0.92, 0.6], size: 2, up: 0.3, yOff: 0 });
   }
 
   enterPile() {
@@ -1642,12 +2054,72 @@ class Game {
     this.coffin.p.set(sp2.x + 8, 0, sp2.z + 9);
     this.coffin.group.position.copy(this.coffin.p);
     this.pile.begin(this.sun.value);
+    this.pile.power = Math.round(90 * (1 + (this.floor - 1) * 0.2));
+    this.pile.setWraith(this.boss.makeWraith());
+    this.hostile.clear();
     const bh2 = document.getElementById('hud-boss');
-    if (bh2) { bh2.hidden = false; const nm = bh2.querySelector('.boss-name'); if (nm) nm.textContent = '吸血鬼の思念体'; }
-    UI.bossBar(1, '陽光の輝き 100％');
-    UI.objective('浄化中　――　輝きが翳ったら機器を撃て');
-    UI.toast('四方の陽光が棺を焼く。思念体の反発で光が黒ずんだら、神聖機器を撃って輝きを戻せ', 5200);
+    if (bh2) bh2.hidden = true;
+    UI.objective('棺を陣の中心へ運べ（長押しで鎖）');
+    UI.toast('聖域の陽輪盤。棺を据え、四基の照射機のゲージを陽光弾で満たせ', 5200);
     this.voice.say(null, 'hero', { segments: [{ t: '浄めるぞ、', p: 1.0, r: 1.05, gap: 150 }, { t: '日和！', p: 1.1, r: 1.1 }] });
+  }
+
+  /** 撃破時の処理はひとつにまとめ、どの倒し方でも同じように働かせる */
+  onKill(e) {
+    this.stats.kills++;
+    this.audio.sfx('ash');
+    // 階が深いほど、レアなら大きく
+    this.coin += Math.round((2 + this.floor) * (e.rare ? 12 : 1) * (e.elite ? 8 : 1));
+    if (e.golden) {
+      const exp = Math.round(9000 * (1 + (this.floor - 1) * 0.8));
+      this.grantExp(exp);
+      this.coin += 1500 + this.floor * 400;
+      const got = [];
+      ['w5', 'a5', 't5'].forEach(id => { if (this.party.hero.pick(id)) got.push(GEAR[id].name); });
+      // 伝説の武器と、日和の伝説の装束もひとつ
+      const leg = ['xsword2', 'xbow2'][Math.floor(Math.random() * 2)];
+      if (GEAR[leg] && this.party.hero.pick(leg)) got.push(GEAR[leg].name);
+      const ml = ['mw5', 'ma5', 'mt5'][Math.floor(Math.random() * 3)];
+      if (this.party.miko.pick(ml)) got.push(GEAR[ml].name + '（日和）');
+      Party.save(this.party);
+      this.particles.emit(new THREE.Vector3(e.p.x, 2, e.p.z), 120,
+        { color: [1, 0.88, 0.35], size: 5.4, up: 4, life: 2.2 });
+      this.audio.sfx('purify');
+      UI.shout('黄 金 の 守 り 手 を 討 っ た');
+      this.voice.say(null, 'hero', { style: 'shout',
+        segments: [{ t: 'すげぇ……', p: 1.0, r: 0.9, gap: 220 }, { t: 'こいつは伝説の代物だ！', p: 1.08, r: 1.05 }] });
+      UI.toast('経験 ' + exp.toLocaleString() + '　' + got.join('・') + ' を得た', 6000);
+      this.goldenRef = null;
+    } else if (e.elite) {
+      this.hasKey = true;
+      this.audio.sfx('refill');
+      this.particles.emit(new THREE.Vector3(e.p.x, 1.5, e.p.z), 44,
+        { color: [1, 0.85, 0.35], size: 4.2, up: 3 });
+      UI.toast((e.name || '中ボス') + 'を討った　――　大扉の鍵を手に入れた', 4200);
+      UI.shout('鍵 を 得 た');
+      const bh = document.getElementById('hud-boss'); if (bh && this.phase === Phase.DUNGEON) bh.hidden = true;
+      this.voice.say(null, 'hero', { segments: [{ t: '鍵だ！', p: 1.12, r: 1.2, gap: 140 }, { t: '主の間へ行くぞ', p: 1.02, r: 1.05 }] });
+      this.grantExp(Math.round(260 * (1 + (this.floor - 1) * 0.6)));
+    }
+    const base = specOf(e.kind).exp * (1 + (this.floor - 1) * 0.45);
+    this.grantExp(Math.round(base * (e.rare ? 9 : 1)));
+    if (e.rare) {
+      this.particles.emit(new THREE.Vector3(e.p.x, e.y + 1, e.p.z), 30,
+        { color: [0.6, 1, 0.82], size: 4, up: 3, life: 1.6 });
+      const gid = rollGear(this.floor + 3, this.party.hero.get('LUK'));
+      if (gid && this.party.hero.pick(gid)) {
+        UI.toast('稀なる者を祓った　' + GEAR[gid].name + ' を得た', 3800);
+        this.voice.say(null, 'hero', { segments: [{ t: 'すげぇ、', p: 1.15, r: 1.25, gap: 100 }, { t: 'いい物だ！', p: 1.1, r: 1.15 }] });
+      } else UI.toast('稀なる者を祓った');
+      Party.save(this.party);
+    } else if (Math.random() < 0.05 + this.floor * 0.012) {
+      const who = Math.random() < 0.3 ? 'miko' : 'hero';
+      const gid = rollGear(this.floor, this.party.hero.get('LUK'), who);
+      if (gid && this.party[who].pick(gid)) {
+        UI.toast(GEAR[gid].name + ' を拾った' + (who === 'miko' ? '（日和の装備）' : ''), 2600);
+        Party.save(this.party);
+      }
+    }
   }
 
   /** 経験値を配る（巫女は7割） */
@@ -1667,29 +2139,45 @@ class Game {
     }
   }
 
+  /** 銃を撃つ。構え（通常・連射・二丁・腰だめ）で撃ち方が変わる */
   fire(charged) {
     const cost = this.solar.active ? 0 : (charged ? CHARGE_COST : SHOT_COST);
     if (cost > 0 && !this.sun.consume(cost)) {
       this.audio.sfx('empty');
       UI.toast('陽力が足りない。天窓を探せ');
+      this.shotCd = 0.3;
       return;
     }
     const P = this.player;
-    const from = P.muzzleWorld();
-    let dir = P.aim;
+    const S = GUN_STANCES[this.stance] || GUN_STANCES.normal;
+    // 二丁は左右の銃口を交互に
+    const left = !charged && S.dual && (this._combo++ % 2 === 1);
+    const from = P.muzzleWorld(left);
+    let dir = P.aim.clone();
     const help = this.enemies && this.enemies.assistAim
       ? this.enemies.assistAim(from, P.aim, 0.20) : null;
     if (help) dir = new THREE.Vector3(help.x, help.y, help.z);
+    // 連射・腰だめは散る
+    const sp = charged ? 0 : S.spread * (S.ramp ? (0.4 + this._rapidK) : 1);
+    if (sp) dir.applyAxisAngle(new THREE.Vector3(0, 1, 0), (Math.random() - 0.5) * sp * 2);
     const h = this.party.hero;
+    const job = JOBS[h.job];
+    const fit = !!(job && job.arms && job.arms.indexOf('gun') >= 0);
     let mul = this.solar.active ? SOLAR_DMG_MUL : 1;
     mul *= charged ? h.matkMul : h.atkMul;
+    mul *= charged ? 1 : S.dmg;
+    if (fit) mul *= 1.1;
     if (Math.random() < h.critRate) { mul *= h.critMul; this._crit = true; } else this._crit = false;
     this.bullets.fire(from, dir, charged
       ? { speed: 46, life: 1.4, pierce: true, dmg: 4 * mul, r: 0.4 }
-      : { speed: 34, life: 1.2, dmg: 1 * mul, r: 0.2 });
+      : { speed: 34 * S.speed, life: 1.2, dmg: 1 * mul, r: 0.2 });
     P.muzzleFlash(charged);
+    P.playAttack('shoot', 0);
     this.audio.sfx(charged ? 'beam' : 'shot');
-    this.shotCd = (charged ? 0.5 : 0.14) * this.party.hero.fireRateMul;
+    // 連射は撃ち続けるほど間隔が縮む
+    if (S.ramp && !charged) this._rapidK = Math.min(1, this._rapidK + 0.08);
+    const rampK = S.ramp ? (1 - this._rapidK * 0.45) : 1;
+    this.shotCd = (charged ? 0.5 : 0.14 * S.cd * rampK) * h.fireRateMul;
     this.particles.emit(from, charged ? 10 : 3, { color: [1, 0.92, 0.6], size: charged ? 3 : 1.8, up: 0.3, yOff: 0 });
   }
 }

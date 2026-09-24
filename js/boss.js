@@ -1,6 +1,11 @@
-/* boss.js ── 吸血鬼（3フェーズ） */
+/* ══════════════════════════════════════════════════════════════
+   boss.js ── 階の主（三つの相）
+     姿は forms.js の28体から。主ごとに攻めの型が違う：
+     突進・弾・渦弾・範囲・召喚・分身・霧化・爪。
+     第三相は共通：天窓を撃ち割り、光の柱で縛る。
+   ══════════════════════════════════════════════════════════════ */
 import * as THREE from 'three';
-import { fleshMaterial, glowMaterial, metalMaterial } from './gfx.js';
+import { LORDS, buildLord, tintForm } from './forms.js';
 
 export class Boss {
   constructor(scene, particles) {
@@ -8,264 +13,225 @@ export class Boss {
     this.particles = particles;
     this.group = new THREE.Group();
     this.alive = false;
-    this.maxHp = 340; this.hp = 340;   // 手応えのある体力
+    this.maxHp = 340; this.hp = 340;
     this.phase = 1;
     this.p = new THREE.Vector3();
     this.r = 1.0;
     this.mist = 0;          // 霧化(無敵)
     this.stun = 0;          // 硬直
     this.atkCd = 1.6;
-    this.clones = [];       // P2の分身
-    this._build();
+    this.clones = [];       // 分身
+    this.hostile = null;    // 敵の弾（main から渡す）
+    this.summon = null;     // 眷属を呼ぶ関数（main から渡す）
+    this.lord = LORDS[0];
+    this.aura = new THREE.PointLight(0xff2a2a, 2.4, 18, 2);
+    this.aura.position.y = 3;
+    this.group.add(this.aura);
+    this._act = null;
     scene.add(this.group);
     this.group.visible = false;
-  }
-  _build() {
-    this.body = new THREE.Group();
-    const cloth = (c, r) => new THREE.MeshStandardMaterial({ color: c, roughness: r == null ? 0.85 : r, metalness: 0.05 });
-    const emb = (c, i) => new THREE.MeshStandardMaterial({
-      color: c, emissive: new THREE.Color(c), emissiveIntensity: i, roughness: 0.4, metalness: 0.2
-    });
-
-    // ── 長身痩躯の胴（黒の礼装） ──
-    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.36, 1.0, 6, 12), cloth(0x120e18));
-    torso.position.y = 1.75; torso.castShadow = true;
-    this.body.add(torso);
-    // 深紅の胸元
-    const vest = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.8, 0.12), cloth(0x5a0d14, 0.6));
-    vest.position.set(0, 1.85, 0.3);
-    this.body.add(vest);
-
-    // ── 立ち襟のマント（背に大きく開く） ──
-    this.cape = new THREE.Group();
-    const capeMat = new THREE.MeshStandardMaterial({
-      color: 0x0d0a12, roughness: 0.9, metalness: 0.02, side: THREE.DoubleSide
-    });
-    const cape = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 1.9, 2.6, 16, 1, true, 0.6, Math.PI * 1.8), capeMat);
-    cape.position.y = 1.55;
-    cape.castShadow = true;
-    this.cape.add(cape);
-    // 裏地の深紅
-    const lining = new THREE.Mesh(new THREE.CylinderGeometry(0.46, 1.75, 2.5, 16, 1, true, 0.65, Math.PI * 1.7),
-      new THREE.MeshStandardMaterial({ color: 0x6b0f18, roughness: 0.75, side: THREE.BackSide }));
-    lining.position.y = 1.55;
-    this.cape.add(lining);
-    // 高い立ち襟
-    [-1, 1].forEach(sx => {
-      const col = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.95, 0.5), capeMat);
-      col.position.set(0.34 * sx, 2.62, -0.16);
-      col.rotation.z = sx * 0.28;
-      col.rotation.x = -0.2;
-      this.cape.add(col);
-      const colIn = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.9, 0.46),
-        new THREE.MeshStandardMaterial({ color: 0x6b0f18, roughness: 0.7 }));
-      colIn.position.set(0.34 * sx, 2.62, -0.1);
-      colIn.rotation.z = sx * 0.28; colIn.rotation.x = -0.2;
-      this.cape.add(colIn);
-    });
-    this.body.add(this.cape);
-
-    // ── 頭：面長・落ちくぼんだ眼窩・後ろへ流した髪 ──
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.3, 18, 16), cloth(0xd8cec4, 0.55));
-    head.scale.set(0.88, 1.18, 0.95);
-    head.position.y = 2.62; head.castShadow = true;
-    this.body.add(head);
-    // 尖った顎
-    const jaw = new THREE.Mesh(new THREE.ConeGeometry(0.17, 0.3, 8), cloth(0xd8cec4, 0.55));
-    jaw.position.set(0, 2.34, 0.06);
-    jaw.rotation.x = Math.PI;
-    this.body.add(jaw);
-    // 後ろへ流した黒髪
-    const hair = new THREE.Mesh(new THREE.SphereGeometry(0.32, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.62), cloth(0x0a0810));
-    hair.scale.set(0.95, 1.15, 1.25);
-    hair.position.set(0, 2.68, -0.06);
-    this.body.add(hair);
-    const tail = new THREE.Mesh(new THREE.CapsuleGeometry(0.13, 0.45, 5, 9), cloth(0x0a0810));
-    tail.position.set(0, 2.42, -0.32);
-    tail.rotation.x = 0.4;
-    this.body.add(tail);
-
-    // ── 赤く燃える眼 ──
-    this.eyes = new THREE.Group();
-    [-1, 1].forEach(sx => {
-      const e = new THREE.Mesh(new THREE.SphereGeometry(0.055, 10, 8), emb(0xff1a1a, 4.0));
-      e.position.set(0.12 * sx, 2.66, 0.26);
-      this.eyes.add(e);
-    });
-    this.body.add(this.eyes);
-    // 眼窩の影
-    [-1, 1].forEach(sx => {
-      const so = new THREE.Mesh(new THREE.SphereGeometry(0.1, 10, 8), cloth(0x2a1a1a, 1));
-      so.scale.set(1, 0.7, 0.5);
-      so.position.set(0.12 * sx, 2.66, 0.22);
-      this.body.add(so);
-    });
-
-    // ── 長い牙 ──
-    [-1, 1].forEach(sx => {
-      const f = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.16, 6), cloth(0xfff4e8, 0.3));
-      f.position.set(0.07 * sx, 2.42, 0.24);
-      f.rotation.x = Math.PI;
-      this.body.add(f);
-    });
-
-    // ── 骨ばった長い腕と鉤爪 ──
-    this.arms = [];
-    [-1, 1].forEach(sx => {
-      const arm = new THREE.Group();
-      const upper = new THREE.Mesh(new THREE.CapsuleGeometry(0.075, 0.6, 4, 8), cloth(0x120e18));
-      upper.position.y = -0.3;
-      arm.add(upper);
-      const fore = new THREE.Mesh(new THREE.CapsuleGeometry(0.065, 0.55, 4, 8), cloth(0xd8cec4, 0.6));
-      fore.position.y = -0.92;
-      arm.add(fore);
-      // 五本の鉤爪
-      for (let i = 0; i < 5; i++) {
-        const c = new THREE.Mesh(new THREE.ConeGeometry(0.022, 0.26, 5), cloth(0x1a1218, 0.4));
-        c.position.set((i - 2) * 0.055, -1.28, 0.02);
-        c.rotation.x = Math.PI + 0.3;
-        c.rotation.z = (i - 2) * 0.12;
-        arm.add(c);
-      }
-      arm.position.set(0.44 * sx, 2.3, 0);
-      arm.rotation.z = sx * 0.3;
-      this.body.add(arm);
-      this.arms.push({ g: arm, sx });
-    });
-
-    // ── 足元にわだかまる霧 ──
-    this.mistMesh = new THREE.Mesh(
-      new THREE.SphereGeometry(1.5, 16, 12),
-      new THREE.MeshBasicMaterial({ color: 0x2a1a3a, transparent: true, opacity: 0.35,
-        depthWrite: false, blending: THREE.NormalBlending })
-    );
-    this.mistMesh.scale.set(1.3, 0.28, 1.3);
-    this.mistMesh.position.y = 0.22;
-    this.body.add(this.mistMesh);
-
-    this.aura = new THREE.PointLight(0xff2a2a, 2.4, 16, 2);
-    this.aura.position.y = 2.5;
-    this.body.add(this.aura);
-    this.group.add(this.body);
-    this.cloakMat = capeMat;
+    this.setFloor(1);
   }
 
-  /** 階ごとの主。深いほど強く、姿の色も変わる */
+  /** 階ごとの主。深いほど強く、姿そのものが変わる */
   setFloor(floor) {
     this.floor = Math.max(1, floor || 1);
-    const LORD = [
-      { name: '古き吸血鬼',     cape: 0x0d0a12, line: 0x6b0f18, eye: 0xff1a1a },
-      { name: '食屍鬼の長',     cape: 0x2a2418, line: 0x5a4a20, eye: 0xc8ff4a },
-      { name: '霧を統べる者',   cape: 0x0a1018, line: 0x14506b, eye: 0x4ad0ff },
-      { name: '首なし騎士',     cape: 0x14141a, line: 0x3a3a48, eye: 0x8affd0 },
-      { name: '死霊術師',       cape: 0x1a0f24, line: 0x4a1a6b, eye: 0xb07aff },
-      { name: '酒呑童子',       cape: 0x2a0e0e, line: 0x8a2010, eye: 0xffb020 },
-      { name: '九尾の妖狐',     cape: 0x3a1a08, line: 0xc06a10, eye: 0xffd24a },
-      { name: '八岐大蛇',       cape: 0x0e2418, line: 0x1a6b3a, eye: 0x6affa0 },
-      { name: '大天狗',         cape: 0x241010, line: 0x8a2a10, eye: 0xff6a2a },
-      { name: '風の魔王',       cape: 0x241c0a, line: 0x8a7a10, eye: 0xffe24a },
-      { name: '蛇の魔神',       cape: 0x0a2420, line: 0x108a6b, eye: 0x4affd0 },
-      { name: '石化の魔女',     cape: 0x1a2418, line: 0x4a6b20, eye: 0xa0ff6a },
-      { name: '嵐の巨人',       cape: 0x101c2a, line: 0x2050a0, eye: 0x6ab0ff },
-      { name: '骸の王',         cape: 0x1c1a14, line: 0x6b6050, eye: 0xfff0c0 },
-      { name: '泣き叫ぶ妖精',   cape: 0x1a1420, line: 0x5a3a7a, eye: 0xff8ad0 },
-      { name: '這い寄る混沌',   cape: 0x0a0a10, line: 0x2a1a4a, eye: 0x8a4aff },
-      { name: '海淵の旧支配者', cape: 0x0a1a1a, line: 0x106b6b, eye: 0x4affff },
-      { name: '不死者の王',     cape: 0x140a0a, line: 0x8a1010, eye: 0xff4a2a },
-      { name: '堕ちた熾天使',   cape: 0x201c10, line: 0xa08a20, eye: 0xfff0a0 },
-      { name: '夜の始祖',       cape: 0x1a0a0a, line: 0x8a1010, eye: 0xff6a1a }
-    ];
-
-    const L = LORD[(this.floor - 1) % LORD.length];
-    const cycle = Math.floor((this.floor - 1) / LORD.length);
-    this.lordName = L.name + (cycle > 0 ? '・' + ['','再臨','真','極'][Math.min(3, cycle)] : '');
-    // 姿の大きさも階で変わる
-    this.group.scale.setScalar(1 + Math.min(0.6, (this.floor - 1) * 0.012));
-    // 溜め撃ち20〜35発ほどで決着がつく硬さにする
+    const L = LORDS[(this.floor - 1) % LORDS.length];
+    const cycle = Math.floor((this.floor - 1) / LORDS.length);
+    this.lordName = L.name + (cycle > 0 ? '・' + ['', '再臨', '真', '極'][Math.min(3, cycle)] : '');
+    if (this.lord !== L || !this.form) {
+      if (this.form) this.group.remove(this.form.root);
+      this.lord = L;
+      this.form = buildLord(L.id);
+      this.group.add(this.form.root);
+    }
+    this.p2text = L.p2t;
+    this.scaleK = 1.5 + Math.min(0.6, (this.floor - 1) * 0.012);   // 主は見上げる大きさ
+    this.group.scale.setScalar(this.scaleK);
+    this.hitR = (L.hitR || 1.6) * this.scaleK;
+    this.hitY = (L.hitY || 1.6) * this.scaleK;
+    this.r = Math.min(2.2, 0.8 + this.hitR * 0.35);
     this.maxHp = Math.round(170 * (1 + (this.floor - 1) * 0.45));
     this.hp = this.maxHp;
     this.power = Math.round(120 * (1 + (this.floor - 1) * 0.3));
-    try {
-      if (this.cloakMat) this.cloakMat.color.setHex(L.cape);
-      this.body.traverse(o => {
-        if (o.material && o.material.emissive && o.material.emissiveIntensity > 3) o.material.emissive.setHex(L.eye);
-      });
-      if (this.aura) this.aura.color.setHex(L.eye);
-    } catch (e) {}
+    this.aura.color.setHex(L.aura);
     return this.lordName;
   }
 
   spawn(pos) {
     this.alive = true; this.hp = this.maxHp; this.phase = 1;
-    this.p.copy(pos); this.mist = 0; this.stun = 0; this.atkCd = 2;
-    this.dashCd = 3.5; this.batCd = 5;
-    this.clones = [];
+    this.p.copy(pos); this.mist = 0; this.stun = 0; this.atkCd = 2.2;
+    this._act = null; this.rage = 0; this._moveN = 0; this._summonCd = 6;
+    this.cleanup();
     this.group.visible = true;
     this.group.position.copy(this.p);
+    this.group.rotation.set(0, Math.PI, 0);
   }
-  despawn() { this.alive = false; this.group.visible = false; this.clones.length = 0; }
+  despawn() { this.alive = false; this.group.visible = false; this.cleanup(); }
+
+  /** 思念体（浄化の場に現れる巨大な影）を作る */
+  makeWraith() {
+    return tintForm(this.form.root, 0.55, 0.6, this.lord.aura);
+  }
 
   /** 弾を受ける。true=有効打 */
   takeHit(dmg, isPierce) {
     if (!this.alive) return false;
     if (this.mist > 0) {
-      // 霧は通常弾で散らせる
-      this.mist = Math.max(0, this.mist - 0.5);
+      this.mist = Math.max(0, this.mist - 0.5);   // 霧は弾で散らせる
       return false;
     }
-    const mul = (this.phase === 3 && this.stun > 0 && isPierce) ? 4 : 1;
+    const mul = (this.phase === 3 && this.stun > 0 && isPierce) ? 4 : (this.stun > 0 ? 1.6 : 1);
     this.hp = Math.max(0, this.hp - dmg * mul);
     return true;
+  }
+
+  _chooseMove(d) {
+    const L = this.lord;
+    let moves = L.moves.slice();
+    if (this.phase >= 2 && L.p2 !== 'clone' && L.p2 !== 'rage') moves.push(L.p2, L.p2);
+    if (d > 3.8) moves = moves.filter(m => m !== 'claw');
+    if (!moves.length) moves = ['volley'];
+    this._moveN++;
+    return moves[(this._moveN * 7 + Math.floor(Math.random() * moves.length)) % moves.length];
   }
 
   update(dt, target, world, audio, onPhase) {
     if (!this.alive) return;
     const t = performance.now() / 1000;
+    const L = this.lord;
 
-    // フェーズ移行
+    // 相の移り変わり
     const ratio = this.hp / this.maxHp;
-    if (this.phase === 1 && ratio <= 0.66) { this.phase = 2; this._enterP2(target); if (onPhase) onPhase(2); }
+    if (this.phase === 1 && ratio <= 0.66) { this.phase = 2; this._enterP2(); if (onPhase) onPhase(2); }
     else if (this.phase === 2 && ratio <= 0.33) { this.phase = 3; this._enterP3(); if (onPhase) onPhase(3); }
+
+    const st = { atk: this._act ? this._act.k || 0 : 0, rage: this.rage };
+    this.form.anims.forEach(f => f(t, st));
 
     if (this.stun > 0) {
       this.stun -= dt;
-      this.body.rotation.z = Math.sin(t * 24) * 0.12;
+      this.form.root.rotation.z = Math.sin(t * 24) * 0.1;
       this.group.position.copy(this.p);
       return;
     }
-    this.body.rotation.z *= 0.85;
+    this.form.root.rotation.z *= 0.85;
 
     const dx = target.x - this.p.x, dz = target.z - this.p.z;
     const d = Math.hypot(dx, dz) || 1;
+    const H = this.hostile;
+    const fast = this.rage ? 0.6 : (this.phase === 3 ? 0.8 : 1);
+    let out = null;
 
-    if (this.phase === 1) {
-      // 霧化して回避しつつ間合いを詰める
+    // 霧化（吸血鬼の系譜）
+    if (L.moves.indexOf('mist') >= 0 && this.phase === 1) {
       this.mist = Math.max(0, this.mist - dt);
-      if (this.mist <= 0 && Math.random() < dt * 0.9) {
+      if (this.mist <= 0 && Math.random() < dt * 0.6 && !this._act) {
         this.mist = 1.6;
         if (this.particles) this.particles.emit(this.p, 16, { color: [0.5, 0.4, 0.6], size: 3.4, up: 1.2 });
       }
-      const sp = this.mist > 0 ? 9.5 : 4.2;
-      this.p.x += (dx / d) * sp * dt;
-      this.p.z += (dz / d) * sp * dt;
-    } else if (this.phase === 2) {
-      const sp = 5.0;
-      this.p.x += (dx / d) * sp * dt;
-      this.p.z += (dz / d) * sp * dt;
-      // 分身を回転させる
-      this.clones.forEach((c, i) => {
-        const a = t * 1.5 + (i * Math.PI * 2 / this.clones.length);
-        c.p.set(this.p.x + Math.cos(a) * 5.5, 0, this.p.z + Math.sin(a) * 5.5);
-        c.mesh.position.copy(c.p);
-      });
+    }
+
+    const a = this._act;
+    if (!a) {
+      // 追う
+      const sp = (this.mist > 0 ? 9.5 : 3.8) * (this.rage ? 1.4 : 1);
+      if (d > 2.4) { this.p.x += (dx / d) * sp * dt; this.p.z += (dz / d) * sp * dt; }
+      this.atkCd -= dt;
+      if (this.atkCd <= 0) {
+        const m = this._chooseMove(d);
+        this._act = { m, t: 0, k: 0, n: 0, dir: new THREE.Vector3(dx / d, 0, dz / d) };
+      }
+      // 召喚の相は、ときどき眷属を呼ぶ
+      if (this.phase >= 2 && L.p2 === 'summon') {
+        this._summonCd -= dt;
+        if (this._summonCd <= 0 && this.summon) { this._summonCd = 9; this.summon(this.p, 2); }
+      }
     } else {
-      const sp = 4.0;
-      this.p.x += (dx / d) * sp * dt;
-      this.p.z += (dz / d) * sp * dt;
-      // 窓の下に入ると硬直
+      a.t += dt;
+      const from = () => new THREE.Vector3(this.p.x, 1.6 * this.scaleK, this.p.z);
+      const aimDir = new THREE.Vector3(dx, 0, dz);
+      const pw = this.power;
+      switch (a.m) {
+        case 'claw':
+          a.k = Math.min(1, a.t / 0.35);
+          if (a.t > 0.35 && !a.done) { a.done = true; if (d < 3.8 * this.scaleK) out = 'claw'; }
+          if (a.t > 0.6) this._end(1.0 * fast);
+          break;
+        case 'rush':
+          if (a.t < 0.65) {                         // 予兆
+            a.k = a.t / 0.65; a.dir.set(dx / d, 0, dz / d);
+            this.form.root.rotation.x = -0.25 * a.k;
+          } else {
+            this.form.root.rotation.x = 0.3;
+            this.p.addScaledVector(a.dir, 17 * dt);
+            if (!a.done && d < 2.4 * this.scaleK) { a.done = true; out = 'claw'; }
+            if (this.particles && Math.random() < 0.6) this.particles.emit(this.p, 3, { color: [0.6, 0.2, 0.3], size: 3.2, up: 0.8 });
+          }
+          if (a.t > 1.15) { this.form.root.rotation.x = 0; this._end(2.0 * fast); }
+          break;
+        case 'volley': {
+          a.k = Math.max(0, 1 - a.t * 2);
+          const n = this.phase >= 2 ? 3 : 2;
+          if (H && a.n < n && a.t > 0.3 + a.n * 0.35) {
+            a.n++; a.k = 1;
+            H.fan(from(), aimDir, 5 + this.phase, 0.2, { speed: 10 + this.floor * 0.08, power: pw * 0.7, size: 1.1 });
+            if (audio) audio.sfx('hit');
+          }
+          if (a.t > 0.4 + n * 0.35) this._end(1.8 * fast);
+          break;
+        }
+        case 'spiral':
+          a.k = 0.6;
+          if (H && a.t > a.n * 0.24 && a.n < 7) {
+            a.n++;
+            H.ring(from(), 8, a.n * 0.26, { speed: 7, power: pw * 0.6, size: 0.9, curve: 0.25 });
+          }
+          if (a.t > 2.0) this._end(2.2 * fast);
+          break;
+        case 'zones':
+          a.k = Math.min(1, a.t * 2);
+          if (H && !a.done) {
+            a.done = true;
+            H.zone(target.x, target.z, 3.0, 1.2, pw);
+            const n = 3 + this.phase;
+            for (let i = 0; i < n; i++) {
+              const an = i / n * Math.PI * 2 + Math.random();
+              const rr = 3.5 + Math.random() * 4;
+              H.zone(target.x + Math.cos(an) * rr, target.z + Math.sin(an) * rr, 2.6, 1.3 + i * 0.12, pw);
+            }
+          }
+          if (a.t > 1.4) this._end(2.4 * fast);
+          break;
+        case 'summon':
+          a.k = Math.min(1, a.t * 2);
+          if (!a.done && this.summon) { a.done = true; this.summon(this.p, 2 + (this.phase >= 2 ? 1 : 0)); }
+          if (a.t > 1.0) this._end(3.0 * fast);
+          break;
+        case 'clone':
+          if (!a.done) { a.done = true; this._makeClones(3); }
+          if (a.t > 0.6) this._end(4.0);
+          break;
+        default:
+          this._end(1.2);
+      }
+    }
+    // 分身は本体の周りを巡る
+    if (this.clones.length) {
+      this.clones.forEach((c, i) => {
+        const an = t * 1.5 + (i * Math.PI * 2 / this.clones.length);
+        c.p.set(this.p.x + Math.cos(an) * 5.5, 0, this.p.z + Math.sin(an) * 5.5);
+        c.mesh.position.copy(c.p);
+        c.mesh.rotation.y = Math.atan2(target.x - c.p.x, target.z - c.p.z);
+      });
+      if (this._cloneT != null) { this._cloneT -= dt; if (this._cloneT <= 0) this.cleanup(); }
+    }
+
+    // 第三相：天窓の光の下で硬直する
+    if (this.phase === 3) {
       const s = world.inShaft(this.p.x, this.p.z);
       if (s && s.isBoss) {
-        this.stun = 2.6;
+        this.stun = 2.6; this._act = null;
         if (audio) audio.sfx('phase');
         if (this.particles) this.particles.emit(this.p, 24, { color: [1, 0.95, 0.7], size: 3.6, up: 3 });
       }
@@ -273,50 +239,54 @@ export class Boss {
 
     world.resolve(this.p, this.r);
     this.group.position.copy(this.p);
-    this.group.rotation.y = Math.atan2(dx, dz);
+    const want = Math.atan2(dx, dz);
+    let diff = ((want - this.group.rotation.y + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+    this.group.rotation.y += diff * Math.min(1, dt * 5);
 
-    // 見た目：霧化は薄く
-    this.cloakMat.opacity = this.mist > 0 ? 0.35 : 1;
-    this.cloakMat.transparent = this.mist > 0;
-    this.aura.intensity = 2.0 + Math.sin(t * 3) * 0.4 + (this.phase - 1) * 0.8;
-
-    // 攻撃
-    this.atkCd -= dt;
-    if (this.atkCd <= 0 && d < 3.4) {
-      this.atkCd = 1.0;
-      return 'claw';
+    // 霧化は薄く
+    const op = this.mist > 0 ? 0.35 : 1;
+    if (this._op !== op) {
+      this._op = op;
+      this.form.mats.forEach(m => {
+        if (m.userData.baseOp == null) m.userData.baseOp = m.opacity, m.userData.baseTr = m.transparent;
+        m.opacity = m.userData.baseOp * op;
+        m.transparent = op < 1 || m.userData.baseTr;
+      });
     }
-    // 突進：間合いが開くと一気に詰める
-    this.dashCd -= dt;
-    if (this.dashCd <= 0 && d > 6 && this.mist <= 0) {
-      this.dashCd = 4.5;
-      this.p.x += (dx / d) * 5.5;
-      this.p.z += (dz / d) * 5.5;
-      world.resolve(this.p, this.r);
-      if (this.particles) this.particles.emit(this.p, 14, { color: [0.5, 0.15, 0.25], size: 3.2, up: 1.6 });
-      return 'dash';
-    }
-    return null;
+    this.aura.intensity = 2.0 + Math.sin(t * 3) * 0.4 + (this.phase - 1) * 0.8 + this.rage * 1.2;
+    return out;
   }
 
-  _enterP2(target) {
-    this.clones = [];
-    for (let i = 0; i < 5; i++) {
-      const mat = fleshMaterial(0x2a2230);
+  _end(cd) { this._act = null; this.atkCd = cd; }
+
+  _makeClones(n, permanent) {
+    this.cleanup();
+    for (let i = 0; i < n; i++) {
       // 本体は最も影が濃い＝暗い個体。分身は少し明るくする
-      mat.color.multiplyScalar(1.32 + i * 0.09);
-      const m = new THREE.Mesh(new THREE.ConeGeometry(1.0, 2.5, 10), mat);
-      m.position.copy(this.p); m.castShadow = true;
+      const m = tintForm(this.form.root, 1.45 + i * 0.12, null, null);
+      m.scale.setScalar(this.scaleK);
+      m.position.copy(this.p);
       this.scene.add(m);
       this.clones.push({ mesh: m, p: this.p.clone() });
     }
+    this._cloneT = permanent ? null : 6;
+  }
+
+  _enterP2() {
+    const p2 = this.lord.p2;
+    if (p2 === 'clone') this._makeClones(5, true);
+    if (p2 === 'rage') this.rage = 1;
+    if (p2 === 'summon' && this.summon) this.summon(this.p, 3);
+    this.mist = 0;
+    this.atkCd = 1.2; this._act = null;
   }
   _enterP3() {
-    this.clones.forEach(c => this.scene.remove(c.mesh));
-    this.clones = [];
+    this.cleanup();
+    this.mist = 0;
   }
   cleanup() {
     this.clones.forEach(c => this.scene.remove(c.mesh));
     this.clones = [];
+    this._cloneT = null;
   }
 }

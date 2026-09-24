@@ -1,8 +1,11 @@
 /* ══════════════════════════════════════════════════════════════
    purifier.js ── 神聖機器「陽輪盤（ようりんばん）」
      大魔法陣の四隅に陽光照射機。はじめ銃口は天を向いている。
-     陽光弾を当てるとその機が棺へ向き直る。四基すべてが向いたら
-     陣の下端の集光台に立ち、陽を集める所作で浄化が始まる。
+     陽光弾を当てるとゲージが溜まり、満ちた機から棺へ倒れ込む。
+     四基すべてが向いたら陣の下端の集光台で陽を集め、浄化が始まる。
+     浄化中は主の思念体が巨大化して現れ、一基ずつ黒ずませる。
+     黒ずんだ機に陽光弾を当ててゲージを戻すと、主は別の機を狙う。
+     主の反発の弾で倒れると、浄化はやり直しになる。
    ══════════════════════════════════════════════════════════════ */
 import * as THREE from 'three';
 import { metalMaterial, glowMaterial, stoneMaterial } from './gfx.js';
@@ -131,9 +134,20 @@ export class Purifier {
       lt.position.set(px, 4.3, pz);
       this.group.add(lt);
 
+      // 陽のゲージ（柱の脇に立つ目盛り）
+      const gb = new THREE.Mesh(new THREE.BoxGeometry(0.22, 2.6, 0.22),
+        new THREE.MeshStandardMaterial({ color: 0x1a1a22, roughness: 0.6 }));
+      const fillGeo = new THREE.BoxGeometry(0.16, 1, 0.26); fillGeo.translate(0, 0.5, 0);
+      const fill = new THREE.Mesh(fillGeo, glowMaterial(0xffd070, 2.2, true));
+      const gauge = new THREE.Group();
+      gb.position.y = 1.3; gauge.add(gb);
+      fill.scale.y = 0.001; gauge.add(fill);
+      gauge.position.set(-Math.sin(a) * 1.25, 1.2, Math.cos(a) * 1.25);
+      g.add(gauge);
       g.position.set(px, 0, pz);
       this.group.add(g);
-      this.emitters.push({ g, head, lens, beam, light: lt, x: px, z: pz, y: 4.3, aimed: false, turn: 0 });
+      this.emitters.push({ g, head, lens, beam, light: lt, x: px, z: pz, y: 4.3, aimed: false, turn: 0,
+        gauge: 0, shown: 0, fill, dark: false });
     }
 
     /* ── 集光台（陣の下端） ── */
@@ -175,6 +189,16 @@ export class Purifier {
     this.group.add(this.wraith);
   }
 
+  /** 主の姿から作った思念体を据える（巨大化させる） */
+  setWraith(form) {
+    if (this.bigWraith) this.group.remove(this.bigWraith);
+    this.bigWraith = form || null;
+    if (form) {
+      form.visible = false;
+      this.group.add(form);
+    }
+  }
+
   place(pos) {
     this.group.position.copy(pos);
     this.socket.copy(pos);
@@ -188,16 +212,28 @@ export class Purifier {
     this.hp = PURIFY_HP; this.purity = 1; this.rage = 0;
     this.shots = 0; this.dark = 0; this.charge = 0;
     this.sunAtStart = sunPower;
-    this.rate = 3.4 + (sunPower / 100) * 4.2;
+    // 黒ずみの無い時の進み（陽力が高いほど速い）。一気には進まない
+    this.rate = 2.0 + (sunPower / 100) * 1.4;
+    this.darkIdx = -1; this.darkWait = 3.0; this.lastDark = -1;
+    this.shootT = 2.5; this.volley = 0;
     this.wraith.visible = false;
+    if (this.bigWraith) this.bigWraith.visible = false;
     this.emitters.forEach(e => {
-      e.aimed = false; e.turn = 0;
+      e.aimed = false; e.turn = 0; e.gauge = 0; e.shown = 0; e.dark = false;
       e.beam.visible = false; e.light.intensity = 0;
       e.lens.material.emissiveIntensity = 0.5;
     });
     this.clamps.forEach(c => { c.m.rotation.x = -0.5; });
   }
-  begin(sunPower) { this.reset(sunPower); }
+  begin(sunPower) { this.reset(sunPower); this.hitsTaken = 0; this.fails = 0; }
+
+  /** 浄化に失敗した。棺は据えたまま、照射機からやり直す */
+  fail() {
+    this.fails = (this.fails || 0) + 1;
+    const sp = this.sunAtStart;
+    this.reset(sp);
+    this.step = Step.LOCKED;
+  }
 
   onSocket(p) {
     if (!p) return false;
@@ -209,17 +245,35 @@ export class Purifier {
     this.step = Step.LOCKED;
     return true;
   }
-  hitEmitter(bx, bz) {
-    if (this.step !== Step.LOCKED) return null;
+  /**
+   * 照射機に陽光弾が当たった。
+   * power: 溜まる量（通常弾 0.12／溜め弾 0.34 ほど）
+   */
+  hitEmitter(bx, bz, power) {
+    if (this.step !== Step.LOCKED && this.step !== Step.PURIFY) return null;
+    power = power || 0.12;
     for (let i = 0; i < this.emitters.length; i++) {
       const e = this.emitters[i];
       const ex = this.socket.x + e.x, ez = this.socket.z + e.z;
-      if (!e.aimed && Math.hypot(bx - ex, bz - ez) < 2.2) {
-        e.aimed = true; this.shots++;
+      if (Math.hypot(bx - ex, bz - ez) > 2.2) continue;
+      this.shots++;
+      if (this.step === Step.LOCKED) {
+        if (e.aimed) return { index: i, full: true, left: this.emitters.filter(x => !x.aimed).length };
+        e.gauge = Math.min(1, e.gauge + power);
+        if (e.gauge >= 1) e.aimed = true;
         const left = this.emitters.filter(x => !x.aimed).length;
         if (left === 0) this.step = Step.READY;
-        return { index: i, left };
+        return { index: i, gauge: e.gauge, aimed: e.aimed, left };
       }
+      // 浄化中：黒ずんだ機だけが応える
+      if (!e.dark) return { index: i, clean: true };
+      e.gauge = Math.min(1, e.gauge + power * 0.8);
+      if (e.gauge >= 1) {
+        e.dark = false; this.darkIdx = -1;
+        this.darkWait = 2.2 + Math.random() * 2.2;
+        return { index: i, restored: true };
+      }
+      return { index: i, gauge: e.gauge };
     }
     return null;
   }
@@ -231,28 +285,17 @@ export class Purifier {
     if (this.step !== Step.READY) return this.charge;
     this.charge = Math.min(1, this.charge + dt * (0.45 + (sunPower / 100) * 0.35));
     if (this.charge >= 1) {
-      this.step = Step.PURIFY; this.active = true; this.wraith.visible = true;
+      this.step = Step.PURIFY; this.active = true;
+      if (this.bigWraith) this.bigWraith.visible = true; else this.wraith.visible = true;
+      this.darkWait = 3.5;
     }
     return this.charge;
   }
-  hitDevice(bx, bz) {
-    if (this.step !== Step.PURIFY) return false;
-    const dx = bx - this.socket.x, dz = bz - this.socket.z;
-    let ok = (dx * dx + dz * dz) < 3.6 * 3.6;
-    if (!ok) for (const e of this.emitters) {
-      if (Math.hypot(bx - (this.socket.x + e.x), bz - (this.socket.z + e.z)) < 2.2) { ok = true; break; }
-    }
-    if (!ok) return false;
-    this.shots++;
-    this.purity = Math.min(1, this.purity + 0.34);
-    this.rage = Math.max(0, this.rage - 0.28);
-    return true;
-  }
-
   get corePos() { return this.socket; }
   get aimedCount() { return this.emitters.filter(e => e.aimed).length; }
 
-  update(dt, t, coffinPos) {
+  /** @param playerPos 思念体が狙う先 */
+  update(dt, t, coffinPos, playerPos) {
     const push = { x: 0, z: 0 };
     if (!this.group.visible) return push;
 
@@ -266,8 +309,17 @@ export class Purifier {
       const yaw = Math.atan2(tx, tz);
       const pitch = Math.atan2(ty, Math.hypot(tx, tz));
       e.head.rotation.y = yaw * e.turn;
-      e.head.rotation.x = (-Math.PI / 2) * (1 - e.turn) + pitch * e.turn;
-      e.lens.material.emissiveIntensity = 0.5 + e.turn * 2.0;
+      // 満ちた瞬間にぐらりと倒れ込む（行き過ぎてから戻る）
+      const over = Math.sin(Math.min(1, e.turn) * Math.PI) * 0.25;
+      e.head.rotation.x = (-Math.PI / 2) * (1 - e.turn) + pitch * e.turn + over;
+      e.shown += (e.gauge - e.shown) * Math.min(1, dt * 8);
+      e.fill.scale.y = Math.max(0.001, e.shown * 2.6);
+      const fm = e.fill.material;
+      if (e.dark) { fm.emissive.setHex(0x8a2aff); fm.color.setHex(0x8a2aff); }
+      else if (e.aimed) { fm.emissive.setHex(0xfff0a0); fm.color.setHex(0xfff0a0); }
+      else { fm.emissive.setHex(0xffb040); fm.color.setHex(0xffb040); }
+      fm.emissiveIntensity = 1.6 + (e.gauge >= 1 ? Math.sin(t * 6) * 0.6 : 0) + (e.dark ? Math.sin(t * 12) * 0.8 : 0);
+      if (this.step !== Step.PURIFY) e.lens.material.emissiveIntensity = 0.5 + e.turn * 2.0 + e.gauge * 0.8;
     });
 
     const lockK = (this.step === Step.WAIT) ? 0 : 1;
@@ -286,62 +338,93 @@ export class Purifier {
       return push;
     }
 
-    this.rage = Math.min(1, this.rage + dt * 0.16);
-    this.purity = Math.max(0, this.purity - (0.055 + this.rage * 0.10) * dt);
-    const eff = Math.max(0, (this.purity - 0.18) / 0.82);
-    if (eff > 0) {
-      this.hp = Math.max(0, this.hp - this.rate * eff * dt);
-      this.dark = 0;
-      if (this.particles && Math.random() < 0.5 * eff) {
-        this.particles.emit(coffinPos || this.socket, 2,
-          { color: [1, 0.95, 0.75], size: 2.8, up: 2.2, yOff: 0.6 });
+    // ── 主が一基ずつ黒ずませる ──
+    if (this.darkIdx < 0) {
+      this.darkWait -= dt;
+      if (this.darkWait <= 0) {
+        let i = Math.floor(Math.random() * 4);
+        if (i === this.lastDark) i = (i + 1 + Math.floor(Math.random() * 3)) % 4;
+        this.darkIdx = i; this.lastDark = i;
+        const e = this.emitters[i];
+        e.dark = true;
+        this.onDark && this.onDark(i);
       }
-    } else this.dark += dt;
+    } else {
+      const e = this.emitters[this.darkIdx];
+      // 黒ずみに侵されてゲージが減る（弾で戻す）
+      e.gauge = Math.max(0.1, e.gauge - dt * 0.9 * (e.gauge > 0.4 ? 1 : 0.15));
+    }
+    const slow = this.darkIdx >= 0;
+    this.purity = slow ? Math.max(0.15, this.purity - dt * 1.5) : Math.min(1, this.purity + dt * 1.2);
+    this.hp = Math.max(0, this.hp - this.rate * (slow ? 0.05 : 1) * dt);
+    if (!slow && this.particles && Math.random() < 0.5) {
+      this.particles.emit(coffinPos || this.socket, 2, { color: [1, 0.95, 0.75], size: 2.8, up: 2.2, yOff: 0.6 });
+    }
     if (this.hp <= 0) {
       this.active = false; this.done = true; this.step = Step.DONE;
       this.wraith.visible = false;
+      if (this.bigWraith) this.bigWraith.visible = false;
+      this.emitters.forEach(e => { e.dark = false; });
+      return push;
     }
 
-    const p = this.purity;
-    const cr = 0.10 + p * 0.90, cg = 0.03 + p * 0.92, cb = 0.14 + p * 0.68;
+    // ── 光線（黒ずんだ機は紫黒） ──
     this.emitters.forEach((e, i) => {
       e.beam.visible = true;
       const from = new THREE.Vector3(e.x, e.y, e.z);
       const to = new THREE.Vector3(0, 0.8, 0);
-      const mid = from.clone().add(to).multiplyScalar(0.5);
-      e.beam.position.copy(mid);
-      e.beam.scale.set(1, from.distanceTo(to), 1);
+      e.beam.position.copy(from.clone().add(to).multiplyScalar(0.5));
+      e.beam.scale.set(e.dark ? 0.6 : 1, from.distanceTo(to), e.dark ? 0.6 : 1);
       e.beam.lookAt(this.group.position.x, 0.8, this.group.position.z);
       e.beam.rotateX(Math.PI / 2);
-      e.beam.material.color.setRGB(cr, cg, cb);
-      e.beam.material.opacity = (0.22 + p * 0.52) + Math.sin(t * 9 + i) * 0.08 * p;
-      e.light.color.setRGB(cr, cg, cb);
-      e.light.intensity = 0.6 + p * 3.6;
-      e.lens.material.emissive.setRGB(cr, cg, cb);
-      e.lens.material.emissiveIntensity = 0.5 + p * 2.6;
+      const k = e.dark ? 0.12 : 1;
+      e.beam.material.color.setRGB(e.dark ? 0.35 : 1, e.dark ? 0.05 : 0.95, e.dark ? 0.5 : 0.75);
+      e.beam.material.opacity = e.dark ? 0.35 + Math.sin(t * 20) * 0.15 : 0.7 + Math.sin(t * 9 + i) * 0.08;
+      e.light.color.setRGB(e.dark ? 0.5 : 1, e.dark ? 0.1 : 0.92, e.dark ? 0.7 : 0.7);
+      e.light.intensity = 0.6 + k * 3.6;
+      e.lens.material.emissive.setRGB(e.dark ? 0.4 : 1, e.dark ? 0.05 : 0.94, e.dark ? 0.6 : 0.75);
+      e.lens.material.emissiveIntensity = 0.5 + k * 2.6;
     });
-    this.rings.forEach(r => { r.m.material.color.setRGB(cr, cg, cb); });
+    const p = this.purity;
+    this.rings.forEach(r => { r.m.material.color.setRGB(0.3 + p * 0.7, 0.1 + p * 0.85, 0.4 + p * 0.4); });
 
-    const agi = 1 - p;
-    this.wraith.position.set(0, 0.4 + Math.sin(t * 3) * 0.2, 0);
-    this.wraith.rotation.y += dt * (0.8 + agi * 3.0);
-    this.wraith.scale.setScalar(0.8 + (1 - this.hp / PURIFY_HP) * 0.5);
-    this.wraithLight.intensity = 1.2 + agi * 4;
-    this.wraithArms.forEach((a, i) => {
-      a.m.rotation.z = a.sx * (0.55 + Math.sin(t * (5 + agi * 10) + i) * 0.6 * agi);
-    });
-    if (this.particles && agi > 0.4 && Math.random() < agi * 0.5) {
-      this.particles.emit(this.socket, 2, { color: [0.4, 0.08, 0.3], size: 3.2, up: 1.6, yOff: 1.2 });
+    // ── 思念体：巨大化して光線に反発する ──
+    const W = this.bigWraith || this.wraith;
+    const grow = 1 - this.hp / PURIFY_HP;
+    const tgt = this.darkIdx >= 0 ? this.emitters[this.darkIdx] : null;
+    W.position.set(0, 0.8 + Math.sin(t * 1.6) * 0.3, 0);
+    const lookX = playerPos ? playerPos.x - this.group.position.x : 0, lookZ = playerPos ? playerPos.z - this.group.position.z : 1;
+    const face = tgt ? Math.atan2(tgt.x, tgt.z) : Math.atan2(lookX, lookZ);
+    let diff = ((face - W.rotation.y + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+    W.rotation.y += diff * Math.min(1, dt * 3);
+    W.scale.setScalar((this.bigWraith ? 2.3 : 1.6) + grow * 0.6 + Math.sin(t * 3) * 0.04);
+    this.wraithLight.intensity = 1.2 + (slow ? 4 : 1.5);
+    if (this.particles && Math.random() < (slow ? 0.5 : 0.2)) {
+      this.particles.emit(this.socket, 2, { color: [0.4, 0.08, 0.3], size: 3.6, up: 1.6, yOff: 3 });
+    }
+
+    // ── 反発のエネルギー弾（避けないと傷つく） ──
+    if (this.hostile && playerPos) {
+      this.shootT -= dt;
+      if (this.shootT <= 0) {
+        this.volley++;
+        const from = new THREE.Vector3(this.group.position.x, 4.2, this.group.position.z);
+        const dir = new THREE.Vector3(playerPos.x - from.x, 0, playerPos.z - from.z);
+        const pw = this.power || 110;
+        if (this.volley % 4 === 0) this.hostile.ring(from, 12, Math.random(), { speed: 6.5, power: pw, size: 1.1 });
+        else this.hostile.fan(from, dir, 3, 0.28, { speed: 8.5, power: pw, size: 1.1 });
+        this.shootT = slow ? 1.4 : 2.0;
+      }
     }
     return push;
   }
 
   result(sealRatio, sunPower) {
     const cleared = this.done;
-    let rate = cleared ? 100 - Math.max(0, (this.shots - 10) * 1.4)
+    let rate = cleared ? 100 - (this.hitsTaken || 0) * 4 - (this.fails || 0) * 15
                        : Math.round((1 - this.hp / PURIFY_HP) * 100);
-    rate = Math.max(0, Math.min(100, Math.round(rate * 0.82 + sealRatio * 12 + Math.min(6, sunPower / 16))));
-    const full = cleared && sunPower >= 90 && this.shots <= 16;
+    rate = Math.max(0, Math.min(100, Math.round(Math.max(30, rate) * 0.82 + sealRatio * 12 + Math.min(6, sunPower / 16))));
+    const full = cleared && sunPower >= 90 && !(this.hitsTaken) && !(this.fails);
     return { rate, full, cleared, shots: this.shots };
   }
 }

@@ -60,7 +60,10 @@ export const UI = {
     if (num) num.textContent = cur + ' / ' + max;
     if (bar) bar.classList.toggle('low', cur <= 1);
   },
-  objective(t) { if (this.el.obj) this.el.obj.textContent = t; },
+  objective(t) {
+    if (!this.el.objTxt) this.el.objTxt = document.getElementById('hud-obj-txt') || this.el.obj;
+    if (this.el.objTxt && this._objLast !== t) { this._objLast = t; this.el.objTxt.textContent = t; }
+  },
   solar(on, remain) {
     if (!this.el.solar) return;
     this.el.solar.hidden = !on;

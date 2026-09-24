@@ -137,6 +137,27 @@ export class Voice {
   setVolume(v) { this.volume = Math.max(0, Math.min(1, v)); }
 }
 
+/* ── 趣と家ごとの調べ（生成の手掛かり） ──
+   drone: 持続音 [周波数, 波形]　root: 旋律の主音　scale: 音階（半音）
+   beat: 拍の秒　mel: 旋律を鳴らす間隔　inst: 旋律の音色
+   chord: 和音（半音の組）と鳴らす間隔　perc: 打楽器の型（x低 o中 h高 a金床） */
+const BGM_DEF = {
+  forest:  { beat: 0.8,  drone: [[55, 'triangle'], [82.4, 'sine']], lp: 520, root: 220, scale: [0, 3, 5, 7, 10, 12], mel: 3, inst: 'sine', vol: 0.05, perc: '....h...', wind: 5 },
+  palace:  { beat: 0.42, drone: [[55, 'sawtooth']], lp: 380, root: 220, scale: [0, 2, 3, 5, 7, 8, 11, 12], mel: 1, inst: 'square', vol: 0.028, chord: [[0, 3, 7], [5, 8, 12], [7, 11, 14], [0, 3, 7]], chordEvery: 6, perc: 'x..o..' },
+  frost:   { beat: 1.1,  drone: [[110, 'sine'], [164.8, 'sine']], lp: 900, root: 880, scale: [0, 2, 4, 7, 9, 12], mel: 1, inst: 'sine', vol: 0.03, bells: true, wind: 4 },
+  volcano: { beat: 0.38, drone: [[36.7, 'sawtooth'], [55, 'sawtooth']], lp: 260, root: 110, scale: [0, 1, 4, 5, 7, 8, 10], mel: 4, inst: 'sawtooth', vol: 0.045, perc: 'x.x.o.x.xxo.x.o.' },
+  grass:   { beat: 0.7,  drone: [[98, 'sine']], lp: 700, root: 392, scale: [0, 2, 4, 7, 9, 12, 14], mel: 2, inst: 'triangle', vol: 0.045, crickets: true },
+  sky:     { beat: 1.0,  drone: [[130.8, 'sine'], [196, 'sine']], lp: 1200, root: 523, scale: [0, 4, 7, 11, 14, 16], mel: 1, inst: 'triangle', vol: 0.035, chord: [[0, 4, 7, 11], [5, 9, 12, 16]], chordEvery: 8 },
+  abyss:   { beat: 1.3,  drone: [[36.7, 'sawtooth'], [51.9, 'sawtooth'], [38.9, 'triangle']], lp: 240, root: 185, scale: [0, 1, 6, 7, 11], mel: 3, inst: 'sine', vol: 0.04, perc: 'x.......' },
+  desert:  { beat: 0.5,  drone: [[73.4, 'sawtooth']], lp: 420, root: 293.7, scale: [0, 1, 4, 5, 7, 8, 10, 12], mel: 2, inst: 'triangle', vol: 0.045, perc: 'x..o.xo.' },
+  void:    { beat: 0.6,  drone: [[41.2, 'sawtooth'], [43.7, 'sawtooth']], lp: 300, root: 246.9, scale: [0, 1, 3, 6, 7, 9, 10], mel: 2, inst: 'square', vol: 0.03, perc: 'x...o...x.x.o...' },
+  shop:    { beat: 0.34, drone: [], root: 523, scale: [0, 2, 4, 7, 9, 12], mel: 1, inst: 'triangle', vol: 0.045, chord: [[0, 4, 7], [5, 9, 12], [7, 11, 14], [0, 4, 7]], chordEvery: 8, perc: 'x.h.o.h.' },
+  inn:     { beat: 0.72, drone: [[130.8, 'sine']], lp: 600, root: 392, scale: [0, 2, 5, 7, 9, 12], mel: 1, inst: 'triangle', vol: 0.045, koto: true },
+  smith:   { beat: 0.55, drone: [[65.4, 'sawtooth']], lp: 300, root: 196, scale: [0, 3, 5, 7, 10], mel: 4, inst: 'sine', vol: 0.04, perc: 'a...a.a.' },
+  home:    { beat: 0.6,  drone: [], root: 659, scale: [0, 2, 4, 5, 7, 9, 12], mel: 1, inst: 'sine', vol: 0.04, chord: [[0, 4, 7], [5, 9, 12]], chordEvery: 8 },
+  lib:     { beat: 1.4,  drone: [[87.3, 'sine']], lp: 500, root: 349, scale: [0, 2, 3, 5, 7, 8, 10], mel: 1, inst: 'sine', vol: 0.035, chord: [[0, 3, 7], [8, 12, 15], [5, 8, 12], [7, 10, 14]], chordEvery: 4 }
+};
+
 /* ── 台詞集（抑揚つき） ── */
 export const LINES = {
   solar: { who: 'hero', style: 'shout',
@@ -232,6 +253,11 @@ export class Audio {
       case 'bad':     this._tone(140, 0.3, 'sawtooth', 0.14, 0, 70); break;
       case 'pile':    this._noise(0.3, 0.32, 3000, 90); this._tone(70, 0.35, 'sine', 0.24); break;
       case 'purify':  [523, 659, 784, 1047, 1319].forEach((f, i) => this._tone(f, 0.7, 'triangle', 0.12, i * 0.13)); break;
+      case 'slash':   this._noise(0.16, 0.14, 9000, 1600); this._tone(420, 0.1, 'triangle', 0.05, 0, 900); break;
+      case 'slashHit': this._noise(0.2, 0.22, 7000, 700); this._tone(160, 0.14, 'square', 0.1); break;
+      case 'arrow':   this._noise(0.22, 0.12, 6000, 2400); this._tone(900, 0.12, 'sine', 0.05, 0, 400); break;
+      case 'strum':   [392, 494, 587].forEach((f, i) => this._tone(f, 0.5, 'triangle', 0.07, i * 0.03)); break;
+      case 'throw':   this._noise(0.3, 0.12, 5000, 1200); this._tone(300, 0.25, 'sawtooth', 0.04, 0, 700); break;
       case 'phase':   this._noise(0.6, 0.2, 6000, 200); this._tone(110, 0.8, 'sawtooth', 0.14, 0, 440); break;
     }
   }
@@ -346,7 +372,9 @@ export class Audio {
       return;
     }
 
-    // ── 地下：不気味な持続音 ──
+    if (BGM_DEF[kind]) { this._bgmGeneric(BGM_DEF[kind]); return; }
+
+    // ── 地下（墓地）：不気味な持続音 ──
     const beat = 0.95;
     try {
       [41.2, 43.65, 61.7].forEach((fr, i) => {
@@ -373,6 +401,50 @@ export class Audio {
     };
     tick();
     this._bgmTimer = setInterval(tick, beat * 1000);
+  }
+  /** 手掛かりから調べを生成して鳴らし続ける */
+  _bgmGeneric(D) {
+    const c = this.ctx;
+    try {
+      (D.drone || []).forEach(([fr, type], i) => {
+        const o = c.createOscillator(), g = c.createGain();
+        o.type = type; o.frequency.value = fr; g.gain.value = 0.045;
+        const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = D.lp || 600;
+        const lfo = c.createOscillator(), lg = c.createGain();
+        lfo.frequency.value = 0.06 + i * 0.04; lg.gain.value = 3;
+        lfo.connect(lg); lg.connect(o.detune); lfo.start();
+        o.connect(lp); lp.connect(g); g.connect(this.master); o.start();
+        this._drone.push({ o, g, lfo });
+      });
+    } catch (e) {}
+    const sc = D.scale, R = D.root;
+    const tick = () => {
+      if (this.muted || document.hidden) return;
+      const s = this._step;
+      if (D.chord && s % (D.chordEvery || 8) === 0) {
+        const ch = D.chord[Math.floor(s / (D.chordEvery || 8)) % D.chord.length];
+        ch.forEach((semi, i) => this._tone(R / 2 * Math.pow(2, semi / 12), D.beat * (D.chordEvery || 8) * 0.9, 'triangle', D.vol * 0.7, i * 0.03));
+      }
+      if (s % (D.mel || 2) === 0) {
+        const k = Math.floor((Math.sin(s * 0.91) * 0.5 + 0.5) * sc.length) % sc.length;
+        const f = R * Math.pow(2, sc[k] / 12);
+        this._tone(f, D.beat * (D.koto ? 2.2 : 1.4), D.inst, D.vol);
+        if (D.koto) this._tone(f * 2, D.beat * 0.8, 'sine', D.vol * 0.3, 0.01);
+      }
+      if (D.bells && s % 3 === 1) this._tone(R * 2 * Math.pow(2, sc[(s * 5) % sc.length] / 12), 1.2, 'sine', 0.025);
+      if (D.perc) {
+        const p = D.perc[s % D.perc.length];
+        if (p === 'x') this._tone(55, 0.18, 'sine', 0.16);
+        if (p === 'o') this._noise(0.12, 0.08, 4000, 800);
+        if (p === 'h') this._noise(0.04, 0.035, 9000, 5000);
+        if (p === 'a') { this._tone(1760, 0.3, 'square', 0.03); this._tone(2637, 0.4, 'sine', 0.03, 0.005); this._noise(0.08, 0.1, 9000, 3000); }
+      }
+      if (D.wind && s % D.wind === 0) this._noise(2.2, 0.02, 2400, 500);
+      if (D.crickets && s % 2 === 1) { this._tone(4200, 0.05, 'sine', 0.012); this._tone(4200, 0.05, 'sine', 0.012, 0.08); }
+      this._step++;
+    };
+    tick();
+    this._bgmTimer = setInterval(tick, D.beat * 1000);
   }
   stopBGM() {
     clearInterval(this._bgmTimer); this._bgmTimer = 0; this._bgmKind = null;

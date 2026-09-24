@@ -340,3 +340,60 @@ body{
 .minimap{position:absolute;right:14px;top:56px;width:min(220px,34vw);height:auto;
   border-radius:4px;pointer-events:none;opacity:.92}
 @media (max-width:700px){ .minimap{width:30vw;top:52px} }
+
+/* ══ HUD の整理（戦いの視界を空ける） ══
+   左上：命・陽力・目的（小さく、畳める）／右上：見取り図／上中央：主の体力 */
+.hud-left{position:absolute;left:12px;top:10px;width:min(200px,30vw);display:flex;flex-direction:column;gap:6px}
+.hud-left .hud-sun,.hud-left .hud-hp{position:static;width:100%}
+.hud-left .hp-lb,.hud-left .hp-num{text-align:left}
+.hud-left .hp-lb{display:none}
+.hud-left .hp-bar{height:11px}
+.hud-left .sun-head{font-size:9.5px;margin-bottom:2px}
+.hud-left .sun-bar{height:6px}
+.hud-left .sun-val{font-size:10px;margin-top:1px}
+.hud-left .sun-val b{font-size:13px}
+.hud-left .hp-num{font-size:10px;margin-top:1px}
+.hud-obj{position:static;transform:none;left:auto;top:auto;white-space:normal;
+  font-size:10.5px;letter-spacing:.06em;line-height:1.55;color:rgba(232,226,214,.86);
+  background:rgba(6,7,10,.38);border:1px solid rgba(232,226,214,.08);border-radius:3px;
+  padding:4px 6px 4px 4px;display:flex;gap:6px;align-items:flex-start;pointer-events:auto;max-width:100%}
+.obj-tg{flex:0 0 auto;width:20px;height:20px;border-radius:50%;border:1px solid rgba(201,162,39,.5);
+  background:rgba(6,7,10,.5);color:var(--kin);font-family:var(--mincho);font-size:10px;padding:0;cursor:pointer}
+.hud-obj.fold{background:none;border-color:transparent;padding:0}
+.hud-obj.fold #hud-obj-txt{display:none}
+.hud-boss{top:8px;width:min(420px,46vw)}
+.boss-name{font-size:11.5px;margin-bottom:2px}
+.hud-solar{top:auto;bottom:calc(env(safe-area-inset-bottom) + 150px);font-size:11.5px;padding:3px 12px}
+.minimap{top:10px;right:12px;width:min(190px,24vw);opacity:.85}
+@media (max-width:700px){ .minimap{width:24vw;top:8px} }
+.hud-fps{bottom:4px;right:6px;font-size:9px;opacity:.5}
+.toast{top:calc(env(safe-area-inset-top) + 66px);bottom:auto;font-size:11.5px;padding:7px 14px;
+  max-width:52vw;background:rgba(10,12,18,.82);border-color:rgba(179,66,74,.7);line-height:1.6}
+.shout{top:30%}
+
+/* 操作ボタン：右の指の周りに寄せる */
+.pad-btn{min-width:62px;min-height:42px;font-size:11.5px;padding:0 6px}
+#btn-dash{right:calc(env(safe-area-inset-right) + 146px);bottom:calc(env(safe-area-inset-bottom) + 26px)}
+#btn-charge{right:calc(env(safe-area-inset-right) + 146px);bottom:calc(env(safe-area-inset-bottom) + 78px)}
+#btn-skill{right:calc(env(safe-area-inset-right) + 216px);bottom:calc(env(safe-area-inset-bottom) + 26px)}
+#btn-heal{right:calc(env(safe-area-inset-right) + 216px);bottom:calc(env(safe-area-inset-bottom) + 78px)}
+#btn-solar{right:calc(env(safe-area-inset-right) + 216px);bottom:calc(env(safe-area-inset-bottom) + 130px)}
+#btn-weapon{right:calc(env(safe-area-inset-right) + 20px);bottom:calc(env(safe-area-inset-bottom) + 150px)}
+#btn-stance{right:calc(env(safe-area-inset-right) + 90px);bottom:calc(env(safe-area-inset-bottom) + 150px)}
+#btn-menu{right:auto;left:calc(env(safe-area-inset-left) + 20px);bottom:calc(env(safe-area-inset-bottom) + 150px);min-width:54px}
+.pad-wpn{border-color:#e8c060;color:#fff0c0;background:rgba(40,28,8,.5);display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.1}
+.pad-wpn b{font-size:15px;color:var(--kin)}
+.pad-stance{border-color:#c0a0ff;color:#e8dcff;background:rgba(6,7,10,.45)}
+.wpn-strip{position:absolute;right:calc(env(safe-area-inset-right) + 16px);bottom:calc(env(safe-area-inset-bottom) + 202px);
+  max-width:min(460px,62vw);display:flex;flex-wrap:wrap;gap:5px;justify-content:flex-end;pointer-events:auto;
+  background:rgba(8,9,14,.82);border:1px solid rgba(201,162,39,.4);border-radius:6px;padding:6px}
+.wpn-it{width:56px;height:52px;border-radius:4px;border:1px solid var(--line);background:rgba(255,255,255,.03);
+  color:var(--ink);font-family:var(--mincho);font-size:9.5px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;cursor:pointer}
+.wpn-it b{font-size:17px;color:var(--kin)}
+.wpn-it.on{border-color:var(--kin);background:rgba(201,162,39,.16)}
+.wpn-it.r3,.wpn-it.r4{border-color:rgba(255,190,80,.6)}
+.wpn-it.r5{border-color:#ffd24a;box-shadow:0 0 10px rgba(255,210,74,.5)}
+.wpn-none{font-size:11px;color:var(--mut);padding:6px}
+/* 場面の切り替え */
+.fade{position:fixed;inset:0;z-index:70;background:#000;opacity:0;transition:opacity .3s ease;pointer-events:none}
+.fade.on{opacity:1}

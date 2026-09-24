@@ -1,6 +1,19 @@
 /* player.js ── 陽光狩人 */
 import * as THREE from 'three';
 import { metalMaterial, glowMaterial, fleshMaterial } from './gfx.js';
+import { buildWeaponModel } from './weapons.js';
+
+/* 武器ごとの構え（手元の向き）。模型は +Z が刃先 */
+const REST = {
+  gun: [0, 0, 0], dagger: [-0.25, 0, 0], sword: [-0.55, 0.15, 0], staff: [-1.15, 0, 0.15],
+  mace: [-0.7, 0, 0], axe: [-0.7, 0.1, 0], bow: [0, 0, -1.35], spear: [-0.08, 0, 0],
+  katar: [0, 0, 0], tome: [0.1, 0, 0], claw: [0, 0, 0], whip: [-0.3, 0, 0],
+  lute: [0.2, 0.5, 0.35], ninjato: [0.6, 0.35, 0], shuriken: [-0.2, 0, 0]
+};
+/* 動きの長さ（秒） */
+const ANIM_DUR = { swing: 0.26, stab: 0.14, thrust: 0.26, smash: 0.42, punch: 0.1, whip: 0.36,
+  iai: 0.22, bow: 0.34, cast: 0.34, throw: 0.3, strum: 0.4, shoot: 0.1 };
+const ease = k => 1 - Math.pow(1 - k, 3);
 
 export const SHOT_COST = 1;
 export const CHARGE_COST = 15;
@@ -31,7 +44,109 @@ export class Player {
     this._solarK = 0;       // 変身の進み具合 0→1
     this.group = new THREE.Group();
     this._build();
+    // 全身を一つの軸に載せ直す（回避の転がり・被弾ののけぞりに使う）
+    this.body = new THREE.Group();
+    while (this.group.children.length) this.body.add(this.group.children[0]);
+    this.group.add(this.body);
+    // 手元（武器を握る軸）
+    this.hand = new THREE.Group();
+    this.hand.position.set(0.3, 1.34, 0.12);
+    this.body.add(this.hand);
+    this.offHand = new THREE.Group();
+    this.offHand.position.set(-0.3, 1.34, 0.12);
+    this.body.add(this.offHand);
+    this.wtype = 'gun'; this.wrare = 0;
+    this.stance = 'normal';
+    this._atk = null;
+    this._hurtT = 0; this._victory = 0;
+    [this.orb, this.chargeRing, this.chargeRing2, this.sigil, this.flame, this.demon]
+      .forEach(o => { if (o) o.userData.noPortrait = true; });
     scene.add(this.group);
+  }
+
+  /** 持つ武器を替える（手元の模型も差し替える） */
+  setWeapon(type, rare) {
+    type = type || 'gun'; rare = rare || 0;
+    if (this.wtype === type && this.wrare === rare && this._wModel !== undefined) return;
+    this.wtype = type; this.wrare = rare;
+    [this.hand, this.offHand].forEach(h => { while (h.children.length) h.remove(h.children[0]); });
+    this._wModel = null; this._wOff = null;
+    this.gun.visible = (type === 'gun');
+    if (type !== 'gun') {
+      this._wModel = buildWeaponModel(type, rare);
+      this._wModel.scale.setScalar(1.3);          // 見下ろしでも形が分かる大きさに
+      this.hand.add(this._wModel);
+      if (type === 'katar' || type === 'claw') {
+        this._wOff = buildWeaponModel(type, rare);
+        this._wOff.scale.setScalar(1.3);
+        this.offHand.add(this._wOff);
+      }
+    }
+    this._applyStance();
+  }
+  /** 銃の構え */
+  setStance(id) { this.stance = id || 'normal'; this._applyStance(); }
+  _applyStance() {
+    const dual = this.wtype === 'gun' && this.stance === 'dual';
+    if (dual && !this._gun2) {
+      this._gun2 = this.gun.clone(true);
+      this._gun2.position.set(-0.26, 1.36, 0);
+      this.body.add(this._gun2);
+    }
+    if (this._gun2) this._gun2.visible = dual;
+  }
+  /** 攻撃の所作を始める */
+  playAttack(anim, step) {
+    this._atk = { anim, t: 0, dur: ANIM_DUR[anim] || 0.2, step: step || 0 };
+  }
+  /** 勝利の所作 */
+  cheer() { this._victory = 2.4; }
+  _animWeapon(dt, t) {
+    const r = REST[this.wtype] || REST.gun;
+    const H = this.hand, O = this.offHand;
+    let rx = r[0], ry = r[1], rz = r[2], pz = 0.12, py = 1.34, oz = 0.12, orx = 0;
+    const a = this._atk;
+    if (a) {
+      a.t += dt;
+      const k = Math.min(1, a.t / a.dur), e = ease(k), s = (a.step % 2) ? -1 : 1;
+      const back = Math.sin(k * Math.PI);
+      switch (a.anim) {
+        case 'swing': ry = s * (1.5 - e * 3.0); rx = -0.2 + back * 0.2; break;
+        case 'iai':   ry = -1.7 + e * 3.3; rx = 0.15; break;
+        case 'stab':  pz += back * 0.55; ry = s * 0.15; rx = 0; break;
+        case 'thrust': pz += -0.35 + e * 1.1 - (k > 0.7 ? (k - 0.7) * 2.2 : 0); rx = 0; break;
+        case 'smash': rx = -2.1 + e * 2.7; break;
+        case 'punch': if (s > 0) pz += back * 0.5; else oz += back * 0.5; rx = 0; break;
+        case 'whip':  rx = -1.6 + e * 1.9; ry = 0.2; break;
+        case 'bow':   orx = 0; oz = 0.12 - back * 0.45; break;
+        case 'cast':  rx = r[0] - back * 0.9; py += back * 0.2; break;
+        case 'throw': rx = -2.2 + e * 2.6; ry = 0.3; break;
+        case 'strum': rz = r[2] + Math.sin(k * Math.PI * 4) * 0.2; break;
+        case 'shoot': this.gun.position.z = -0.14 * back; if (this._gun2) this._gun2.position.z = -0.14 * back; break;
+      }
+      if (k >= 1) { this._atk = null; this.gun.position.z = 0; if (this._gun2) this._gun2.position.z = 0; }
+    }
+    // 鞭はしなる
+    if (this._wModel && this._wModel.userData.whip) {
+      const segs = this._wModel.userData.whip.children;
+      const act = a && a.anim === 'whip' ? Math.sin((a.t / a.dur) * Math.PI) : 0;
+      segs.forEach((sg, i) => {
+        sg.position.y = -i * 0.02 - Math.sin(t * 5 + i * 0.5) * 0.02 * i - act * 0.0;
+        sg.position.z = 0.15 + i * (0.1 + act * 0.42);
+      });
+    }
+    H.rotation.set(rx, ry, rz);
+    H.position.set(0.3, py, pz);
+    O.rotation.set(orx, -ry * 0.3, 0);
+    O.position.set(-0.3, 1.34, oz);
+    // 銃の構え
+    if (this.wtype === 'gun' && !this.charging) {
+      const st = this.stance;
+      const gy = st === 'hip' ? 1.02 : st === 'rapid' ? 1.52 : 1.36;
+      this.gun.position.y += (gy - this.gun.position.y) * Math.min(1, dt * 12);
+      this.gun.rotation.z = st === 'hip' ? 0.5 : 0;
+      this.gun.position.x = st === 'rapid' ? 0.12 : 0.26;
+    }
   }
 
   _build() {
@@ -208,6 +323,8 @@ export class Player {
 
   reset(p) {
     this.pos.copy(p); this.vel.set(0, 0, 0);
+    this._atk = null; this._hurtT = 0; this._victory = 0;
+    if (this.body) this.body.rotation.set(0, 0, 0);
     this.hp = this.maxHp; this.invuln = 0; this.charging = 0; this.pushing = false;
   }
   /**
@@ -223,6 +340,7 @@ export class Player {
     // 最低ダメージを低くし、軽減がそのまま回数に効くようにした。
     const cut = Math.min(0.92, (magical ? this.cutMag : this.cutPhys) + (this.wardT > 0 ? this.wardCut : 0));
     const dmg = Math.max(1.5, (power || 100) * (1 - cut));
+    this._hurtT = 0.45;
     this.guard -= dmg;
     this.invuln = 1.2;
     if (this.guard <= 0) {
@@ -246,7 +364,7 @@ export class Player {
     if (this.dashCd > 0) this.dashCd -= dt;
     if (this.wardT > 0) this.wardT -= dt;
 
-    let sp = this.speed * (this.pushing ? 0.5 : 1) * (this.charging > 0 ? 0.45 : 1);
+    let sp = this.speed * (this.moveMul || 1) * (this.pushing ? 0.5 : 1) * (this.charging > 0 ? 0.45 : 1);
     // ダッシュ：1フレームだけ速くしても進まないため、0.22秒ぶん持続させる。
     // 立ち止まっていても、向いている方向へ踏み込めるようにする。
     if (this.dashT > 0) this.dashT -= dt;
@@ -290,6 +408,32 @@ export class Player {
       this.legs[1].rotation.x *= 0.85;
     }
 
+    // ── 全身の所作：回避の転がり／被弾ののけぞり／勝利 ──
+    if (this.dashT > 0) {
+      const k = 1 - this.dashT / 0.22;
+      const th = k * Math.PI * 2;
+      this.body.rotation.x = th;
+      // 腰（高さ1）を軸に転がるよう、足元の軸をずらす
+      this.body.position.set(0, 1 - Math.cos(th) + Math.sin(k * Math.PI) * 0.35, -Math.sin(th));
+    } else if (this._hurtT > 0) {
+      this._hurtT -= dt;
+      const k = this._hurtT / 0.45;
+      this.body.rotation.x = -0.45 * Math.sin(k * Math.PI);
+      this.body.rotation.z = 0.12 * Math.sin(t * 40) * k;
+      this.body.position.y = 0;
+    } else if (this._victory > 0) {
+      this._victory -= dt;
+      const k = this._victory / 2.4;
+      this.body.rotation.x = 0;
+      this.body.rotation.y = (1 - k) * Math.PI * 2 * Math.min(1, (1 - k) * 2.5);
+      this.body.position.y = Math.abs(Math.sin((1 - k) * Math.PI * 3)) * 0.3;
+      this.hand.rotation.x = -2.4;
+    } else {
+      this.body.rotation.x *= 0.7; this.body.rotation.z *= 0.7; this.body.rotation.y *= 0.8;
+      this.body.position.y *= 0.7; this.body.position.z *= 0.7;
+    }
+    if (this._victory <= 0) this._animWeapon(dt, t);
+
     const c = this.charging;
     if (c > 0) {
       this.group.position.y = this.pos.y - 0.14 * c;
@@ -318,7 +462,6 @@ export class Player {
     } else {
       this.group.position.y = this.pos.y;
       this.gun.rotation.x *= 0.8;
-      this.gun.position.y += (1.36 - this.gun.position.y) * 0.3;
       this.orb.visible = false;
       this.chargeRing.visible = false;
       this.chargeRing2.visible = false;
@@ -397,17 +540,11 @@ export class Player {
     // 演出用の飾りは外し、素の立ち姿にする
     g.traverse(o => {
       if (o.isLight) o.visible = false;
+      if (o.userData && o.userData.noPortrait) o.visible = false;
     });
     g.scale.setScalar(1);
     g.position.set(0, 0, 0);
     g.rotation.set(0, 0, 0);
-    // 溜め・化身の意匠は隠す
-    ['orb', 'chargeRing', 'chargeRing2', 'sigil', 'flame', 'demon'].forEach(k => {
-      if (this[k]) {
-        const i = this.group.children.indexOf(this[k]);
-        if (i >= 0 && g.children[i]) g.children[i].visible = false;
-      }
-    });
     return g;
   }
 
@@ -489,10 +626,10 @@ export class Player {
   muzzleFlash(strong) { this.muzzleLight.intensity = strong ? 8 : 3; }
 
   /** 銃口の実座標。回転に頼らず aim から直に出す */
-  muzzleWorld() {
+  muzzleWorld(left) {
     const right = new THREE.Vector3(-this.aim.z, 0, this.aim.x);
-    return new THREE.Vector3(this.pos.x, 1.36, this.pos.z)
-      .addScaledVector(this.aim, 1.3)
-      .addScaledVector(right, 0.26);
+    return new THREE.Vector3(this.pos.x, this.pos.y + 1.36, this.pos.z)
+      .addScaledVector(this.aim, this.wtype === 'gun' ? 1.3 : 0.9)
+      .addScaledVector(right, left ? -0.26 : 0.26);
   }
 }
