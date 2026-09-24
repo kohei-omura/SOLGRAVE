@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { metalMaterial, glowMaterial, fleshMaterial } from './gfx.js';
 import { buildWeaponModel } from './weapons.js';
+import { buildHero } from './figure.js';
 
 /* 武器ごとの構え（手元の向き）。模型は +Z が刃先 */
 const REST = {
@@ -90,7 +91,7 @@ export class Player {
     const dual = this.wtype === 'gun' && this.stance === 'dual';
     if (dual && !this._gun2) {
       this._gun2 = this.gun.clone(true);
-      this._gun2.position.set(-0.26, 1.36, 0);
+      this._gun2.position.set(-0.26, 1.36, 0.2);
       this.body.add(this._gun2);
     }
     if (this._gun2) this._gun2.visible = dual;
@@ -122,9 +123,9 @@ export class Player {
         case 'cast':  rx = r[0] - back * 0.9; py += back * 0.2; break;
         case 'throw': rx = -2.2 + e * 2.6; ry = 0.3; break;
         case 'strum': rz = r[2] + Math.sin(k * Math.PI * 4) * 0.2; break;
-        case 'shoot': this.gun.position.z = -0.14 * back; if (this._gun2) this._gun2.position.z = -0.14 * back; break;
+        case 'shoot': this.gun.position.z = 0.2 - 0.14 * back; if (this._gun2) this._gun2.position.z = 0.2 - 0.14 * back; break;
       }
-      if (k >= 1) { this._atk = null; this.gun.position.z = 0; if (this._gun2) this._gun2.position.z = 0; }
+      if (k >= 1) { this._atk = null; this.gun.position.z = 0.2; if (this._gun2) this._gun2.position.z = 0.2; }
     }
     // 鞭はしなる
     if (this._wModel && this._wModel.userData.whip) {
@@ -150,54 +151,13 @@ export class Player {
   }
 
   _build() {
-    const coatC = 0x2b2f3e, trimC = 0xb8934a, skinC = 0xe8cdb0;
-
-    const skirt = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.34, 0.62, 0.95, 10, 1, true),
-      new THREE.MeshStandardMaterial({ color: coatC, roughness: 0.85, metalness: 0.05, side: THREE.DoubleSide })
-    );
-    skirt.position.y = 0.62; skirt.castShadow = true;
-    this.group.add(skirt);
-
-    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.33, 0.62, 6, 12), fleshMaterial(coatC).clone());
-    this._coatMats = [skirt.material, torso.material];
-    torso.position.y = 1.32; torso.castShadow = true;
-    this.group.add(torso);
-
-    const collar = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.055, 8, 18), metalMaterial(52, trimC));
-    collar.rotation.x = Math.PI / 2; collar.position.y = 1.72;
-    this.group.add(collar);
-
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.24, 16, 14), fleshMaterial(skinC));
-    head.position.y = 1.94; head.castShadow = true;
-    this.group.add(head);
-
-    const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.52, 0.55, 0.05, 20), fleshMaterial(0x1e222c));
-    brim.position.y = 2.06;
-    this.group.add(brim);
-    const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.27, 0.32, 16), fleshMaterial(0x1e222c));
-    crown.position.y = 2.22; crown.castShadow = true;
-    this.group.add(crown);
-    const band = new THREE.Mesh(new THREE.TorusGeometry(0.26, 0.035, 8, 18), metalMaterial(53, trimC));
-    band.rotation.x = Math.PI / 2; band.position.y = 2.09;
-    this.group.add(band);
-
-    this._pauldrons = [];
-    [-1, 1].forEach(s => {
-      const p = new THREE.Mesh(new THREE.SphereGeometry(0.19, 12, 10), metalMaterial(54, 0x8a7a52).clone());
-      p.position.set(0.4 * s, 1.6, 0); p.scale.set(1, 0.72, 1);
-      p.castShadow = true;
-      this.group.add(p);
-      this._pauldrons.push(p);
-    });
-
-    this.legs = [];
-    [-1, 1].forEach(s => {
-      const l = new THREE.Mesh(new THREE.CapsuleGeometry(0.12, 0.5, 4, 8), fleshMaterial(0x1a1d26));
-      l.position.set(0.16 * s, 0.4, 0);
-      this.group.add(l);
-      this.legs.push(l);
-    });
+    // ── 人の姿（figure.js）：長外套の青年 ──
+    this.fig = buildHero();
+    this.group.add(this.fig.root);
+    this._coatMats = this.fig.coatMats;
+    this._pauldrons = this.fig.pauldrons;
+    this.legs = this.fig.legs;
+    const brim = this.fig.hatParts[0], crown = this.fig.hatParts[1], band = this.fig.hatParts[2], collar = this.fig.hatParts[3];
 
     // ── 陽光銃（正面 +Z） ──
     this.gun = new THREE.Group();
@@ -220,7 +180,7 @@ export class Player {
     this.muzzle = new THREE.Mesh(new THREE.SphereGeometry(0.1, 12, 10), glowMaterial(0xffe9a8, 2.2, true));
     this.muzzle.position.z = 1.28;
     this.gun.add(this.muzzle);
-    this.gun.position.set(0.26, 1.36, 0);
+    this.gun.position.set(0.26, 1.36, 0.2);   // 両手で構える位置
     this.group.add(this.gun);
 
     // 溜め演出
@@ -301,6 +261,7 @@ export class Player {
     this.crest.position.set(0, 1.42, 0.3);
     this.demon.add(this.crest);
     this.demon.visible = false;
+    this.demon.position.y = -0.22;      // 新しい背丈に合わせる
     this.group.add(this.demon);
 
     // 燃える殻
@@ -433,6 +394,8 @@ export class Player {
       this.body.position.y *= 0.7; this.body.position.z *= 0.7;
     }
     if (this._victory <= 0) this._animWeapon(dt, t);
+    this._reachArms(t, dt, mag > 0.05);
+    if (!this.avatar) this.fig.update(t, { moving: mag > 0.05 });
 
     const c = this.charging;
     if (c > 0) {
@@ -479,6 +442,48 @@ export class Player {
     if (this.charmGlow && this.charmGlow.visible) this.charmGlow.rotation.z += dt * 0.8;
     this.group.visible = !(this.invuln > 0 && Math.floor(t * 12) % 2 === 0);
     this.muzzle.material.emissiveIntensity = 2.2 + c * 3;
+  }
+
+  /** 外部の人物モデルに差し替える（null で元の姿へ） */
+  useAvatar(rig) {
+    if (this.avatar) this.body.remove(this.avatar.root);
+    this.avatar = rig || null;
+    this.fig.root.visible = !rig;
+    if (rig) this.body.add(rig.root);
+  }
+
+  /** 腕を握る物へ伸ばす（二関節の逆運動学） */
+  _reachArms(t, dt, moving) {
+    const F = this.fig;
+    const R = F.arms[0], L = F.arms[1];
+    const v = (x, y, z) => new THREE.Vector3(x, y, z);
+    let rt, lt;
+    if (this._victory > 0) {
+      rt = v(0.22, 2.05, 0.12); lt = v(-0.3, 1.0, 0.1);
+    } else if (this.wtype === 'gun') {
+      const gp = this.gun.position;
+      rt = v(gp.x, gp.y - 0.06, gp.z + 0.02);
+      if (this.stance === 'dual' && this._gun2) { const g2 = this._gun2.position; lt = v(g2.x, g2.y - 0.06, g2.z + 0.02); }
+      else if (this.stance === 'hip') lt = v(-0.24, 1.02, 0.1 + Math.sin(t * 2) * 0.02);
+      else lt = v(gp.x - 0.05, gp.y - 0.05, gp.z + 0.42);
+    } else {
+      rt = this.hand.position.clone();
+      if (this.wtype === 'katar' || this.wtype === 'claw' || this.wtype === 'bow' || this.wtype === 'lute' || this.wtype === 'tome') lt = this.offHand.position.clone();
+      else lt = v(-0.27, 1.0 + Math.sin(t * 2) * 0.01, 0.06 + Math.sin(this.walkT) * 0.08);
+    }
+    if (this.avatar) {
+      // 外部モデル：体の座標をワールドへ直して、同じ手先へ腕を伸ばす
+      const relaxed = !(this._victory > 0) && this.wtype !== 'gun' && !(this.wtype === 'katar' || this.wtype === 'claw' || this.wtype === 'bow' || this.wtype === 'lute' || this.wtype === 'tome');
+      const hip = this.wtype === 'gun' && this.stance === 'hip';
+      this.body.updateMatrixWorld(true);
+      this.avatar.update(dt || 0.016, t, {
+        moving, walkT: this.walkT,
+        right: this.body.localToWorld(rt.clone()),
+        left: (relaxed || hip) ? null : this.body.localToWorld(lt.clone())
+      });
+      return;
+    }
+    F.setArm(R, rt); F.setArm(L, lt);
   }
 
   /** 陽の化身へ／から戻す */
@@ -536,6 +541,7 @@ export class Player {
 
   /** 陣中帳に映すための姿（本編とは別に組み直す） */
   makePortrait() {
+    if (this.avatar) return this.avatar.makePortrait();
     const g = this.group.clone(true);
     // 演出用の飾りは外し、素の立ち姿にする
     g.traverse(o => {
