@@ -3,7 +3,8 @@
      部屋5〜8＋通路。天窓（シャフト）でのみ陽力を補給できる
    ══════════════════════════════════════════════════════════════ */
 import * as THREE from 'three';
-import { stoneMaterial, metalMaterial, glowMaterial, noiseTexture } from './gfx.js';
+import { stoneMaterial, metalMaterial, glowMaterial, fleshMaterial, noiseTexture } from './gfx.js';
+import { biomeOf } from './biomes.js';
 
 const WALL_H = 6.5;      // 天井を高く
 const T = 1.0;   // 壁の厚み
@@ -49,6 +50,8 @@ export class World {
     this.grandDoor = null; this.rest = null; this.doorCrest = null; this.secret = null;
     this.bossSeal = null; this.restRing = null; this.restOrb = null;
     this.spawnPoints = []; this.exit = null; this.bossRoom = null;
+    this._geos = null; this._ceilMat = null; this._lavaMats = null;
+    this.eliteG = null; this.biome = null;
   }
 
   /** 壁などをためておき、あとで1つにまとめて描く（描画呼び出しを減らす） */
@@ -65,14 +68,55 @@ export class World {
 
   /** 平らな面（床・天井）をためる */
   _batchPlane(w, d, x, y, z, faceUp, mat) {
+    if (!faceUp && this._ceilMat) mat = this._ceilMat;     // 天井は趣ごとの素材
     if (!this._planes) this._planes = new Map();
     let arr = this._planes.get(mat);
     if (!arr) { arr = []; this._planes.set(mat, arr); }
     arr.push([w, d, x, y, z, faceUp]);
   }
 
+  /** 置物：任意の形を材質ごとにためる（あとで1つに統合） */
+  _prop(geo, mat, x, y, z, ry, sc, rx, rz) {
+    if (!this._geos) this._geos = new Map();
+    let arr = this._geos.get(mat);
+    if (!arr) { arr = []; this._geos.set(mat, arr); }
+    let g = geo.index ? geo.toNonIndexed() : geo.clone();
+    if (sc != null) { if (typeof sc === 'number') g.scale(sc, sc, sc); else g.scale(sc[0], sc[1], sc[2]); }
+    if (rx) g.rotateX(rx);
+    if (rz) g.rotateZ(rz);
+    if (ry) g.rotateY(ry);
+    g.translate(x, y, z);
+    arr.push(g);
+  }
+  _flushGeos() {
+    if (!this._geos) return;
+    this._geos.forEach((arr, mat) => {
+      if (!arr.length) return;
+      let total = 0;
+      arr.forEach(g => { total += g.attributes.position.count; });
+      const pos = new Float32Array(total * 3), nor = new Float32Array(total * 3), uv = new Float32Array(total * 2);
+      let o = 0;
+      arr.forEach(g => {
+        pos.set(g.attributes.position.array, o * 3);
+        if (g.attributes.normal) nor.set(g.attributes.normal.array, o * 3);
+        if (g.attributes.uv) uv.set(g.attributes.uv.array, o * 2);
+        o += g.attributes.position.count;
+        g.dispose();
+      });
+      const out = new THREE.BufferGeometry();
+      out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+      out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+      const m = new THREE.Mesh(out, mat);
+      m.castShadow = false; m.receiveShadow = true;
+      this.group.add(m);
+    });
+    this._geos.clear();
+  }
+
   /** ためた形を材質ごとに1つのメッシュへ */
   _flushBatches() {
+    this._flushGeos();
     if (!this._batches) return;
     this._batches.forEach((arr, mat) => {
       if (!arr.length) return;
@@ -174,6 +218,7 @@ export class World {
   buildSurface() {
     this.clear();
     this.isSurface = true;
+    this.torchColor = null;
 
     const ground = stoneMaterial(11, 0x8d8471);
     const f = new THREE.Mesh(new THREE.PlaneGeometry(220, 220), ground);
@@ -356,15 +401,17 @@ export class World {
     this.band = band;
     const CELL = 34;                       // 部屋の間隔
 
-    // 10階ごとに石の色が変わる
-    const TONE = [
-      [0x6f747f, 0x7b8291], [0x7a6f5f, 0x8a8070], [0x5f6f7a, 0x6f8290],
-      [0x7a5f6f, 0x8a7080], [0x5f7a63, 0x708a74], [0x7a7a5f, 0x8a8a70],
-      [0x6a5f7a, 0x7a7090], [0x7a6a5f, 0x8a7a70], [0x5f6a7a, 0x707a8a], [0x7a5f5f, 0x8a7070]
-    ];
-    const tn = TONE[this.band % TONE.length];
-    const floorMat = stoneMaterial(21 + this.band, tn[0]);
-    const wallMat  = stoneMaterial(22 + this.band, tn[1]);
+    // 10階ごとに趣が変わる：床・壁・天井の素材と灯りの色
+    const B = this.biome = biomeOf(this.floor);
+    const tuned = (seed, color) => {
+      const m = stoneMaterial(seed, color).clone();
+      m.roughness = B.rough; m.metalness = B.metal || 0.06;
+      return m;
+    };
+    const floorMat = tuned(21 + this.band, B.floor);
+    const wallMat  = tuned(22 + this.band, B.wall);
+    this._ceilMat  = tuned(23 + this.band, B.ceil);
+    this.torchColor = B.torch;
 
     // ── 迷路を掘る（深さ優先） ──
     const cells = [];
@@ -480,6 +527,8 @@ export class World {
             w: Math.abs(CELL - w) + 2, d: DOOR, kind: 'hall' });
         }
 
+        // 置物（趣ごと）
+        this._decorate(room, rnd, x === 0 && y === 0);
         // 松明
         this._addTorch(cx - w / 2 + 1.8, cz - d / 2 + 1.8);
         if ((x + y) % 2 === 0) this._addTorch(cx + w / 2 - 1.8, cz + d / 2 - 1.8);
@@ -489,7 +538,7 @@ export class World {
 
         // 敵の湧き
         if (!(x === 0 && y === 0)) {
-          const n = 2 + Math.floor(rnd() * 3) + Math.floor(this.floor / 2);
+          const n = 2 + Math.floor(rnd() * 3) + Math.min(4, Math.floor(this.floor / 6));   // 深くても湧きすぎない
           for (let k = 0; k < n; k++) {
             this.spawnPoints.push(new THREE.Vector3(
               cx + (rnd() - 0.5) * (w - 5), 0, cz + (rnd() - 0.5) * (d - 5)));
@@ -524,15 +573,15 @@ export class World {
     if (midRoom && midRoom !== this.startRoom && midRoom !== this.bossRoom) {
       this._addRest(midRoom.x + 5, midRoom.z - 5);
     }
-    // 撃つと開く祭壇
-    const sw = this.rooms[Math.floor(this.rooms.length / 2)];
-    if (sw && sw !== this.bossRoom) this._addSwitch(sw.x, sw.z);
     // 光の罠（踏むと傷つく床）
     this.rooms.forEach((r, i) => {
       if (i % 4 === 2 && r !== this.startRoom && r !== this.bossRoom) {
         this._addHazard(r.x + 3, r.z - 3);
+        r.hasHazard = true;
       }
     });
+    // 中ボスを目覚めさせる仕掛け（階ごとに三種から）
+    this._addEliteGimmick(rnd);
 
     // ── 隠しの間 ──
     // 行き止まりの壁のひとつに「罅（ひび）」があり、撃つと崩れて奥へ通じる
@@ -1193,11 +1242,11 @@ export class World {
     this._box(0.16, 1.5, 0.16, x, 0.75, z, pole, false);
     const fire = new THREE.Mesh(
       new THREE.SphereGeometry(0.22, 10, 8),
-      glowMaterial(0xff8a3a, 2.6, true)
+      glowMaterial(this.torchColor || 0xff8a3a, 2.6, true)
     );
     fire.position.set(x, 1.62, z);
     this.group.add(fire);
-    const l = new THREE.PointLight(0xffa860, 3.4, 20, 1.6);
+    const l = new THREE.PointLight(this.torchColor || 0xffa860, 3.4, 20, 1.6);
     l.visible = false;   // 近づいた時だけ点ける（描画負荷を抑える）
     l.position.set(x, 1.7, z);
     this.group.add(l);
@@ -1228,6 +1277,466 @@ export class World {
     const s = this.shafts[this.shafts.length - 1];
     s.isBoss = true;
     return s;
+  }
+
+  /* ── 趣ごとの置物 ─────────────────────────
+     壁ぎわの「肩」（戸口の左右）には当たりのある物、
+     床一面には当たりのない小物を散らす。通り道（戸口の筋）は空ける。 */
+  _decorate(room, rnd, isStart) {
+    const B = this.biome;
+    if (!B) return;
+    const cx = room.x, cz = room.z, w = room.w, d = room.d;
+    const c = room.cell;
+    const shoulders = [];
+    const sx = w / 4 + 2.75, sz = d / 4 + 2.75;
+    [[-sx, -d / 2 + 1.7], [sx, -d / 2 + 1.7], [-sx, d / 2 - 1.7], [sx, d / 2 - 1.7],
+     [-w / 2 + 1.7, -sz], [-w / 2 + 1.7, sz], [w / 2 - 1.7, -sz], [w / 2 - 1.7, sz]]
+      .forEach(([x, z]) => shoulders.push([cx + x, cz + z]));
+    if (!c.N) shoulders.push([cx, cz - d / 2 + 1.7]);
+    if (!c.S) shoulders.push([cx, cz + d / 2 - 1.7]);
+    if (!c.W) shoulders.push([cx - w / 2 + 1.7, cz]);
+    if (!c.E) shoulders.push([cx + w / 2 - 1.7, cz]);
+    const scatter = (n, margin) => {
+      const out = [];
+      for (let i = 0; i < n * 3 && out.length < n; i++) {
+        const x = (rnd() - 0.5) * (w - (margin || 2)), z = (rnd() - 0.5) * (d - (margin || 2));
+        if (Math.abs(x) < 6.2 || Math.abs(z) < 6.2) { if (rnd() < 0.7) continue; }
+        out.push([cx + x, cz + z]);
+      }
+      return out;
+    };
+    const solid = (x, z, r) => this.colliders.push({ min: { x: x - r, z: z - r }, max: { x: x + r, z: z + r } });
+    const pick = isStart ? [] : shoulders.filter(() => rnd() < 0.7);
+    const G = this._pg || (this._pg = {
+      box: new THREE.BoxGeometry(1, 1, 1), cyl: new THREE.CylinderGeometry(0.5, 0.5, 1, 10),
+      cone: new THREE.ConeGeometry(0.5, 1, 8), cone4: new THREE.ConeGeometry(0.5, 1, 4),
+      sph: new THREE.SphereGeometry(0.5, 10, 8), oct: new THREE.OctahedronGeometry(0.5, 0),
+      dod: new THREE.DodecahedronGeometry(0.5, 0), tor: new THREE.TorusGeometry(0.5, 0.08, 6, 20),
+      hemi: new THREE.SphereGeometry(0.5, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2),
+      disc: new THREE.CircleGeometry(0.5, 16).rotateX(-Math.PI / 2)
+    });
+    const P = (g, m, x, y, z, sc, ry, rx, rz) => this._prop(g, m, x, y, z, ry || 0, sc, rx, rz);
+    const H = WALL_H;
+    switch (B.id) {
+      case 'grave': {
+        const st = stoneMaterial(401, 0x5a5a64), wood = fleshMaterial(0x3a2a1c);
+        pick.forEach(([x, z], i) => {
+          if (i % 3 === 0) {   // 枯れ木
+            P(G.cyl, wood, x, 1.6, z, [0.35, 3.2, 0.35]);
+            for (let k = 0; k < 4; k++) P(G.cone, wood, x + Math.cos(k * 1.7) * 0.6, 2.4 + k * 0.4, z + Math.sin(k * 1.7) * 0.6, [0.12, 1.4, 0.12], k * 1.7, 0.9, 0);
+            solid(x, z, 0.4);
+          } else {             // 墓石と十字
+            P(G.box, st, x, 0.6, z, [0.9, 1.2, 0.3], rnd() * 0.3);
+            P(G.box, st, x, 1.26, z, [1.1, 0.14, 0.42]);
+            if (i % 2) { P(G.box, st, x + 0.9, 0.9, z, [0.14, 1.8, 0.14]); P(G.box, st, x + 0.9, 1.4, z, [0.7, 0.14, 0.14]); }
+            solid(x, z, 0.55);
+          }
+        });
+        scatter(6).forEach(([x, z]) => P(G.sph, fleshMaterial(0xd8d0b8), x, 0.12, z, [0.3, 0.24, 0.3]));   // 髑髏
+        break;
+      }
+      case 'forest': {
+        const bark = fleshMaterial(0x3a2818), leaf = fleshMaterial(0x1f3a1a), cap = glowMaterial(0x9affc0, 1.4);
+        pick.forEach(([x, z]) => {
+          P(G.cyl, bark, x, 2.2, z, [0.7, 4.4, 0.7]);
+          P(G.cone, leaf, x, 3.4, z, [3.2, 2.2, 3.2]);
+          P(G.cone, leaf, x, 4.6, z, [2.4, 1.8, 2.4]);
+          for (let k = 0; k < 4; k++) P(G.cone, bark, x + Math.cos(k * 1.57) * 0.6, 0.2, z + Math.sin(k * 1.57) * 0.6, [0.2, 0.9, 0.2], 0, Math.cos(k * 1.57) * 1.2, -Math.sin(k * 1.57) * 1.2);
+          solid(x, z, 0.5);
+        });
+        scatter(10).forEach(([x, z], i) => {
+          if (i % 2) { P(G.cyl, fleshMaterial(0xe8e0c8), x, 0.2, z, [0.08, 0.4, 0.08]); P(G.hemi, cap, x, 0.38, z, [0.4, 0.3, 0.4]); }
+          else for (let k = 0; k < 5; k++) P(G.cone, leaf, x + (k - 2) * 0.15, 0.25, z + (k % 2) * 0.1, [0.1, 0.5, 0.1], 0, (k - 2) * 0.2);
+        });
+        for (let k = 0; k < 6; k++) P(G.cone, leaf, cx + (rnd() - 0.5) * w, H - 0.8, cz + (rnd() - 0.5) * d, [1.6, 1.6, 1.6], 0, Math.PI);
+        break;
+      }
+      case 'palace': {
+        const marble = stoneMaterial(402, 0xe8e0d0), gold = metalMaterial(403, 0xc9a227), red = fleshMaterial(0x8a1a24);
+        // 赤い絨毯（戸口の筋に沿う）
+        P(G.disc, red, cx, 0.02, cz, [7, 1, 7]);
+        if (c.N || c.S) P(G.box, red, cx, 0.015, cz, [4, 0.01, d]);
+        if (c.E || c.W) P(G.box, red, cx, 0.015, cz, [w, 0.01, 4]);
+        pick.forEach(([x, z], i) => {
+          P(G.cyl, marble, x, H / 2, z, [1.0, H, 1.0]);
+          P(G.box, gold, x, 0.2, z, [1.4, 0.4, 1.4]);
+          P(G.box, gold, x, H - 0.3, z, [1.4, 0.4, 1.4]);
+          solid(x, z, 0.7);
+        });
+        // 燭台の吊り灯り
+        P(G.tor, gold, cx, H - 1.2, cz, [3, 3, 3], 0, Math.PI / 2);
+        for (let k = 0; k < 8; k++) P(G.sph, glowMaterial(0xffd080, 2.4), cx + Math.cos(k * 0.785) * 1.5, H - 1.05, cz + Math.sin(k * 0.785) * 1.5, 0.18);
+        P(G.cyl, gold, cx, H - 0.6, cz, [0.06, 1.2, 0.06]);
+        // 壁の旗
+        [[cx - w / 2 + 0.6, cz - 4, Math.PI / 2], [cx + w / 2 - 0.6, cz + 4, -Math.PI / 2]].forEach(([x, z, r]) => {
+          P(G.box, red, x, H - 2.2, z, [1.4, 2.8, 0.05], r);
+          P(G.box, gold, x, H - 2.2, z, [0.4, 0.4, 0.08], r);
+        });
+        break;
+      }
+      case 'frost': {
+        if (!this._iceMat) this._iceMat = new THREE.MeshStandardMaterial({ color: 0xbfe8ff, roughness: 0.08, metalness: 0.1,
+          emissive: new THREE.Color(0x3a8ab0), emissiveIntensity: 0.5, transparent: true, opacity: 0.8 });
+        const snow = fleshMaterial(0xf0f6ff);
+        pick.forEach(([x, z]) => {
+          for (let k = 0; k < 4; k++) P(G.oct, this._iceMat, x + (k % 2 - 0.5) * 0.8, 1.0 + k * 0.3, z + (k > 1 ? 0.4 : -0.4), [0.8, 2.4 + k * 0.5, 0.8], k, (k - 1.5) * 0.25);
+          P(G.sph, snow, x, 0.1, z, [2.4, 0.5, 2.4]);
+          solid(x, z, 0.8);
+        });
+        scatter(6).forEach(([x, z]) => P(G.sph, snow, x, 0.05, z, [1.6 + rnd(), 0.35, 1.2 + rnd()]));
+        for (let k = 0; k < 14; k++) P(G.cone, this._iceMat, cx + (rnd() - 0.5) * (w - 2), H - 0.6, cz + (rnd() - 0.5) * (d - 2), [0.25, 1.2 + rnd(), 0.25], 0, Math.PI);
+        break;
+      }
+      case 'volcano': {
+        if (!this._lavaMats) this._lavaMats = [glowMaterial(0xff5a10, 2.2, true)];
+        const lava = this._lavaMats[0], obs = metalMaterial(404, 0x1a1418);
+        pick.forEach(([x, z], i) => {
+          for (let k = 0; k < 3; k++) P(G.cone, obs, x + (k - 1) * 0.6, 1.1 + k * 0.2, z + (k % 2) * 0.4, [0.8, 2.2 + k * 0.6, 0.8], k, (k - 1) * 0.2);
+          solid(x, z, 0.8);
+        });
+        scatter(4, 5).forEach(([x, z]) => { P(G.disc, lava, x, 0.03, z, [2.4 + rnd() * 2, 1, 1.8 + rnd()]); P(G.tor, obs, x, 0.04, z, [2.6, 1.4, 2.0], 0, Math.PI / 2); });
+        for (let k = 0; k < 8; k++) P(G.box, lava, cx + (rnd() - 0.5) * w, 0.02, cz + (rnd() - 0.5) * d, [0.1, 0.02, 2 + rnd() * 3], rnd() * 3);
+        break;
+      }
+      case 'grass': {
+        const grass = fleshMaterial(0x3a6a2a), rock = stoneMaterial(405, 0x7a7a70), wood = fleshMaterial(0x5a4028);
+        pick.forEach(([x, z], i) => {
+          if (i % 2) { P(G.dod, rock, x, 0.6, z, [1.8, 1.3, 1.6], rnd() * 3); solid(x, z, 0.8); }
+          else { for (let k = 0; k < 3; k++) P(G.box, wood, x + (k - 1) * 0.9, 0.5, z, [0.12, 1.0, 0.12]); P(G.box, wood, x, 0.8, z, [2.0, 0.08, 0.06]); P(G.box, wood, x, 0.45, z, [2.0, 0.08, 0.06]); solid(x, z, 0.3); }
+        });
+        const flowers = [glowMaterial(0xffe08a, 0.8), glowMaterial(0xff8ad0, 0.8), glowMaterial(0x9ad8ff, 0.8)];
+        scatter(16, 1).forEach(([x, z], i) => {
+          for (let k = 0; k < 4; k++) P(G.cone, grass, x + (k - 1.5) * 0.14, 0.22, z + (k % 2) * 0.12, [0.08, 0.45, 0.08], 0, (k - 1.5) * 0.25);
+          if (i % 3 === 0) P(G.sph, flowers[i % 3], x, 0.5, z, 0.14);
+        });
+        for (let k = 0; k < 30; k++) P(G.sph, glowMaterial(0xffffff, 2.2), cx + (rnd() - 0.5) * w, H - 0.05, cz + (rnd() - 0.5) * d, 0.06);
+        P(G.sph, glowMaterial(0xfff4d0, 1.8), cx + w * 0.3, H - 0.1, cz - d * 0.3, [1.2, 0.1, 1.2]);   // 月
+        break;
+      }
+      case 'sky': {
+        const marble = stoneMaterial(406, 0xf4f0e6), gold = metalMaterial(407, 0xd8b040), rock = stoneMaterial(408, 0x8a8a9a);
+        pick.forEach(([x, z], i) => {
+          P(G.cyl, marble, x, H / 2, z, [0.9, H, 0.9]);
+          P(G.box, gold, x, H - 0.25, z, [1.3, 0.3, 1.3]);
+          P(G.box, marble, x, 0.25, z, [1.4, 0.5, 1.4]);
+          solid(x, z, 0.7);
+        });
+        // 浮島（当たりなし・宙に）
+        for (let k = 0; k < 3; k++) {
+          const x = cx + (rnd() - 0.5) * (w - 6), z = cz + (rnd() - 0.5) * (d - 6), y = 3.8 + rnd() * 1.2;
+          P(G.cone, rock, x, y - 0.6, z, [2.0, 1.6, 2.0], rnd() * 3, Math.PI);
+          P(G.cyl, fleshMaterial(0x6a9a5a), x, y + 0.2, z, [2.0, 0.2, 2.0]);
+        }
+        for (let k = 0; k < 24; k++) P(G.sph, glowMaterial(0xd8e8ff, 2.2), cx + (rnd() - 0.5) * w, H - 0.05, cz + (rnd() - 0.5) * d, 0.07);
+        for (let k = 0; k < 4; k++) P(G.sph, fleshMaterial(0xdde4f4), cx + (rnd() - 0.5) * w, H - 0.4, cz + (rnd() - 0.5) * d, [3, 0.3, 1.6]);
+        break;
+      }
+      case 'abyss': {
+        const flesh = fleshMaterial(0x4a1a4a), crys = glowMaterial(0xc06aff, 1.6);
+        pick.forEach(([x, z], i) => {
+          for (let k = 0; k < 7; k++) P(G.sph, flesh, x + Math.sin(k * 0.8) * 0.3, 0.3 + k * 0.45, z + Math.cos(k * 0.6) * 0.3, 0.6 - k * 0.06);
+          P(G.sph, glowMaterial(0xff4040, 2.8), x, 3.5, z, 0.2);
+          solid(x, z, 0.5);
+        });
+        scatter(6).forEach(([x, z]) => { for (let k = 0; k < 3; k++) P(G.oct, crys, x + (k - 1) * 0.3, 0.4 + k * 0.15, z, [0.35, 1.2, 0.35], 0, (k - 1) * 0.4); });
+        for (let k = 0; k < 6; k++) P(G.sph, glowMaterial(0xff6040, 2.4), cx + (rnd() < 0.5 ? -1 : 1) * (w / 2 - 0.1), 2 + rnd() * 3, cz + (rnd() - 0.5) * d, [0.1, 0.16, 0.16]);
+        break;
+      }
+      case 'desert': {
+        const sand = stoneMaterial(409, 0xd8b880), sandstone = stoneMaterial(410, 0xc8a070), gold = metalMaterial(411, 0xd8b040);
+        pick.forEach(([x, z], i) => {
+          if (i % 2) { P(G.cone4, sandstone, x, 2.2, z, [1.2, 4.4, 1.2], Math.PI / 4); P(G.cone4, gold, x, 4.6, z, [0.35, 0.5, 0.35], Math.PI / 4); solid(x, z, 0.6); }
+          else { P(G.box, sandstone, x, 0.45, z, [1.2, 0.9, 2.4]); P(G.box, gold, x, 0.95, z, [1.0, 0.1, 2.0]); solid(x, z, 0.9); }
+        });
+        scatter(5).forEach(([x, z]) => P(G.sph, sand, x, 0, z, [3 + rnd() * 2, 0.7, 2 + rnd()]));
+        scatter(4).forEach(([x, z]) => { P(G.sph, fleshMaterial(0x8a5a3a), x, 0.45, z, [0.6, 0.9, 0.6]); P(G.cyl, fleshMaterial(0x8a5a3a), x, 0.95, z, [0.3, 0.2, 0.3]); });
+        break;
+      }
+      case 'void': {
+        const dark = metalMaterial(412, 0x14141c), red = glowMaterial(0xff4a6a, 2.0);
+        pick.forEach(([x, z], i) => {
+          P(G.box, dark, x, H / 2, z, [1, H, 1], Math.PI / 4);
+          P(G.box, red, x, H / 2, z, [0.08, H, 1.05], Math.PI / 4);
+          solid(x, z, 0.7);
+        });
+        for (let k = 0; k < 6; k++) P(G.box, red, cx + (rnd() - 0.5) * w, 2.5 + rnd() * 3, cz + (rnd() - 0.5) * d, 0.3 + rnd() * 0.4, rnd() * 3, rnd() * 3);
+        break;
+      }
+    }
+  }
+
+  /* ── 中ボスを目覚めさせる仕掛け ──────────────
+     altars : 四つの部屋の祭壇に陽光弾を当てて灯す
+     stone  : 巡る光の罠を避け、封印石に触れ続ける
+     mirror : 天窓の光を鏡で導き、封印の水晶に当てる */
+  _addEliteGimmick(rnd) {
+    const types = ['altars', 'stone', 'mirror'];
+    const type = types[(this.floor + Math.floor(rnd() * 3)) % 3];
+    const busy = (r) => r === this.startRoom || r === this.gateRoom || r.hasHazard ||
+      (this.rest && Math.abs(this.rest.x - r.x) < r.w / 2 && Math.abs(this.rest.z - r.z) < r.d / 2) ||
+      this.gimmicks.chests.some(c => Math.abs(c.x - r.x) < r.w / 2 && Math.abs(c.z - r.z) < r.d / 2);
+    let free = this.rooms.filter(r => !busy(r));
+    if (!free.length) free = this.rooms.filter(r => r !== this.startRoom);
+    // 入口から遠めの部屋を選ぶ
+    const sr = this.startRoom;
+    free.sort((a, b) => Math.hypot(b.x - sr.x, b.z - sr.z) - Math.hypot(a.x - sr.x, a.z - sr.z));
+    const room = free[Math.min(free.length - 1, Math.floor(rnd() * Math.min(3, free.length)))];
+    const G = this.eliteG = { type, solved: false, room, spot: new THREE.Vector3(room.x, 0, room.z) };
+    room.gimmick = true;
+    // 床に刻む封印の紋（ここで目覚める）
+    const seal = new THREE.Mesh(new THREE.RingGeometry(3.4, 4.0, 48),
+      new THREE.MeshBasicMaterial({ color: 0xff3a5a, transparent: true, opacity: 0.35,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+    seal.rotation.x = -Math.PI / 2; seal.position.set(room.x, 0.05, room.z);
+    this.group.add(seal);
+    G.seal = seal;
+
+    if (type === 'altars') {
+      // 封印の間を除いた部屋から四つ（足りなければ封印の間にも置く）
+      let pool = this.rooms.filter(r => r !== this.startRoom && r !== room);
+      pool = pool.sort(() => rnd() - 0.5);
+      while (pool.length < 4) pool.push(room);
+      G.altars = pool.slice(0, 4).map((r, i) => this._addAltar(r.x - 4, r.z + 3.5, i === 3 && r === room ? 2 : 0));
+    } else if (type === 'stone') {
+      const g = new THREE.Group();
+      const stone = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.8, 3.4, 6), stoneMaterial(420, 0x3a3440));
+      stone.position.y = 1.7; g.add(stone);
+      const rune = new THREE.Mesh(new THREE.TorusGeometry(0.75, 0.05, 8, 24), glowMaterial(0xff3a5a, 2.4, true));
+      rune.position.y = 2.2; rune.rotation.x = Math.PI / 2; g.add(rune);
+      const orb = new THREE.Mesh(new THREE.OctahedronGeometry(0.4, 0), glowMaterial(0xff5a70, 2.8, true));
+      orb.position.y = 3.9; g.add(orb);
+      const l = new THREE.PointLight(0xff5a70, 2.6, 14, 2); l.position.y = 3.2; g.add(l);
+      g.position.set(room.x, 0, room.z);
+      this.group.add(g);
+      this.colliders.push({ min: { x: room.x - 0.7, z: room.z - 0.7 }, max: { x: room.x + 0.7, z: room.z + 0.7 } });
+      G.stone = { g, rune, orb, light: l, hold: 0 };
+      // 巡る光の罠（一か所だけ隙間が回ってくる）
+      G.pads = [];
+      const N = 12, R = 3.6;
+      for (let i = 0; i < N; i++) {
+        const a = i / N * Math.PI * 2;
+        const m = new THREE.Mesh(new THREE.CircleGeometry(1.15, 18),
+          new THREE.MeshBasicMaterial({ color: 0xff3040, transparent: true, opacity: 0.5,
+            blending: THREE.AdditiveBlending, depthWrite: false }));
+        m.rotation.x = -Math.PI / 2;
+        m.position.set(room.x + Math.cos(a) * R, 0.05, room.z + Math.sin(a) * R);
+        this.group.add(m);
+        G.pads.push({ x: m.position.x, z: m.position.z, r: 1.15, mesh: m, i, on: true });
+      }
+    } else {
+      // 天窓の光 → 鏡1 → 鏡2 → 封印の水晶
+      const S = { x: room.x - 6, z: room.z - 6 }, M1 = { x: room.x - 6, z: room.z + 6 },
+        M2 = { x: room.x + 6, z: room.z + 6 }, C = { x: room.x + 6, z: room.z - 6 };
+      // 光源：天窓の光を受ける集光鏡
+      const src = new THREE.Group();
+      src.add(new THREE.Mesh(new THREE.CylinderGeometry(0.8, 1.0, 0.8, 12), stoneMaterial(421, 0x8a8a94)));
+      const lens = new THREE.Mesh(new THREE.SphereGeometry(0.45, 14, 10), glowMaterial(0xfff0c0, 3.0));
+      lens.position.y = 1.4; src.add(lens);
+      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.3, WALL_H, 16, 1, true),
+        new THREE.MeshBasicMaterial({ color: 0xffe6a8, transparent: true, opacity: 0.22,
+          blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+      shaft.position.y = WALL_H / 2; src.add(shaft);
+      src.position.set(S.x, 0, S.z);
+      this.group.add(src);
+      this.colliders.push({ min: { x: S.x - 1, z: S.z - 1 }, max: { x: S.x + 1, z: S.z + 1 } });
+      const mkMirror = (p, correct) => {
+        const g = new THREE.Group();
+        g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.7, 0.5, 10), stoneMaterial(421, 0x8a8a94)));
+        const pane = new THREE.Mesh(new THREE.BoxGeometry(1.8, 2.2, 0.12), new THREE.MeshStandardMaterial({
+          color: 0xdde8ff, roughness: 0.05, metalness: 1.0, emissive: new THREE.Color(0x4a5a8a), emissiveIntensity: 0.4 }));
+        pane.position.y = 1.6;
+        const frame = new THREE.Mesh(new THREE.BoxGeometry(2.0, 2.4, 0.08), metalMaterial(422, 0xc9a227));
+        frame.position.set(0, 1.6, -0.06);
+        const piv = new THREE.Group(); piv.add(pane); piv.add(frame);
+        g.add(piv);
+        g.position.set(p.x, 0, p.z);
+        this.group.add(g);
+        this.colliders.push({ min: { x: p.x - 0.7, z: p.z - 0.7 }, max: { x: p.x + 0.7, z: p.z + 0.7 } });
+        let state = Math.floor(rnd() * 4);
+        if (state === correct) state = (state + 1) % 4;
+        return { x: p.x, z: p.z, g, piv, state, correct, turn: 0 };
+      };
+      // 向き：0=+X 1=-Z 2=-X 3=+Z
+      G.mirrors = [mkMirror(M1, 0), mkMirror(M2, 1)];
+      const cr = new THREE.Group();
+      const crystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.9, 0), glowMaterial(0xff5a70, 2.2, true));
+      crystal.scale.set(0.8, 1.8, 0.8); crystal.position.y = 2.0; cr.add(crystal);
+      cr.add(new THREE.Mesh(new THREE.CylinderGeometry(0.8, 1.0, 0.6, 8), stoneMaterial(420, 0x3a3440)));
+      cr.position.set(C.x, 0, C.z);
+      this.group.add(cr);
+      this.colliders.push({ min: { x: C.x - 0.9, z: C.z - 0.9 }, max: { x: C.x + 0.9, z: C.z + 0.9 } });
+      G.src = S; G.crystal = { x: C.x, z: C.z, g: cr, mesh: crystal };
+      G.beams = [0, 1, 2].map(() => {
+        const b = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 1, 10, 1, true),
+          new THREE.MeshBasicMaterial({ color: 0xfff0c0, transparent: true, opacity: 0.75,
+            blending: THREE.AdditiveBlending, depthWrite: false }));
+        b.visible = false;
+        this.group.add(b);
+        return b;
+      });
+      this._traceMirrors();
+    }
+  }
+
+  _addAltar(x, z, lit) {
+    const g = new THREE.Group();
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.95, 1.3, 8), stoneMaterial(423, 0x5a5460));
+    base.position.y = 0.65; g.add(base);
+    const bowl = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.12, 8, 18), metalMaterial(424, 0x8a7a4a));
+    bowl.rotation.x = Math.PI / 2; bowl.position.y = 1.35; g.add(bowl);
+    const flame = new THREE.Mesh(new THREE.ConeGeometry(0.35, 1.0, 10), glowMaterial(0xffd070, 3.0, true));
+    flame.position.y = 1.9; flame.visible = false; g.add(flame);
+    const ember = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), glowMaterial(0xff3a3a, 1.2, true));
+    ember.position.y = 1.4; g.add(ember);
+    const l = new THREE.PointLight(0xffc060, 0, 14, 2); l.position.y = 2.2; g.add(l);
+    g.position.set(x, 0, z);
+    this.group.add(g);
+    this.colliders.push({ min: { x: x - 0.8, z: z - 0.8 }, max: { x: x + 0.8, z: z + 0.8 } });
+    return { x, z, g, flame, ember, light: l, lit: false };
+  }
+
+  /** 鏡の光路をたどる。水晶に届いたら true */
+  _traceMirrors() {
+    const G = this.eliteG;
+    if (!G || G.type !== 'mirror') return false;
+    const DIR = [[1, 0], [0, -1], [-1, 0], [0, 1]];
+    const room = G.room;
+    const edge = (p, d) => {       // 部屋の端まで
+      const hx = room.w / 2 - 0.6, hz = room.d / 2 - 0.6;
+      const tx = d[0] ? ((d[0] > 0 ? room.x + hx : room.x - hx) - p.x) / d[0] : Infinity;
+      const tz = d[1] ? ((d[1] > 0 ? room.z + hz : room.z - hz) - p.z) / d[1] : Infinity;
+      return Math.min(tx, tz);
+    };
+    const seg = (b, a, c) => {
+      const len = Math.hypot(c.x - a.x, c.z - a.z);
+      b.visible = len > 0.1;
+      b.position.set((a.x + c.x) / 2, 1.6, (a.z + c.z) / 2);
+      b.scale.set(1, len, 1);
+      b.rotation.set(Math.PI / 2, 0, 0);
+      b.rotation.z = 0;
+      b.rotation.set(0, Math.atan2(c.x - a.x, c.z - a.z), 0);
+      b.rotateX(Math.PI / 2);
+    };
+    let p = { x: G.src.x, z: G.src.z }, d = [0, 1];
+    const targets = [G.mirrors[0], G.mirrors[1]];
+    let reached = false;
+    G.beams.forEach(b => { b.visible = false; });
+    for (let i = 0; i < 3; i++) {
+      // この向きで次に当たる物を探す
+      let hit = null, best = Infinity;
+      targets.concat([G.crystal]).forEach(o => {
+        const vx = o.x - p.x, vz = o.z - p.z;
+        const along = vx * d[0] + vz * d[1];
+        const side = Math.abs(vx * d[1] - vz * d[0]);
+        if (along > 0.5 && side < 0.8 && along < best) { best = along; hit = o; }
+      });
+      const endT = hit ? best : edge(p, d);
+      const end = { x: p.x + d[0] * endT, z: p.z + d[1] * endT };
+      seg(G.beams[i], p, end);
+      if (!hit) break;
+      if (hit === G.crystal) { reached = true; break; }
+      p = { x: hit.x, z: hit.z };
+      const nd = DIR[hit.state];
+      if (nd[0] === -d[0] && nd[1] === -d[1]) break;   // 来た方へは返せない
+      d = nd;
+    }
+    // 鏡の向き（入る光と出る光の二等分）
+    G.mirrors.forEach((m, i) => {
+      const inD = i === 0 ? [0, 1] : DIR[G.mirrors[0].state];
+      const out = DIR[m.state];
+      const nx = out[0] - inD[0], nz = out[1] - inD[1];
+      m.want = Math.atan2(nx, nz);
+    });
+    return reached;
+  }
+
+  /** 陽光弾で仕掛けを動かす。起きたことを返す */
+  shootGimmick(bx, bz) {
+    const G = this.eliteG;
+    if (!G || G.solved) return null;
+    if (G.type === 'altars') {
+      for (const a of G.altars) {
+        if (!a.lit && Math.hypot(bx - a.x, bz - a.z) < 1.4) {
+          a.lit = true; a.flame.visible = true; a.light.intensity = 3.2;
+          a.ember.material.emissive.setHex(0xffd070);
+          const left = G.altars.filter(x => !x.lit).length;
+          if (!left) G.solved = true;
+          return { kind: 'altar', left, x: a.x, z: a.z };
+        }
+      }
+    } else if (G.type === 'mirror') {
+      for (const m of G.mirrors) {
+        if (Math.hypot(bx - m.x, bz - m.z) < 1.3) {
+          m.state = (m.state + 1) % 4;
+          const ok = this._traceMirrors();
+          if (ok) G.solved = true;
+          return { kind: 'mirror', ok, x: m.x, z: m.z };
+        }
+      }
+    }
+    return null;
+  }
+
+  /** 封印石：罠の上にいるか／石に触れ続けたか */
+  stoneStep(px, pz, dt) {
+    const G = this.eliteG;
+    if (!G || G.type !== 'stone' || G.solved) return null;
+    let trap = false;
+    for (const p of G.pads) if (p.on && Math.hypot(px - p.x, pz - p.z) < p.r) trap = true;
+    const near = Math.hypot(px - G.stone.g.position.x, pz - G.stone.g.position.z) < 1.9;
+    if (near) G.stone.hold += dt; else G.stone.hold = Math.max(0, G.stone.hold - dt * 2);
+    if (G.stone.hold > 1.4) { G.solved = true; return 'solved'; }
+    return trap ? 'trap' : (near ? 'hold' : null);
+  }
+
+  /** 見取り図に出す目印 */
+  gimmickMarks() {
+    const G = this.eliteG, out = [];
+    if (!G || G.solved) return out;
+    if (G.type === 'altars') G.altars.forEach(a => out.push({ x: a.x, z: a.z, c: a.lit ? '#ffd070' : '#ff6a3a' }));
+    if (G.type === 'stone') out.push({ x: G.room.x, z: G.room.z, c: '#ff5a70', ring: true });
+    if (G.type === 'mirror') { G.mirrors.forEach(m => out.push({ x: m.x, z: m.z, c: '#c8d8ff' })); out.push({ x: G.crystal.x, z: G.crystal.z, c: '#ff5a70', ring: true }); }
+    return out;
+  }
+
+  /** 仕掛けが解けた後の片付け */
+  releaseGimmick() {
+    const G = this.eliteG;
+    if (!G) return;
+    if (G.stone) { G.stone.g.visible = false; this.colliders = this.colliders.filter(c => !(Math.abs((c.min.x + c.max.x) / 2 - G.room.x) < 0.1 && Math.abs((c.min.z + c.max.z) / 2 - G.room.z) < 0.1)); }
+    if (G.pads) G.pads.forEach(p => { p.on = false; p.mesh.visible = false; });
+    if (G.crystal) G.crystal.mesh.visible = false;
+  }
+
+  _updateGimmick(t, dt) {
+    const G = this.eliteG;
+    if (!G) return;
+    G.seal.rotation.z += dt * 0.4;
+    G.seal.material.opacity = G.solved ? 0.08 : 0.25 + Math.sin(t * 2) * 0.1;
+    if (G.altars) G.altars.forEach((a, i) => {
+      if (a.lit) a.flame.scale.set(1 + Math.sin(t * 9 + i) * 0.1, 1 + Math.sin(t * 13 + i) * 0.2, 1);
+      else a.ember.material.emissiveIntensity = 0.8 + Math.sin(t * 3 + i) * 0.5;
+    });
+    if (G.pads && !G.solved) {
+      const N = G.pads.length;
+      G.pads.forEach(p => {
+        // 隙間（三枚分）がゆっくり巡る
+        const ph = ((t * 0.45 - p.i / N) % 1 + 1) % 1;
+        p.on = ph > 0.25;
+        p.mesh.material.opacity = p.on ? 0.42 + Math.sin(t * 10) * 0.12 : 0.05;
+      });
+      G.stone.rune.rotation.z += dt * (1 + G.stone.hold * 4);
+      G.stone.orb.rotation.y += dt * 2;
+      G.stone.orb.material.emissiveIntensity = 2.8 + G.stone.hold * 4;
+    }
+    if (G.mirrors) {
+      G.mirrors.forEach(m => {
+        let diff = ((m.want - m.piv.rotation.y + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+        m.piv.rotation.y += diff * Math.min(1, dt * 6);
+      });
+      G.beams.forEach((b, i) => { b.material.opacity = 0.55 + Math.sin(t * 8 + i) * 0.15; });
+      if (!G.solved) G.crystal.mesh.rotation.y += dt;
+    }
   }
 
   /* ── 判定 ────────────────────────────── */
@@ -1303,6 +1812,10 @@ export class World {
   }
 
   update(t) {
+    const dt = this._lastT != null ? Math.min(0.1, t - this._lastT) : 0.016;
+    this._lastT = t;
+    this._updateGimmick(t, dt);
+    if (this._lavaMats) this._lavaMats.forEach(m => { m.emissiveIntensity = 1.8 + Math.sin(t * 1.7) * 0.6; });
     if (this.gimmicks) {
       if (this.gimmicks.hazards) {
         for (const h of this.gimmicks.hazards) {

@@ -153,6 +153,119 @@ export class Miko {
     this.group.add(this.circle);
   }
 
+  /**
+   * 装備の等級で姿を変える（0〜5）。伝説級は冠・光の羽衣・勾玉の輪。
+   * @param g {weapon, armor, charm}
+   */
+  applyLook(g) {
+    g = g || {};
+    const wr = g.weapon || 0, ar = g.armor || 0, cr = g.charm || 0;
+    const key = wr + '|' + ar + '|' + cr;
+    if (this._lookKey === key) return;
+    this._lookKey = key;
+    if (this.look) this.group.remove(this.look);
+    const L = this.look = new THREE.Group();
+    this.group.add(L);
+    this._lookAnim = [];
+    const gold = metalMaterial(96, 0xd8b040), white = fleshMaterial(0xfaf6ee);
+    const add = (geo, mat, x, y, z, parent) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); (parent || L).add(m); return m; };
+
+    // ── 祓いの道具（杖の先を飾る） ──
+    if (this.tipGroup) this.staff.remove(this.tipGroup);
+    const tip = new THREE.Group(); tip.position.y = 0.86; this.staff.add(tip); L.userData.tip = tip;
+    this.staffRing.material = (wr >= 3) ? gold : metalMaterial(94, 0xc9a227);
+    if (wr >= 1) for (let i = 0; i < 3 + wr * 2; i++) {
+      const a = i / (3 + wr * 2) * Math.PI * 2;
+      add(new THREE.SphereGeometry(0.03, 8, 6), gold, Math.cos(a) * 0.2, -0.12 - (i % 2) * 0.05, Math.sin(a) * 0.2, tip);
+    }
+    if (wr >= 2) for (let i = 0; i < 6; i++) {
+      const sh = add(new THREE.BoxGeometry(0.05, 0.28, 0.01), white, Math.cos(i) * 0.12, -0.3, Math.sin(i) * 0.12, tip);
+      sh.rotation.y = i;
+    }
+    if (wr >= 4) add(new THREE.SphereGeometry(0.11, 12, 10), glowMaterial(0xffe0a0, 3.0), 0, 0, 0, tip);
+    if (wr >= 5) {            // 日輪を戴く杖
+      const sun = new THREE.Group(); sun.position.y = 0.3; tip.add(sun);
+      add(new THREE.TorusGeometry(0.26, 0.03, 8, 28), glowMaterial(0xffd24a, 3.0), 0, 0, 0, sun);
+      for (let i = 0; i < 12; i++) {
+        const a = i / 12 * Math.PI * 2;
+        const r = add(new THREE.ConeGeometry(0.03, 0.18, 5), glowMaterial(0xffe27a, 2.6), Math.cos(a) * 0.38, Math.sin(a) * 0.38, 0, sun);
+        r.rotation.z = a - Math.PI / 2;
+      }
+      this._lookAnim.push((t) => { sun.rotation.z = t * 0.8; });
+    }
+    this.tipGroup = tip;
+
+    // ── 装束 ──
+    const robeCol = [0, 0xfaf6ee, 0xe8a0b0, 0xe8eef8, 0xf4f0ff, 0xfff4d8][ar];
+    if (ar >= 1) {            // 千早（透ける上衣）
+      const ch = add(new THREE.CylinderGeometry(0.3, 0.46, 0.72, 14, 1, true),
+        new THREE.MeshStandardMaterial({ color: robeCol, transparent: true, opacity: 0.55, side: THREE.DoubleSide, roughness: 0.6 }), 0, 1.0, 0);
+      ch.castShadow = false;
+      add(new THREE.TorusGeometry(0.27, 0.02, 6, 16), fleshMaterial(0xb3424a), 0, 1.3, 0.02).rotation.x = Math.PI / 2;
+    }
+    if (ar >= 3) {            // 長い打掛の裾
+      const uk = add(new THREE.CylinderGeometry(0.34, 0.66, 1.3, 16, 1, true, Math.PI * 0.2, Math.PI * 1.6),
+        new THREE.MeshStandardMaterial({ color: robeCol, roughness: 0.5, side: THREE.DoubleSide,
+          emissive: new THREE.Color(ar >= 5 ? 0x6a4a10 : 0x202030), emissiveIntensity: 0.4 }), 0, 0.7, -0.02);
+      uk.rotation.y = 0;   // 前を開けて緋袴を見せる
+    }
+    if (ar >= 4) {            // 宙に揺れる羽衣
+      [-1, 1].forEach(sx => {
+        const rib = new THREE.Group(); rib.position.set(0.35 * sx, 1.25, -0.1); L.add(rib);
+        const segs = [];
+        for (let i = 0; i < 8; i++) {
+          const sgm = add(new THREE.BoxGeometry(0.16, 0.02, 0.2),
+            new THREE.MeshStandardMaterial({ color: ar >= 5 ? 0xffe8a0 : 0xe8f0ff, transparent: true, opacity: 0.7,
+              emissive: new THREE.Color(ar >= 5 ? 0xffc040 : 0x8090c0), emissiveIntensity: ar >= 5 ? 1.2 : 0.5, side: THREE.DoubleSide }),
+            sx * (0.06 + i * 0.07), -i * 0.1, -i * 0.05, rib);
+          segs.push(sgm);
+        }
+        this._lookAnim.push((t) => segs.forEach((sg, i) => { sg.position.y = -i * 0.1 + Math.sin(t * 2.4 + i * 0.6) * 0.04 * i; sg.rotation.z = Math.sin(t * 2 + i) * 0.3; }));
+      });
+    }
+    if (ar >= 5) {            // 黄金の冠と背の光輪
+      const crown = new THREE.Group(); crown.position.set(0, 1.74, 0); L.add(crown);
+      add(new THREE.CylinderGeometry(0.2, 0.22, 0.06, 16), gold, 0, 0, 0, crown);
+      for (let i = 0; i < 9; i++) {
+        const a = i / 9 * Math.PI * 2;
+        add(new THREE.ConeGeometry(0.03, i % 2 ? 0.14 : 0.24, 5), gold, Math.cos(a) * 0.2, 0.1, Math.sin(a) * 0.2, crown);
+      }
+      add(new THREE.SphereGeometry(0.04, 8, 6), glowMaterial(0xff6a6a, 2.6), 0, 0.05, 0.22, crown);
+      const halo = add(new THREE.TorusGeometry(0.62, 0.03, 8, 32), glowMaterial(0xffd24a, 2.6), 0, 1.4, -0.35);
+      this._lookAnim.push((t) => { halo.rotation.z = t * 0.5; });
+    }
+
+    // ── 髪飾り・護符 ──
+    if (cr >= 1) {            // 桜の簪
+      for (let i = 0; i < 5; i++) {
+        const a = i / 5 * Math.PI * 2;
+        add(new THREE.SphereGeometry(0.035, 6, 5), fleshMaterial(0xffb0c8), -0.18 + Math.cos(a) * 0.05, 1.66 + Math.sin(a) * 0.05, 0.02);
+      }
+    }
+    if (cr >= 2) {            // 勾玉の首飾り
+      for (let i = 0; i < 7; i++) {
+        const a = Math.PI * 0.2 + i / 6 * Math.PI * 0.6;
+        add(new THREE.SphereGeometry(0.03, 6, 5), glowMaterial(0x6affa0, 1.2), Math.cos(a) * 0.2, 1.28 - Math.sin(a) * 0.05, Math.sin(a) * 0.2);
+      }
+    }
+    if (cr >= 3 && ar < 5) {  // 前天冠
+      add(new THREE.BoxGeometry(0.3, 0.06, 0.03), gold, 0, 1.7, 0.18);
+      add(new THREE.ConeGeometry(0.04, 0.12, 4), gold, 0, 1.78, 0.18);
+    }
+    if (cr >= 5) {            // 宙に浮かぶ勾玉の輪
+      const ring = new THREE.Group(); ring.position.y = 1.1; L.add(ring);
+      for (let i = 0; i < 8; i++) {
+        const a = i / 8 * Math.PI * 2;
+        const mg = add(new THREE.SphereGeometry(0.06, 8, 6), glowMaterial(i % 2 ? 0x6affa0 : 0xffd24a, 2.4), Math.cos(a) * 0.75, 0, Math.sin(a) * 0.75, ring);
+        mg.scale.set(1, 1, 1.5);
+      }
+      this._lookAnim.push((t) => { ring.rotation.y = t * 1.2; ring.position.y = 1.1 + Math.sin(t * 2) * 0.08; });
+    }
+    // 伝説級の光
+    this._legendGlow = (wr >= 5 || ar >= 5 || cr >= 5);
+    L.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  }
+
   /** 陣中帳に映すための姿 */
   makePortrait() {
     const g = this.group.clone(true);
@@ -236,6 +349,7 @@ export class Miko {
       b.m.position.y = 0.78 + Math.sin(t * 7 + i * 1.4) * 0.008;
     });
 
+    if (this._lookAnim) this._lookAnim.forEach(f => f(t));
     // 霊力は少しずつ戻る
     this.mp = Math.min(this.maxMp, this.mp + this.mpRegen * dt);
     if (this.stagger > 0) {

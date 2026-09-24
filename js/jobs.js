@@ -3,32 +3,38 @@
      位が上がるごとに技の点を得て、条件を満たした技を覚えていく。
      技は霊力（MP）を使う。装備は能力値を底上げする。
    ══════════════════════════════════════════════════════════════ */
+import { weaponGear } from './weapons.js';
 
 /* ── 五つの職 ──
    bias は素の伸び方への倍率。役割がはっきり分かれるようにしてある。 */
 export const JOBS = {
   hunter: {
     id: 'hunter', name: '陽狩人', short: '狩',
+    arms: ['gun', 'bow', 'shuriken'],
     desc: '陽光銃の扱いに長ける。遠くから確実に祓う。',
     bias: { ATK: 1.20, DEX: 1.15, CRI: 1.10, AGI: 1.05, MATK: 0.85, MP: 0.85, HP: 0.95 }
   },
   blade: {
     id: 'blade', name: '陽剣士', short: '剣',
+    arms: ['sword', 'axe', 'spear', 'ninjato'],
     desc: '陽を刃に宿し、間合いを詰めて斬り伏せる。',
     bias: { ATK: 1.30, HP: 1.15, DEF: 1.10, AGI: 1.05, MATK: 0.75, MP: 0.75, DEX: 0.9 }
   },
   caster: {
     id: 'caster', name: '陽術士', short: '術',
+    arms: ['staff', 'tome', 'lute'],
     desc: '陽の理を操る。霊力を糧に大きな術を放つ。',
     bias: { MATK: 1.35, MP: 1.35, MDEF: 1.15, LUK: 1.05, ATK: 0.70, DEF: 0.80, HP: 0.85 }
   },
   swift: {
     id: 'swift', name: '韋駄天', short: '韋',
+    arms: ['dagger', 'katar', 'claw', 'whip', 'ninjato'],
     desc: '風のごとく駆ける。速さと技巧で翻弄する。',
     bias: { AGI: 1.35, DEX: 1.25, CRI: 1.15, LUK: 1.10, HP: 0.85, DEF: 0.80, MATK: 0.9 }
   },
   guard: {
     id: 'guard', name: '守護者', short: '守',
+    arms: ['mace', 'axe', 'spear', 'sword'],
     desc: '陽の盾を掲げ、すべてを受け止める。',
     bias: { HP: 1.35, DEF: 1.30, MDEF: 1.20, ATK: 0.95, AGI: 0.80, DEX: 0.85, CRI: 0.8 }
   }
@@ -118,19 +124,50 @@ export const GEAR = {
   w2: { slot: 'weapon', name: '双陽の連銃',   rare: 2, mods: { ATK: 16, CRI: 8 },     desc: '二連の銃口が陽を吐く' },
   w3: { slot: 'weapon', name: '金烏の大筒',   rare: 3, mods: { ATK: 30, MATK: 14 },   desc: '日輪を撃ち出す大筒' },
   w4: { slot: 'weapon', name: '天日破',       rare: 4, mods: { ATK: 52, CRI: 14, DEX: 12 }, desc: '闇を貫くと伝わる銃' },
+  w5: { slot: 'weapon', name: '天照大銃',     rare: 5, mods: { ATK: 90, CRI: 24, DEX: 20, MATK: 30 }, desc: '伝説。陽そのものを撃ち出す' },
   // 防具
   a0: { slot: 'armor', name: '狩人の外套',   rare: 0, mods: { DEF: 0 },               desc: '着慣れた外套' },
   a1: { slot: 'armor', name: '鞣革の胴当て', rare: 1, mods: { DEF: 8, HP: 10 },       desc: '軽くて丈夫' },
   a2: { slot: 'armor', name: '陽紋の鎧',     rare: 2, mods: { DEF: 18, MDEF: 10 },    desc: '陽の紋が彫られた鎧' },
   a3: { slot: 'armor', name: '黄金の法衣',   rare: 3, mods: { DEF: 26, MDEF: 24, MP: 20 }, desc: '術士のための衣' },
   a4: { slot: 'armor', name: '不滅の陽鎧',   rare: 4, mods: { DEF: 44, HP: 60, MDEF: 28 }, desc: '陽そのものを纏う' },
+  a5: { slot: 'armor', name: '日輪の神衣',   rare: 5, mods: { DEF: 70, HP: 100, MDEF: 50, AGI: 16 }, desc: '伝説。黄金の外套と光輪' },
   // 護符
   t0: { slot: 'charm', name: '木彫りの護符', rare: 0, mods: { LUK: 0 },               desc: '母の手彫り' },
   t1: { slot: 'charm', name: '銀の鈴',       rare: 1, mods: { AGI: 8, LUK: 4 },       desc: '澄んだ音が響く' },
   t2: { slot: 'charm', name: '日輪の勾玉',   rare: 2, mods: { MATK: 14, MP: 16 },     desc: '仄かに温かい' },
   t3: { slot: 'charm', name: '八咫の羽',     rare: 3, mods: { AGI: 20, CRI: 12, LUK: 14 }, desc: '導きの鳥の羽' },
-  t4: { slot: 'charm', name: '天照の欠片',   rare: 4, mods: { ATK: 20, MATK: 20, LUK: 30 }, desc: '陽の欠片' }
+  t4: { slot: 'charm', name: '天照の欠片',   rare: 4, mods: { ATK: 20, MATK: 20, LUK: 30 }, desc: '陽の欠片' },
+  t5: { slot: 'charm', name: '八咫鏡',       rare: 5, mods: { ATK: 34, MATK: 34, LUK: 50, CRI: 20 }, desc: '伝説。闇を映し返す鏡' },
+
+  /* ── 日和の装備（who: 'miko'） ──
+     武器＝祓いの道具（霊撃で癒す量）、防具＝装束（霊防で加護）、護符＝髪飾り */
+  mw0: { who: 'miko', slot: 'weapon', name: '白木の御幣',   rare: 0, mods: { MATK: 0 },                    desc: '日和の手に馴染んだ御幣' },
+  mw1: { who: 'miko', slot: 'weapon', name: '神楽鈴',       rare: 1, mods: { MATK: 10, DEX: 6 },           desc: '澄んだ音が穢れを払う' },
+  mw2: { who: 'miko', slot: 'weapon', name: '玉串の錫杖',   rare: 2, mods: { MATK: 22, MP: 12 },           desc: '癒しの力が増す' },
+  mw3: { who: 'miko', slot: 'weapon', name: '八咫の大幣',   rare: 3, mods: { MATK: 40, DEX: 18 },          desc: '祓いの間が短くなる' },
+  mw4: { who: 'miko', slot: 'weapon', name: '天の羽々矢',   rare: 4, mods: { MATK: 64, MP: 30, LUK: 16 },  desc: '一度で多くを癒す' },
+  mw5: { who: 'miko', slot: 'weapon', name: '天照の御杖',   rare: 5, mods: { MATK: 110, MP: 60, DEX: 40, LUK: 30 }, desc: '伝説。日輪を戴く杖' },
+  ma0: { who: 'miko', slot: 'armor',  name: '白衣と緋袴',   rare: 0, mods: { MDEF: 0 },                    desc: '巫女の装い' },
+  ma1: { who: 'miko', slot: 'armor',  name: '千早',         rare: 1, mods: { MDEF: 10, HP: 8 },            desc: '舞のための薄衣' },
+  ma2: { who: 'miko', slot: 'armor',  name: '紅梅の装束',   rare: 2, mods: { MDEF: 22, DEF: 10 },          desc: '加護が長く続く' },
+  ma3: { who: 'miko', slot: 'armor',  name: '月白の打掛',   rare: 3, mods: { MDEF: 38, AGI: 14, HP: 20 },  desc: '軽やかに付き従う' },
+  ma4: { who: 'miko', slot: 'armor',  name: '天女の羽衣',   rare: 4, mods: { MDEF: 60, AGI: 24, MP: 24 },  desc: '宙に揺れる羽衣' },
+  ma5: { who: 'miko', slot: 'armor',  name: '大日の神衣',   rare: 5, mods: { MDEF: 100, HP: 60, AGI: 40, DEF: 40 }, desc: '伝説。黄金の冠と光の羽衣' },
+  mt0: { who: 'miko', slot: 'charm',  name: '紅の結い紐',   rare: 0, mods: { LUK: 0 },                     desc: '髪を結う紐' },
+  mt1: { who: 'miko', slot: 'charm',  name: '桜の簪',       rare: 1, mods: { LUK: 10, MP: 6 },             desc: '倍で癒す割合が増す' },
+  mt2: { who: 'miko', slot: 'charm',  name: '翡翠の勾玉',   rare: 2, mods: { MP: 20, LUK: 10 },            desc: '霊力が満ちる' },
+  mt3: { who: 'miko', slot: 'charm',  name: '金の前天冠',   rare: 3, mods: { MATK: 18, LUK: 22, MDEF: 12 }, desc: '神楽の冠' },
+  mt4: { who: 'miko', slot: 'charm',  name: '月読の櫛',     rare: 4, mods: { MATK: 30, LUK: 36, DEX: 20 }, desc: '夜を鎮める櫛' },
+  mt5: { who: 'miko', slot: 'charm',  name: '八尺瓊勾玉',   rare: 5, mods: { MATK: 50, LUK: 60, MP: 50, DEX: 30 }, desc: '伝説。宙に浮かぶ勾玉の輪' }
 };
+Object.assign(GEAR, weaponGear());
+/** 銃以外の武器の種類（未指定は銃） */
+export function wtypeOf(id) {
+  const g = GEAR[id];
+  if (!g || g.slot !== 'weapon' || g.who === 'miko') return 'gun';
+  return g.wtype || 'gun';
+}
 
 export const SLOTS = [
   { id: 'weapon', name: '武器' },
@@ -138,9 +175,10 @@ export const SLOTS = [
   { id: 'charm',  name: '護符' }
 ];
 
-/** 階の深さに応じて落ちる装備を選ぶ */
-export function rollGear(floor, luck) {
-  const keys = Object.keys(GEAR);
+/** 階の深さに応じて落ちる装備を選ぶ（who: 'hero' / 'miko'） */
+export function rollGear(floor, luck, who) {
+  who = who || 'hero';
+  const keys = Object.keys(GEAR).filter(k => (GEAR[k].who || 'hero') === who);
   const maxRare = Math.min(4, Math.floor(floor / 2));
   const bonus = Math.min(0.35, (luck || 0) * 0.002);
   const r = Math.random() + bonus;

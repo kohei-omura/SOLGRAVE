@@ -86,17 +86,19 @@
 
 <!-- HUD -->
 <div id="hud" hidden>
-  <div class="hud-sun">
-    <div class="sun-head"><span id="sun-icon">☀</span><span id="sun-src">カメラ</span></div>
-    <div class="sun-bar"><span id="sun-fill"></span><i id="sun-mark"></i></div>
-    <div class="sun-val"><b id="sun-num">0</b>％<span id="sun-full" class="sun-full" hidden>満陽</span></div>
-  </div>
+  <div class="hud-left">
   <div class="hud-hp" id="hud-hp">
     <div class="hp-lb">命</div>
     <div class="hp-bar"><span id="hp-fill"></span></div>
     <div class="hp-num" id="hp-num">3 / 3</div>
   </div>
-  <div class="hud-obj" id="hud-obj">地上で陽力を溜めよ</div>
+  <div class="hud-sun">
+    <div class="sun-head"><span id="sun-icon">☀</span><span id="sun-src">カメラ</span></div>
+    <div class="sun-bar"><span id="sun-fill"></span><i id="sun-mark"></i></div>
+    <div class="sun-val"><b id="sun-num">0</b>％<span id="sun-full" class="sun-full" hidden>満陽</span></div>
+  </div>
+  <div class="hud-obj" id="hud-obj"><button id="hud-obj-toggle" class="obj-tg" aria-label="目的の表示を切り替え">目</button><span id="hud-obj-txt">地上で陽力を溜めよ</span></div>
+  </div>
   <div class="hud-boss" id="hud-boss" hidden>
     <div class="boss-name">古き吸血鬼</div>
     <div class="boss-bar"><span id="boss-fill"></span></div>
@@ -120,7 +122,11 @@
   <button class="pad-btn pad-skill" id="btn-skill">技</button>
   <button class="pad-btn pad-talk" id="btn-talk" hidden>話す</button>
   <button class="pad-btn pad-key" id="btn-key" hidden>🗝 鍵を使う</button>
+  <button class="pad-btn pad-wpn" id="btn-weapon"><b>銃</b>銃</button>
+  <button class="pad-btn pad-stance" id="btn-stance">構 通常</button>
+  <div class="wpn-strip" id="wpn-strip" hidden></div>
 </div>
+<div id="fade" class="fade" hidden></div>
 
 <!-- カットイン -->
 <div id="cutin" class="overlay" hidden><div class="cutin-txt" id="cutin-txt"></div></div>
