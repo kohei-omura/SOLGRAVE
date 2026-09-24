@@ -40,22 +40,31 @@ export const ModelStore = {
 };
 
 let _libs = null;
-async function libs() {
-  if (_libs) return _libs;
-  const [{ GLTFLoader }, SK, VRM] = await Promise.all([
+function libs() {
+  // 二体を同時に読むので、読み込みは一度だけにまとめる
+  if (!_libs) _libs = Promise.all([
     import('three/addons/loaders/GLTFLoader.js'),
     import('three/addons/utils/SkeletonUtils.js'),
     import('@pixiv/three-vrm').catch(() => null)
-  ]);
-  _libs = { GLTFLoader, SK, VRM };
+  ]).then(([{ GLTFLoader }, SK, VRM]) => ({ GLTFLoader, SK, VRM }))
+    .catch(e => { _libs = null; throw e; });
   return _libs;
 }
 
 /** 読み込んで人形を作る。height は背丈（m） */
+/* 同梱の人物（作者：大村晃平。VRoid Studio で作成） */
+export const BUNDLED = { hero: 'models/hero.vrm', heroine: 'models/heroine.vrm' };
+
 export async function loadAvatar(who, height) {
+  // 設定で選んだ物があればそれを、無ければ同梱のモデルを使う
   const rec = await ModelStore.load(who);
-  if (!rec || !rec.buf) return null;
-  return buildRig(rec.buf, height, rec.flip, rec.name);
+  if (rec && rec.buf) return buildRig(rec.buf, height, rec.flip, rec.name);
+  if (localStorage.getItem('solgrave_nomodel_' + who) === '1') return null;   // 標準の姿を選んだ
+  const url = BUNDLED[who];
+  if (!url) return null;
+  const r = await fetch(url);
+  if (!r.ok) return null;
+  return buildRig(await r.arrayBuffer(), height, false, who === 'hero' ? '陽光狩人（同梱）' : '日和（同梱）');
 }
 
 export async function buildRig(buf, height, flip, name) {

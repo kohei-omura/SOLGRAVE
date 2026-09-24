@@ -1002,6 +1002,7 @@ class Game {
         try {
           const buf = await f.arrayBuffer();
           await ModelStore.save(key, buf, f.name);
+          try { localStorage.removeItem('solgrave_nomodel_' + key); } catch (e) {}
           await this.loadAvatars(key);
           UI.toast(f.name + ' を' + (key === 'hero' ? '主人公' : '日和') + 'に使います', 3000);
         } catch (e) {
@@ -1020,9 +1021,12 @@ class Game {
       });
       const del = document.getElementById('mdl-' + key + '-del');
       if (del) del.addEventListener('click', async () => {
-        await ModelStore.remove(key);
+        // 選んだ物があれば同梱のモデルへ、同梱を使っていれば手作りの姿へ
+        const had = await ModelStore.load(key);
+        if (had) { await ModelStore.remove(key); try { localStorage.removeItem('solgrave_nomodel_' + key); } catch (e) {} }
+        else { try { localStorage.setItem('solgrave_nomodel_' + key, '1'); } catch (e) {} }
         await this.loadAvatars(key);
-        UI.toast('標準の姿に戻しました');
+        UI.toast(had ? '同梱のモデルに戻しました' : '手作りの姿に戻しました');
       });
     });
   }
