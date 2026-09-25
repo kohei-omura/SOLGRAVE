@@ -111,7 +111,7 @@ export const GradeShader = {
     time: { value: 0 },
     vignette: { value: 0.82 },
     grain: { value: 0.03 },
-    aberr: { value: 0.0007 }
+    aberr: { value: 0.0002 }
   },
   vertexShader: `
     varying vec2 vUv;
@@ -376,3 +376,179 @@ function _makeGlow(color, intensity) {
   });
 }
 export { THREE };
+
+/* ══ 模様のある質感（煉瓦・敷石・丸石・板・タイル・土・漆喰・切石） ══
+   キャンバスに高さと色を描き、そこから法線・粗さを作る。外部の画像は使わない。
+   継ぎ目なく並ぶよう、すべて端で巡回させて描く。 */
+const _patCache = new Map();
+function _rng(seed) { let s = seed >>> 0; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; }
+
+function _pattern(kind, color, seed) {
+  const N = 512;
+  const H = new Float32Array(N * N);     // 高さ 0..1
+  const A = new Float32Array(N * N * 3); // 色
+  const R = new Float32Array(N * N);     // 粗さ
+  const base = new THREE.Color(color);
+  const rnd = _rng(seed || 7);
+  const put = (i, h, k, rough, tint) => {
+    H[i] = h; R[i] = rough;
+    const t = tint || base;
+    A[i * 3] = t.r * k; A[i * 3 + 1] = t.g * k; A[i * 3 + 2] = t.b * k;
+  };
+  const nz = (x, y, sc, sd) => fbm(x / N * sc, y / N * sc, 4, sd);
+  // 巡回するボロノイ（敷石・丸石）
+  const voronoi = (count, jit) => {
+    const pts = [];
+    const g = Math.round(Math.sqrt(count));
+    for (let j = 0; j < g; j++) for (let i = 0; i < g; i++) pts.push([(i + 0.5 + (rnd() - 0.5) * jit) / g * N, (j + 0.5 + (rnd() - 0.5) * jit) / g * N, rnd()]);
+    return (x, y) => {
+      let d1 = 1e9, d2 = 1e9, id = 0;
+      for (const p of pts) {
+        let dx = Math.abs(x - p[0]), dy = Math.abs(y - p[1]);
+        if (dx > N / 2) dx = N - dx; if (dy > N / 2) dy = N - dy;
+        const d = dx * dx + dy * dy;
+        if (d < d1) { d2 = d1; d1 = d; id = p[2]; } else if (d < d2) d2 = d;
+      }
+      return { edge: Math.sqrt(d2) - Math.sqrt(d1), d: Math.sqrt(d1), id };
+    };
+  };
+  const mortar = new THREE.Color(color).multiplyScalar(0.55).lerp(new THREE.Color(0x6a6660), 0.5);
+  if (kind === 'brick' || kind === 'block') {
+    const bh = kind === 'block' ? 128 : 64, bw = kind === 'block' ? 256 : 128, mw = kind === 'block' ? 5 : 6;
+    const vary = []; for (let i = 0; i < 64; i++) vary.push(0.82 + rnd() * 0.3);
+    for (let y = 0; y < N; y++) {
+      const row = Math.floor(y / bh), off = (row % 2) * bw / 2;
+      for (let x = 0; x < N; x++) {
+        const xx = (x + off) % N, col = Math.floor(xx / bw);
+        const ex = Math.min(xx % bw, bw - xx % bw), ey = Math.min(y % bh, bh - y % bh);
+        const e = Math.min(ex, ey);
+        const i = y * N + x, n = nz(x, y, 16, 3);
+        if (e < mw) put(i, 0.05 + n * 0.1, 0.8 + n * 0.3, 0.95, mortar);
+        else {
+          const bev = Math.min(1, (e - mw) / 6);
+          const v = vary[(row * 7 + col * 13) % 64];
+          const chip = nz(x, y, 40, 9) > 0.72 ? 0.25 : 0;
+          put(i, 0.55 + bev * 0.35 + n * 0.15 - chip, v * (0.85 + n * 0.3) * (1 - chip * 0.6), 0.75 + n * 0.2);
+        }
+      }
+    }
+  } else if (kind === 'flag' || kind === 'cobble') {
+    const vo = voronoi(kind === 'flag' ? 16 : 64, kind === 'flag' ? 0.7 : 0.9);
+    const gw = kind === 'flag' ? 4 : 5;
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const v = vo(x, y), i = y * N + x, n = nz(x, y, 20, 5);
+      if (v.edge < gw) put(i, 0.05 + n * 0.1, 0.55 + n * 0.3, 0.95, mortar);
+      else {
+        const dome = kind === 'cobble' ? Math.max(0, 1 - v.d / 40) : Math.min(1, (v.edge - gw) / 10);
+        put(i, 0.45 + dome * 0.45 + n * 0.15, (0.62 + v.id * 0.3) * (0.8 + n * 0.3) * (0.8 + dome * 0.25), 0.7 + n * 0.25);
+      }
+    }
+  } else if (kind === 'plank') {
+    const ph = 64;
+    for (let y = 0; y < N; y++) {
+      const b = Math.floor(y / ph), off = (b * 173) % N;
+      for (let x = 0; x < N; x++) {
+        const i = y * N + x, ey = Math.min(y % ph, ph - y % ph);
+        const grain = Math.sin((x + off) * 0.05 + nz(x + off, y, 8, 11) * 12) * 0.5 + 0.5;
+        const seam = ((x + off) % 256) < 3;
+        if (ey < 2 || seam) put(i, 0.05, 0.45, 0.9);
+        else put(i, 0.6 + grain * 0.15, (0.8 + (b % 3) * 0.08) * (0.8 + grain * 0.35), 0.55 + grain * 0.25);
+      }
+    }
+  } else if (kind === 'tile') {
+    const tw = 128, gw = 3;
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const i = y * N + x, e = Math.min(x % tw, tw - x % tw, y % tw, tw - y % tw);
+      const vein = Math.abs(Math.sin(x * 0.02 + nz(x, y, 6, 21) * 9));
+      if (e < gw) put(i, 0.1, 0.55, 0.8, mortar);
+      else put(i, 0.8, 0.9 + (1 - vein) * 0.15 - (vein < 0.08 ? 0.25 : 0), 0.18 + (vein < 0.08 ? 0.3 : 0));
+    }
+  } else if (kind === 'dirt') {
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const i = y * N + x, n = nz(x, y, 10, 31), m = nz(x, y, 50, 37);
+      const peb = m > 0.7 ? (m - 0.7) * 3 : 0;
+      put(i, 0.4 + n * 0.3 + peb * 0.4, 0.7 + n * 0.4 + peb * 0.3, 0.9 - peb * 0.2);
+    }
+  } else if (kind === 'roof') {   // 瓦
+    const rh = 48, rw = 64;
+    for (let y = 0; y < N; y++) {
+      const row = Math.floor(y / rh), off = (row % 2) * rw / 2;
+      for (let x = 0; x < N; x++) {
+        const xx = (x + off) % N, u = (xx % rw) / rw, v = (y % rh) / rh;
+        const arch = Math.sin(u * Math.PI);
+        const i = y * N + x, n = nz(x, y, 16, 41);
+        put(i, arch * (0.4 + v * 0.6), (0.6 + arch * 0.5) * (0.85 + n * 0.25), 0.45 + (1 - arch) * 0.4);
+      }
+    }
+  } else {                        // plaster 漆喰
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const i = y * N + x, n = nz(x, y, 8, 51), c = nz(x, y, 60, 57);
+      const crack = Math.abs(nz(x, y, 5, 59) - 0.5) < 0.008 ? 0.35 : 0;
+      put(i, 0.5 + n * 0.2 - crack, 0.88 + n * 0.18 - crack + (c - 0.5) * 0.08, 0.85);
+    }
+  }
+  // 色・法線・粗さのテクスチャ
+  const mk = (fill) => {
+    const c = document.createElement('canvas'); c.width = c.height = N;
+    const ctx = c.getContext('2d'); const img = ctx.createImageData(N, N);
+    for (let i = 0; i < N * N; i++) { const o = fill(i); img.data[i * 4] = o[0]; img.data[i * 4 + 1] = o[1]; img.data[i * 4 + 2] = o[2]; img.data[i * 4 + 3] = 255; }
+    ctx.putImageData(img, 0, 0);
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8;
+    return t;
+  };
+  const map = mk(i => [Math.min(255, A[i * 3] * 255), Math.min(255, A[i * 3 + 1] * 255), Math.min(255, A[i * 3 + 2] * 255)]);
+  map.colorSpace = THREE.SRGBColorSpace;
+  const h = (x, y) => H[((y + N) % N) * N + ((x + N) % N)];
+  const str = 6.0;
+  const nor = mk(i => {
+    const x = i % N, y = (i / N) | 0;
+    let nx = -(h(x + 1, y) - h(x - 1, y)) * str, ny = (h(x, y + 1) - h(x, y - 1)) * str, nzv = 1;
+    const l = Math.hypot(nx, ny, nzv); nx /= l; ny /= l; nzv /= l;
+    return [(nx * 0.5 + 0.5) * 255, (ny * 0.5 + 0.5) * 255, (nzv * 0.5 + 0.5) * 255];
+  });
+  const rough = mk(i => { const v = R[i] * 255; return [v, v, v]; });
+  return { map, nor, rough };
+}
+
+/**
+ * 模様の材質。meters は模様1枚が覆う長さ（世界の単位）。
+ * 形の UV を世界の位置から作り直して使う（worldUV を参照）。
+ */
+export function patternMaterial(kind, color, meters, opts) {
+  opts = opts || {};
+  const key = kind + '|' + color + '|' + (opts.rough || '') + '|' + (opts.metal || '');
+  let m = _patCache.get(key);
+  if (m) return m;
+  const T = _pattern(kind, color, (color & 0xffff) + kind.length * 97);
+  m = new THREE.MeshStandardMaterial({
+    map: T.map, normalMap: T.nor, roughnessMap: T.rough,
+    roughness: opts.rough == null ? 1 : opts.rough, metalness: opts.metal || 0,
+    normalScale: new THREE.Vector2(opts.bump || 1.2, opts.bump || 1.2)
+  });
+  m.userData.worldUV = meters || 2;
+  _patCache.set(key, m);
+  return m;
+}
+
+/** 形の UV を、面の向きに応じて世界の位置から作り直す（模様が伸びない） */
+export function worldUV(geo, meters, matrix) {
+  const p = geo.attributes.position, n = geo.attributes.normal;
+  if (!p || !n) return geo;
+  let uv = geo.attributes.uv;
+  if (!uv) { uv = new THREE.BufferAttribute(new Float32Array(p.count * 2), 2); geo.setAttribute('uv', uv); }
+  const v = new THREE.Vector3(), nn = new THREE.Vector3();
+  const nm = matrix ? new THREE.Matrix3().getNormalMatrix(matrix) : null;
+  for (let i = 0; i < p.count; i++) {
+    v.fromBufferAttribute(p, i); nn.fromBufferAttribute(n, i);
+    if (matrix) { v.applyMatrix4(matrix); nn.applyMatrix3(nm).normalize(); }
+    const ax = Math.abs(nn.x), ay = Math.abs(nn.y), az = Math.abs(nn.z);
+    let u, w;
+    if (ay >= ax && ay >= az) { u = v.x; w = v.z; }
+    else if (ax >= az) { u = v.z * Math.sign(nn.x || 1); w = v.y; }
+    else { u = -v.x * Math.sign(nn.z || 1); w = v.y; }
+    uv.setXY(i, u / meters, w / meters);
+  }
+  uv.needsUpdate = true;
+  return geo;
+}

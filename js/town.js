@@ -3,7 +3,7 @@
      縦穴のまわりに開けた宿場町。住人と話し、道具を購う。
    ══════════════════════════════════════════════════════════════ */
 import * as THREE from 'three';
-import { stoneMaterial, metalMaterial, glowMaterial, fleshMaterial } from './gfx.js';
+import { stoneMaterial, metalMaterial, glowMaterial, fleshMaterial, patternMaterial, worldUV } from './gfx.js';
 
 /* ── 住人 ──
    kind: 'shop' 道具屋／'inn' 宿／'smith' 鍛冶／その他は語らい相手 */
@@ -135,12 +135,16 @@ export class Town {
   /** 街を建てる。colliders は world のものを借りる */
   build(colliders) {
     this.clear();
-    const wall = stoneMaterial(201, 0x9a8f7e);
-    const roof = stoneMaterial(202, 0x7a4038);
-    const wood = stoneMaterial(203, 0x6a5238);
+    const wall = patternMaterial('plaster', 0xe8e0cc, 2.5);
+    const roof = patternMaterial('roof', 0x4a4a58, 1.4, { rough: 0.8, metal: 0.2 });
+    const wood = patternMaterial('plank', 0x4a3424, 1.2);
+    const base = patternMaterial('block', 0x8a8478, 1.6);
+    const beam = patternMaterial('plank', 0x2e2018, 1.0);
 
     const box = (w, h, d, x, y, z, mat, solid) => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+      const g = new THREE.BoxGeometry(w, h, d);
+      if (mat.userData && mat.userData.worldUV) { g.translate(x, y, z); worldUV(g, mat.userData.worldUV); g.translate(-x, -y, -z); }
+      const m = new THREE.Mesh(g, mat);
       m.position.set(x, y, z); m.castShadow = false; m.receiveShadow = true;
       this.group.add(m);
       if (solid && colliders) {
@@ -197,10 +201,40 @@ export class Town {
       this.group.add(mat);
       this.doors.push({ x, z: z + d / 2 + 0.6, kind, variant: i, ring: mat, outZ: z + d / 2 + 2.6 });
       this.rooms.push({ x, z, w, d });
-      // 切妻屋根
-      const r = new THREE.Mesh(new THREE.ConeGeometry(Math.max(w, d) * 0.78, 1.9, 4), roof);
-      r.position.set(x, ht + 0.95, z); r.rotation.y = Math.PI / 4; r.castShadow = false;
+      // 石の土台と、真壁造りの柱・梁（漆喰の壁に黒い木組み）
+      box(w + 0.3, 0.55, d + 0.3, x, 0.27, z, base, false);
+      [-1, 0, 1].forEach(k => {
+        box(0.22, ht, 0.22, x + k * (w / 2), ht / 2, z + d / 2 + 0.02, beam, false);
+        box(0.22, ht, 0.22, x + k * (w / 2), ht / 2, z - d / 2 - 0.02, beam, false);
+      });
+      [-1, 1].forEach(k => box(0.22, ht, 0.22, x + k * (w / 2 + 0.02), ht / 2, z, beam, false));
+      box(w + 0.2, 0.22, 0.24, x, ht * 0.62, z + d / 2 + 0.03, beam, false);
+      box(w + 0.2, 0.24, 0.26, x, ht - 0.1, z + d / 2 + 0.03, beam, false);
+      box(w + 0.2, 0.24, 0.26, x, ht - 0.1, z - d / 2 - 0.03, beam, false);
+      [-1, 1].forEach(k => box(0.26, 0.24, d + 0.2, x + k * (w / 2 + 0.03), ht - 0.1, z, beam, false));
+      // 切妻屋根（瓦葺き・深い軒）。棟は東西に通す
+      const rw = w / 2 + 0.9, rh = 2.0, rd = d + 1.4;
+      const shape = new THREE.Shape();
+      shape.moveTo(-rw, 0); shape.lineTo(0, rh); shape.lineTo(rw, 0); shape.lineTo(rw - 0.25, -0.12); shape.lineTo(0, rh - 0.3); shape.lineTo(-rw + 0.25, -0.12); shape.closePath();
+      const rg = new THREE.ExtrudeGeometry(shape, { depth: rd, bevelEnabled: false });
+      rg.translate(0, 0, -rd / 2);
+      rg.rotateY(Math.PI / 2);
+      rg.translate(x, ht, z);
+      rg.computeVertexNormals();
+      worldUV(rg, 1.4);
+      const r = new THREE.Mesh(rg, roof);
+      r.castShadow = true; r.receiveShadow = true;
       this.group.add(r);
+      // 妻壁（東西の三角）と棟瓦
+      const gshape = new THREE.Shape(); gshape.moveTo(-d / 2, 0); gshape.lineTo(0, rh - 0.32); gshape.lineTo(d / 2, 0); gshape.closePath();
+      [-1, 1].forEach(k => {
+        const gg = new THREE.ShapeGeometry(gshape);
+        gg.rotateY(k * Math.PI / 2);                 // 外を向く面にする
+        gg.translate(x + k * (w / 2 + 0.01), ht, z);
+        worldUV(gg, 2.5);
+        this.group.add(new THREE.Mesh(gg, wall));
+      });
+      box(w + 1.9, 0.26, 0.3, x, ht + rh - 0.02, z, beam, false);
       // 障子窓（灯り）
       [-1, 1].forEach(sx => {
         const win = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 0.8),

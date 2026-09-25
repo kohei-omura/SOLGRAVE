@@ -333,7 +333,7 @@ export function buildHeroine() {
     sh.position.set(sd * 0.145, 1.33, 0);
     root.add(sh);
     const S = new THREE.Vector3(0, 0, 0);
-    const T = sd > 0 ? new THREE.Vector3(0.19, -0.35, 0.12) : new THREE.Vector3(-0.06, -0.36, 0.16);
+    const T = sd < 0 ? new THREE.Vector3(-0.19, -0.35, 0.12) : new THREE.Vector3(0.06, -0.36, 0.16);   // 右手（-X）が杖を握る
     const { E } = solveElbow(S, T, 0.23, 0.22, new THREE.Vector3(sd * 0.6, -0.2, -1));
     const up = limbMesh(0.05, 0.046, white); placeLimb(up, S, E); sh.add(up);
     const fo = limbMesh(0.043, 0.032, white); placeLimb(fo, E, T.clone().lerp(E, 0.28)); sh.add(fo);
@@ -515,7 +515,7 @@ export function buildHero() {
     [upper, fore, cuff, hand, elbow].forEach(m => { m.castShadow = true; root.add(m); });
     return { sd, S: new THREE.Vector3(sd * 0.2, 1.47, 0), upper, fore, cuff, hand, elbow, L1: 0.29, L2: 0.27 };
   };
-  const arms = [mkArm(1), mkArm(-1)];
+  const arms = [mkArm(-1), mkArm(1)];   // [右, 左]。右は体の -X 側
   const setArm = (arm, target) => {
     const pole = new THREE.Vector3(arm.sd * 0.5, -0.6, -0.8);
     const { E, T } = solveElbow(arm.S, target, arm.L1, arm.L2, pole);
@@ -526,8 +526,8 @@ export function buildHero() {
     arm.cuff.position.copy(E.clone().lerp(T, 0.85));
     arm.cuff.quaternion.copy(arm.fore.quaternion);
   };
-  setArm(arms[0], new THREE.Vector3(0.28, 1.0, 0.08));
-  setArm(arms[1], new THREE.Vector3(-0.28, 1.0, 0.08));
+  setArm(arms[0], new THREE.Vector3(-0.28, 1.0, 0.08));
+  setArm(arms[1], new THREE.Vector3(0.28, 1.0, 0.08));
 
   // 頭
   const H = makeHead(0.126, skin, 'hero');

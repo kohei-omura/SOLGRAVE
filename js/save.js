@@ -48,7 +48,7 @@ export const Save = {
 
 const CFG_KEY = 'solgrave_cfg';
 const DEFAULT_CFG = {
-  quality: 'mid', volume: 60, mute: false,
+  quality: 'high', volume: 60, mute: false,
   practice: false, manual: 70, allowCamera: null,
   relmove: 'cam', caminv: false, camflip: false, voice: true
 };

@@ -34,6 +34,8 @@ const Phase = {
 class Game {
   constructor() {
     this.cfg = Config.load();
+    // 画質は一度だけ「高」へ引き上げる（あとで設定から下げられる）
+    if (!this.cfg.q2) { this.cfg.quality = 'high'; this.cfg.q2 = true; Config.save(this.cfg); }
     this.phase = Phase.TITLE;
     this.input = { mx: 0, mz: 0, ax: 0, az: 0, fire: false, charge: false, dash: false };
     this.keys = {};
@@ -755,9 +757,11 @@ class Game {
     this.ambient.intensity = 1.5;
     this.hemi.intensity = 1.1;
     this.hemi.color.setHex(0xa8bcd8); this.hemi.groundColor.setHex(0x5a5348);
-    this.gfx.scene.fog.density = 0.008;
-    this.gfx.scene.background.setHex(0x05070b);
-    this.gfx.scene.fog.color.setHex(0x05070b);
+    // 昼の空と遠くの霞
+    this.gfx.scene.fog.density = 0.0035;
+    this.gfx.scene.background.setHex(0xa8bcd4);
+    this.gfx.scene.fog.color.setHex(0xa8bcd4);
+    this.gfx.scene.environmentIntensity = 0.55;
   }
 
   /* ── 技 ───────────────────────────────── */
@@ -1156,6 +1160,7 @@ class Game {
     this.gfx.scene.fog.density = B.fogD;
     this.gfx.scene.background.setHex(B.fog);
     this.gfx.scene.fog.color.setHex(B.fog);
+    this.gfx.scene.environmentIntensity = 0.3;
     this.enemies.clear();
     this.hostile.clear();
     this.enemies.setFloor(this.floor);
@@ -2147,10 +2152,7 @@ class Game {
     this.miko.reset(new THREE.Vector3(sp.x, 0, sp.z + 18));
     this.audio.startBGM('sacred');
     this._inSanct = true;
-    this.sunLight.intensity = 3.0;
-    this.ambient.intensity = 1.5;
-    this.hemi.intensity = 1.1;
-    this.gfx.scene.fog.density = 0.008;
+    this.surfaceLights();
     this.enemies.clear();
     this.pile.place(this.world.purifierSpot ? this.world.purifierSpot.clone() : new THREE.Vector3(-52, 0, 0));
     const sp2 = this.world.purifierSpot ? this.world.purifierSpot : new THREE.Vector3(-52, 0, 0);
