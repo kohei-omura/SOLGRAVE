@@ -145,6 +145,27 @@ export class AvatarRig {
       }
     });
     this.canIK = !!(this.bones.rightUpperArm && this.bones.rightLowerArm && this.bones.rightHand && this.rest.rightUpperArm);
+    // 指の骨（握りの深さを武器ごとに変える）
+    this.fingers = { left: [], right: [] };
+    const F = ['Index', 'Middle', 'Ring', 'Little'], J = ['Proximal', 'Intermediate', 'Distal'];
+    ['left', 'right'].forEach(side => {
+      F.forEach((f, fi) => J.forEach((j, ji) => {
+        const n = B(side + f + j);
+        if (n) this.fingers[side].push({ n, f, ji, fi });
+      }));
+      ['ThumbMetacarpal', 'ThumbProximal', 'ThumbDistal'].forEach((j, ji) => {
+        const n = B(side + j);
+        if (n) this.fingers[side].push({ n, f: 'Thumb', ji });
+      });
+      const mid = B(side + 'MiddleProximal'), hand = B(side + 'Hand');
+      this.rest[side + 'Hand'] = mid ? mid.position.clone().normalize() : new THREE.Vector3(side === 'left' ? 1 : -1, 0, 0);
+      this.palmLen = this.palmLen || {};
+      this.palmLen[side] = mid ? mid.position.length() : 0.08;
+    });
+    this.grip = { left: 0.2, right: 0.2 };
+    this.trigger = 0;
+    // 装身具を付ける置き場（骨ごと）
+    this.gear = [];
     // 骨の無い glTF は付属の動きを流す
     this.mixer = null;
     if (!vrm && clips && clips.length) {
@@ -179,6 +200,88 @@ export class AvatarRig {
     this._aim(lo, T.clone().sub(E));
   }
 
+  /**
+   * 手首の向き：前腕の向きに沿わせたまま、掌を palmWorld の方へ向ける。
+   * 無ければ掌を体の内側へ向けて自然に垂らす。
+   */
+  orientHand(side, palmWorld) {
+    const H = this.bones[side + 'Hand'], L = this.bones[side + 'LowerArm'];
+    if (!H || !L) return;
+    L.updateMatrixWorld(true);
+    const hq = this.holder.getWorldQuaternion(new THREE.Quaternion());
+    const r = this.rest[side + 'Hand'].clone().applyQuaternion(hq);           // 手の休みの向き（ワールド）
+    const n0 = new THREE.Vector3(0, -1, 0).applyQuaternion(hq);                  // 休みの掌（下向き）
+    const e = L.getWorldPosition(new THREE.Vector3());
+    const h = H.getWorldPosition(new THREE.Vector3());
+    const f = h.clone().sub(e).normalize();                                      // 前腕の向き
+    let p = palmWorld ? palmWorld.clone() : new THREE.Vector3(side === 'left' ? -1 : 1, 0, 0).applyQuaternion(hq);
+    p.sub(f.clone().multiplyScalar(p.dot(f)));
+    if (p.lengthSq() < 1e-6) p = n0.clone(); p.normalize();
+    const mk = (a, b) => { const c = new THREE.Vector3().crossVectors(a, b); return new THREE.Matrix4().makeBasis(a, b, c); };
+    const n0o = n0.clone().sub(r.clone().multiplyScalar(n0.dot(r))).normalize();
+    const Rw = mk(f, p).multiply(mk(r, n0o).transpose());                     // 休み→望みの回転
+    const qW = new THREE.Quaternion().setFromRotationMatrix(Rw).multiply(hq);
+    const pq = L.getWorldQuaternion(new THREE.Quaternion()).invert();
+    H.quaternion.copy(pq.multiply(qW));
+    H.updateMatrixWorld(true);
+  }
+
+  /** 指を曲げる */
+  curl(side, amount, trigger) {
+    const list = this.fingers[side];
+    if (!list || !list.length) return;
+    const sg = side === 'left' ? -1 : 1;
+    const cur = this.grip[side] += (amount - this.grip[side]) * 0.35;
+    list.forEach(({ n, f, ji, fi }) => {
+      if (f === 'Thumb') {
+        // 親指は掌の前へ回り込む
+        n.rotation.set(0, sg * (0.25 + cur * 0.55) * (ji === 0 ? 1 : 0.5), sg * cur * (ji === 0 ? 0.2 : 0.45));
+        return;
+      }
+      let a = cur * [1.0, 1.25, 0.9][ji] * (1 + fi * 0.06);
+      if (f === 'Index' && trigger) a *= 0.45;                   // 引き金に掛けた人差し指
+      n.rotation.set(0, 0, sg * a);
+    });
+  }
+
+  /** 掌の中心（ワールド）。武器はここに収める */
+  palm(side) {
+    const H = this.bones[side + 'Hand'];
+    if (!H) return null;
+    const ws = this.holder.getWorldScale(new THREE.Vector3()).y;
+    const hq = H.getWorldQuaternion(new THREE.Quaternion());
+    const r = this.rest[side + 'Hand'].clone().applyQuaternion(hq);
+    const down = new THREE.Vector3(0, -1, 0).applyQuaternion(hq);
+    return H.getWorldPosition(new THREE.Vector3())
+      .addScaledVector(r, this.palmLen[side] * ws * 0.75)
+      .addScaledVector(down, 0.025 * ws);
+  }
+
+  /** 骨に装身具を付ける。off は骨の原点から、人形の向き（+Z 正面・+Y 上・-X 右）でのずれ */
+  attach(bone, obj, off) {
+    const n = this.bones[bone] || (this.H && this.H.getNormalizedBoneNode(bone));
+    if (!n) return false;
+    const k = this.holder.scale.x || 1;
+    const flip = Math.abs(this.holder.rotation.y) > 1;
+    const g = new THREE.Group();
+    g.position.set((off ? off[0] : 0) / k * (flip ? -1 : 1), (off ? off[1] : 0) / k, (off ? off[2] : 0) / k * (flip ? -1 : 1));
+    g.scale.setScalar(1 / k);
+    if (flip) g.rotation.y = Math.PI;
+    g.add(obj);
+    n.add(g);
+    this.gear.push({ n, g });
+    return true;
+  }
+  clearGear() { this.gear.forEach(({ n, g }) => n.remove(g)); this.gear = []; }
+  /** 骨のワールド高さ（装身具の置き場を測る） */
+  boneY(name) {
+    const n = this.bones[name] || (this.H && this.H.getNormalizedBoneNode(name));
+    if (!n) return null;
+    this.root.updateMatrixWorld(true);
+    const p = n.getWorldPosition(new THREE.Vector3());
+    return this.root.worldToLocal(p).y;
+  }
+
   /** 腕を体の脇へ下ろす（ターゲットが無いとき） */
   relax(side, t) {
     const up = this.bones[side + 'UpperArm'], lo = this.bones[side + 'LowerArm'];
@@ -200,8 +303,9 @@ export class AvatarRig {
       const w = st.moving ? Math.sin(st.walkT || t * 8) * 0.55 : 0;
       if (b.leftUpperLeg) b.leftUpperLeg.rotation.set(w, 0, 0);
       if (b.rightUpperLeg) b.rightUpperLeg.rotation.set(-w, 0, 0);
-      if (b.leftLowerLeg) b.leftLowerLeg.rotation.set(st.moving ? -Math.max(0, -w) * 0.8 : 0, 0, 0);
-      if (b.rightLowerLeg) b.rightLowerLeg.rotation.set(st.moving ? -Math.max(0, w) * 0.8 : 0, 0, 0);
+      // 膝は後ろにだけ曲がる（脚が後ろへ振れた時に曲げる）
+      if (b.leftLowerLeg) b.leftLowerLeg.rotation.set(st.moving ? Math.max(0, w) * 0.9 : 0, 0, 0);
+      if (b.rightLowerLeg) b.rightLowerLeg.rotation.set(st.moving ? Math.max(0, -w) * 0.9 : 0, 0, 0);
       // 息づかい
       if (b.chest) b.chest.rotation.set(Math.sin(t * 1.8) * 0.02, 0, 0);
       if (b.spine) b.spine.rotation.set(st.moving ? 0.06 : 0, 0, 0);
@@ -211,6 +315,12 @@ export class AvatarRig {
         .add(new THREE.Vector3(s, 0, 0).applyQuaternion(this.root.getWorldQuaternion(new THREE.Quaternion())).multiplyScalar(0.5));
       if (st.right && this.canIK) this.reach('right', st.right, pole(-1)); else this.relax('right', t);
       if (st.left && this.bones.leftUpperArm && this.rest.leftUpperArm) this.reach('left', st.left, pole(1)); else this.relax('left', t);
+      // 手首：握る物に合わせて掌を向ける
+      this.orientHand('right', st.palmR || null);
+      this.orientHand('left', st.palmL || null);
+      // 指：握りの深さ（0=開く 1=固く握る）。人差し指は引き金に掛ける
+      this.curl('right', st.gripR == null ? 0.25 : st.gripR, st.trigger || 0);
+      this.curl('left', st.gripL == null ? 0.25 : st.gripL, 0);
       // 瞬き
       const em = this.vrm.expressionManager;
       if (em) {
@@ -221,6 +331,7 @@ export class AvatarRig {
         try { em.setValue('blink', v); } catch (e) {}
       }
     }
+    if (this.gearAnims) this.gearAnims.forEach(f => f(t, st.moving));
     if (this.vrm) this.vrm.update(dt);        // 揺れ物（髪・裾）と表情の反映
     if (this.mixer) this.mixer.update(dt * (st.moving ? 1.3 : 1));
   }

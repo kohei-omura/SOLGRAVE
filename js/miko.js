@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import { fleshMaterial, glowMaterial, metalMaterial } from './gfx.js';
 import { buildHeroine } from './figure.js';
+import { dressHeroine } from './attire.js';
 
 export class Miko {
   constructor(scene, particles) {
@@ -88,13 +89,13 @@ export class Miko {
       sh.position.set(0.1 * sx, 0.66, 0);
       this.staff.add(sh);
     });
-    this.staff.position.set(0.34, 0.66, 0.12);
-    this.staff.rotation.z = -0.16;
+    this.staff.position.set(-0.34, 0.66, 0.12);   // 右手に持つ
+    this.staff.rotation.z = 0.16;
     this.group.add(this.staff);
 
     // 杖の灯り（普段は消灯）
     this.staffLight = new THREE.PointLight(0xffe9a8, 0, 14, 2);
-    this.staffLight.position.set(0.34, 1.48, 0.1);
+    this.staffLight.position.set(-0.34, 1.48, 0.1);
     this.group.add(this.staffLight);
 
     // 祓いの舞（回復）の陣
@@ -114,9 +115,11 @@ export class Miko {
    */
   applyLook(g) {
     g = g || {};
+    this._lookG = g;
     const wr = g.weapon || 0, ar = g.armor || 0, cr = g.charm || 0;
+    if (this.avatar) dressHeroine(this.avatar, g);
     const key = wr + '|' + ar + '|' + cr;
-    if (this._lookKey === key) return;
+    if (this._lookKey === key) { if (this.look) this.look.visible = !this.avatar; return; }
     this._lookKey = key;
     if (this.look) this.group.remove(this.look);
     const L = this.look = new THREE.Group();
@@ -218,6 +221,7 @@ export class Miko {
     }
     // 伝説級の光
     this._legendGlow = (wr >= 5 || ar >= 5 || cr >= 5);
+    L.visible = !this.avatar;      // 外部モデルでは骨に付けた装身具を使う
     L.traverse(o => { if (o.isMesh) o.castShadow = true; });
   }
 
@@ -228,11 +232,21 @@ export class Miko {
     this.fig.root.visible = !rig;
     if (this.bell) this.bell.visible = !rig;
     if (rig) this.group.add(rig.root);
+    if (this._lookG) this.applyLook(this._lookG);
   }
 
   /** 陣中帳に映すための姿 */
   makePortrait() {
-    if (this.avatar) return this.avatar.makePortrait();
+    if (this.avatar) {
+      const g = this.avatar.makePortrait();
+      // 手の杖も添える
+      this.group.updateMatrixWorld(true);
+      const inv = new THREE.Matrix4().copy(this.group.matrixWorld).invert();
+      const c = this.staff.clone(true);
+      inv.multiply(this.staff.matrixWorld).decompose(c.position, c.quaternion, c.scale);
+      g.add(c);
+      return g;
+    }
     const g = this.group.clone(true);
     g.traverse(o => { if (o.isLight) o.visible = false; });
     g.scale.setScalar(1);
@@ -310,14 +324,22 @@ export class Miko {
     this.bell.position.y = 1.64 + Math.sin(t * 6) * 0.008;
     if (this.avatar) {
       // 右手は杖を握り、祓いの舞では左手も掲げる
+      if (!this.staffHold) { this.staffHold = new THREE.Group(); this.group.add(this.staffHold); this.staffHold.add(this.staff); }
       this.group.updateMatrixWorld(true);
-      const grip = this.staff.localToWorld(new THREE.Vector3(0, 0.3, 0));
-      const lift = this.healing > 0 ? this.group.localToWorld(new THREE.Vector3(-0.28, 1.45, 0.25)) : null;
+      // 握る点（手の位置へ寄せる前の、本来の位置）
+      const gripL = this.group.worldToLocal(this.staff.localToWorld(new THREE.Vector3(0, 0.3, 0))).sub(this.staffHold.position);
+      const grip = this.group.localToWorld(gripL.clone());
+      const lift = this.healing > 0 ? this.group.localToWorld(new THREE.Vector3(0.28, 1.45, 0.25)) : null;
+      const inward = new THREE.Vector3(1, 0, 0.2).transformDirection(this.group.matrixWorld);
       const dtA = this._lastA ? Math.min(0.1, t - this._lastA) : 0.016; this._lastA = t;
-      this.avatar.update(dtA, t, { moving: sp !== 0, walkT: this.walkT, right: grip, left: lift });
+      this.avatar.update(dtA, t, { moving: sp !== 0, walkT: this.walkT, right: grip, left: lift,
+        gripR: 0.9, palmR: inward, gripL: lift ? 0.1 : 0.3, palmL: lift ? new THREE.Vector3(0, 0, 1).transformDirection(this.group.matrixWorld) : null });
+      // 杖を実際の掌へ（浮かないように）
+      const pw = this.avatar.palm('right');
+      if (pw) this.staffHold.position.lerp(this.group.worldToLocal(pw).sub(gripL), 0.6);
     } else this.fig.update(t, { moving: sp !== 0 });
     // 杖は歩くとわずかに揺れ、鈴が鳴るように動く
-    this.staff.rotation.z = -0.16 + Math.sin(t * 2.2) * 0.05;
+    this.staff.rotation.z = 0.16 - Math.sin(t * 2.2) * 0.05;
     this.staffBells.forEach((b, i) => {
       b.m.position.y = 0.78 + Math.sin(t * 7 + i * 1.4) * 0.008;
     });
@@ -327,7 +349,7 @@ export class Miko {
     this.mp = Math.min(this.maxMp, this.mp + this.mpRegen * dt);
     if (this.stagger > 0) {
       this.stagger -= dt;
-      this.staff.rotation.z = -0.16 + Math.sin(t * 22) * 0.18;   // よろける
+      this.staff.rotation.z = 0.16 + Math.sin(t * 22) * 0.18;   // よろける
     }
     // 回復
     if (this.healCd > 0) this.healCd -= dt;
@@ -342,7 +364,7 @@ export class Miko {
       this.sleeves[1].rotation.z = -0.9 * k;
       // 杖を掲げ、宝珠が灯る
       const lift = Math.sin((1 - k) * Math.PI);
-      this.staff.rotation.z = -0.16 - lift * 0.9;
+      this.staff.rotation.z = 0.16 + lift * 0.9;
       this.staff.position.y = 0.62 + lift * 0.3;
       this.orb.material.emissiveIntensity = 4.5 * k;
       this.staffRing.material.emissive = this.staffRing.material.emissive || null;
@@ -355,7 +377,7 @@ export class Miko {
         this.circle.material.opacity = 0;
         this.orb.material.emissiveIntensity = 0;
         this.staffLight.intensity = 0;
-        this.staff.rotation.z = -0.16;
+        this.staff.rotation.z = 0.16;
         this.staff.position.y = 0.62;
       }
     }

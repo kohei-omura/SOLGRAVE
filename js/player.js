@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { metalMaterial, glowMaterial, fleshMaterial } from './gfx.js';
 import { buildWeaponModel } from './weapons.js';
 import { buildHero } from './figure.js';
+import { dressHero } from './attire.js';
 
 /* 武器ごとの構え（手元の向き）。模型は +Z が刃先 */
 const REST = {
@@ -51,11 +52,15 @@ export class Player {
     this.group.add(this.body);
     // 手元（武器を握る軸）
     this.hand = new THREE.Group();
-    this.hand.position.set(0.3, 1.34, 0.12);
-    this.body.add(this.hand);
+    this.hand.position.set(-0.3, 1.34, 0.12);   // 利き手（右）は体の -X 側
+    // 握りの置き場：外部モデルでは掌の位置へずらし、武器が手から浮かないようにする
+    this.gripR = new THREE.Group(); this.body.add(this.gripR);
+    this.gripL = new THREE.Group(); this.body.add(this.gripL);
+    this.gripR.add(this.hand);
+    this.gripR.add(this.gun);
     this.offHand = new THREE.Group();
-    this.offHand.position.set(-0.3, 1.34, 0.12);
-    this.body.add(this.offHand);
+    this.offHand.position.set(0.3, 1.34, 0.12);
+    this.gripL.add(this.offHand);
     this.wtype = 'gun'; this.wrare = 0;
     this.stance = 'normal';
     this._atk = null;
@@ -91,8 +96,8 @@ export class Player {
     const dual = this.wtype === 'gun' && this.stance === 'dual';
     if (dual && !this._gun2) {
       this._gun2 = this.gun.clone(true);
-      this._gun2.position.set(-0.26, 1.36, 0.2);
-      this.body.add(this._gun2);
+      this._gun2.position.set(0.26, 1.36, 0.2);
+      this.gripL.add(this._gun2);
     }
     if (this._gun2) this._gun2.visible = dual;
   }
@@ -137,16 +142,16 @@ export class Player {
       });
     }
     H.rotation.set(rx, ry, rz);
-    H.position.set(0.3, py, pz);
+    H.position.set(-0.3, py, pz);
     O.rotation.set(orx, -ry * 0.3, 0);
-    O.position.set(-0.3, 1.34, oz);
+    O.position.set(0.3, 1.34, oz);
     // 銃の構え
     if (this.wtype === 'gun' && !this.charging) {
       const st = this.stance;
       const gy = st === 'hip' ? 1.02 : st === 'rapid' ? 1.52 : 1.36;
       this.gun.position.y += (gy - this.gun.position.y) * Math.min(1, dt * 12);
       this.gun.rotation.z = st === 'hip' ? 0.5 : 0;
-      this.gun.position.x = st === 'rapid' ? 0.12 : 0.26;
+      this.gun.position.x = st === 'rapid' ? -0.12 : -0.26;
     }
   }
 
@@ -180,20 +185,20 @@ export class Player {
     this.muzzle = new THREE.Mesh(new THREE.SphereGeometry(0.1, 12, 10), glowMaterial(0xffe9a8, 2.2, true));
     this.muzzle.position.z = 1.28;
     this.gun.add(this.muzzle);
-    this.gun.position.set(0.26, 1.36, 0.2);   // 両手で構える位置
+    this.gun.position.set(-0.26, 1.36, 0.2);   // 両手で構える位置（右手側）
     this.group.add(this.gun);
 
     // 溜め演出
     this.orb = new THREE.Mesh(new THREE.SphereGeometry(0.3, 16, 14), glowMaterial(0xfff0c0, 3.0, true));
-    this.orb.position.set(0.26, 1.36, 1.6);
+    this.orb.position.set(-0.26, 1.36, 1.6);
     this.orb.visible = false;
     this.group.add(this.orb);
     this.chargeRing = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.045, 8, 28), glowMaterial(0xffd070, 2.4, true));
-    this.chargeRing.position.set(0.26, 1.36, 1.6);
+    this.chargeRing.position.set(-0.26, 1.36, 1.6);
     this.chargeRing.visible = false;
     this.group.add(this.chargeRing);
     this.chargeRing2 = new THREE.Mesh(new THREE.TorusGeometry(0.9, 0.03, 8, 28), glowMaterial(0xfff2c8, 2.0, true));
-    this.chargeRing2.position.set(0.26, 1.36, 1.6);
+    this.chargeRing2.position.set(-0.26, 1.36, 1.6);
     this.chargeRing2.visible = false;
     this.group.add(this.chargeRing2);
     // 足元の陣
@@ -278,7 +283,7 @@ export class Player {
     this.lamp.position.set(0, 1.7, 0);
     this.group.add(this.lamp);
     this.muzzleLight = new THREE.PointLight(0xffe9a8, 0, 9, 2);
-    this.muzzleLight.position.set(0.26, 1.36, 1.3);
+    this.muzzleLight.position.set(-0.26, 1.36, 1.3);
     this.group.add(this.muzzleLight);
   }
 
@@ -450,6 +455,7 @@ export class Player {
     this.avatar = rig || null;
     this.fig.root.visible = !rig;
     if (rig) this.body.add(rig.root);
+    if (this._lookG) this.applyLook(this._lookG);
   }
 
   /** 腕を握る物へ伸ばす（二関節の逆運動学） */
@@ -459,31 +465,84 @@ export class Player {
     const v = (x, y, z) => new THREE.Vector3(x, y, z);
     let rt, lt;
     if (this._victory > 0) {
-      rt = v(0.22, 2.05, 0.12); lt = v(-0.3, 1.0, 0.1);
+      rt = v(-0.22, 2.05, 0.12); lt = v(0.3, 1.0, 0.1);
     } else if (this.wtype === 'gun') {
       const gp = this.gun.position;
       rt = v(gp.x, gp.y - 0.06, gp.z + 0.02);
       if (this.stance === 'dual' && this._gun2) { const g2 = this._gun2.position; lt = v(g2.x, g2.y - 0.06, g2.z + 0.02); }
-      else if (this.stance === 'hip') lt = v(-0.24, 1.02, 0.1 + Math.sin(t * 2) * 0.02);
-      else lt = v(gp.x - 0.05, gp.y - 0.05, gp.z + 0.42);
+      else if (this.stance === 'hip') lt = v(0.24, 1.02, 0.1 + Math.sin(t * 2) * 0.02);
+      else lt = v(gp.x + 0.05, gp.y - 0.05, gp.z + 0.42);
     } else {
       rt = this.hand.position.clone();
       if (this.wtype === 'katar' || this.wtype === 'claw' || this.wtype === 'bow' || this.wtype === 'lute' || this.wtype === 'tome') lt = this.offHand.position.clone();
-      else lt = v(-0.27, 1.0 + Math.sin(t * 2) * 0.01, 0.06 + Math.sin(this.walkT) * 0.08);
+      else lt = v(0.27, 1.0 + Math.sin(t * 2) * 0.01, 0.06 + Math.sin(this.walkT) * 0.08);
     }
     if (this.avatar) {
-      // 外部モデル：体の座標をワールドへ直して、同じ手先へ腕を伸ばす
-      const relaxed = !(this._victory > 0) && this.wtype !== 'gun' && !(this.wtype === 'katar' || this.wtype === 'claw' || this.wtype === 'bow' || this.wtype === 'lute' || this.wtype === 'tome');
-      const hip = this.wtype === 'gun' && this.stance === 'hip';
-      this.body.updateMatrixWorld(true);
-      this.avatar.update(dt || 0.016, t, {
-        moving, walkT: this.walkT,
-        right: this.body.localToWorld(rt.clone()),
-        left: (relaxed || hip) ? null : this.body.localToWorld(lt.clone())
-      });
+      this._driveAvatar(t, dt, moving, rt, lt);
       return;
     }
+    this.gripR.position.set(0, 0, 0); this.gripL.position.set(0, 0, 0);
     F.setArm(R, rt); F.setArm(L, lt);
+  }
+
+  /**
+   * 外部モデルの腕と手。武器ごとに、どこを・どちらの掌で・どれだけ強く握るかを決める。
+   *  片手武器：右手で握り、左手は体の脇に
+   *  両手武器（槍・杖・斧・鈍器・剣）：左手を柄の先に添える
+   *  銃：右手は握りに人差し指を引き金へ、左手は銃身の下から支える
+   */
+  _driveAvatar(t, dt, moving, rt, lt) {
+    const A = this.avatar, w = this.wtype;
+    const TWO = { spear: 0.42, staff: 0.36, axe: 0.3, mace: 0.26, sword: -0.12 };
+    const FIST = { dagger: 1, sword: 1, mace: 1, axe: 1, spear: 0.95, katar: 1, claw: 1, whip: 0.95, ninjato: 1, staff: 0.85, bow: 0.9, tome: 0.45, lute: 0.55, shuriken: 0.7 };
+    const B = (x, y, z) => new THREE.Vector3(x, y, z).transformDirection(this.body.matrixWorld);
+    this.body.updateMatrixWorld(true);
+    const st = { moving, walkT: this.walkT, right: null, left: null };
+    let wantR = null, wantL = null;           // 握る点（握りの置き場の中の座標）
+    if (this._victory > 0) {
+      st.right = this.body.localToWorld(rt.clone());
+      st.gripR = 1; st.palmR = B(1, 0, 0);
+    } else if (w === 'gun') {
+      wantR = this.gun.position.clone().add(new THREE.Vector3(0, -0.07, 0.04));
+      st.right = this.body.localToWorld(wantR.clone());
+      st.gripR = 0.9; st.trigger = 1; st.palmR = B(0.9, -0.2, 0);
+      if (this.stance === 'dual' && this._gun2) {
+        wantL = this._gun2.position.clone().add(new THREE.Vector3(0, -0.07, 0.04));
+        st.left = this.body.localToWorld(wantL.clone());
+        st.gripL = 0.9; st.palmL = B(-0.9, -0.2, 0);
+      } else if (this.stance !== 'hip') {
+        // 銃身の下から支える
+        st.left = this.gun.localToWorld(new THREE.Vector3(0, -0.1, 0.52));
+        st.gripL = 0.6; st.palmL = B(0, 1, 0);
+      }
+    } else {
+      wantR = this.hand.position.clone();
+      st.right = this.body.localToWorld(wantR.clone());
+      st.gripR = FIST[w] == null ? 0.9 : FIST[w];
+      st.palmR = w === 'tome' ? B(0, 1, 0) : B(1, 0, 0);
+      if (TWO[w] != null && this._wModel) {
+        this._wModel.updateMatrixWorld(true);
+        st.left = this._wModel.localToWorld(new THREE.Vector3(0, 0, TWO[w]));
+        st.gripL = 0.95; st.palmL = B(-1, 0, 0);
+      } else if (w === 'katar' || w === 'claw' || w === 'bow' || w === 'lute' || w === 'tome') {
+        wantL = this.offHand.position.clone();
+        st.left = this.body.localToWorld(wantL.clone());
+        st.gripL = w === 'lute' ? 0.5 : (w === 'tome' ? 0.4 : 1);
+        st.palmL = w === 'tome' ? B(0, 1, 0) : B(-1, 0, 0);
+      }
+    }
+    A.update(dt || 0.016, t, st);
+    // 武器を実際の掌へ寄せる（腕が届かない構えでも手から離れない）
+    const snap = (grip, side, want) => {
+      if (!want) { grip.position.multiplyScalar(0.8); return; }
+      const pw = A.palm(side);
+      if (!pw) return;
+      const pl = this.body.worldToLocal(pw);
+      const off = pl.sub(want);
+      grip.position.lerp(off, 0.6);
+    };
+    snap(this.gripR, 'right', wantR);
+    snap(this.gripL, 'left', wantL);
   }
 
   /** 陽の化身へ／から戻す */
@@ -541,7 +600,20 @@ export class Player {
 
   /** 陣中帳に映すための姿（本編とは別に組み直す） */
   makePortrait() {
-    if (this.avatar) return this.avatar.makePortrait();
+    if (this.avatar) {
+      // 人形（装身具ごと）に、手の武器も同じ位置関係で添える
+      const g = this.avatar.makePortrait();
+      this.body.updateMatrixWorld(true);
+      const inv = new THREE.Matrix4().copy(this.body.matrixWorld).invert();
+      [this.gripR, this.gripL].forEach(grp => {
+        const c = grp.clone(true);
+        const m = inv.clone().multiply(grp.matrixWorld);
+        m.decompose(c.position, c.quaternion, c.scale);
+        c.traverse(o => { if (o.isLight || (o.userData && o.userData.noPortrait)) o.visible = false; });
+        g.add(c);
+      });
+      return g;
+    }
     const g = this.group.clone(true);
     // 演出用の飾りは外し、素の立ち姿にする
     g.traverse(o => {
@@ -559,6 +631,8 @@ export class Player {
    * @param g {weapon, armor, charm} の等級 0〜5
    */
   applyLook(g) {
+    this._lookG = g;
+    if (this.avatar) dressHero(this.avatar, g || {});
     g = g || {};
     const wr = g.weapon || 0, ar = g.armor || 0, cr = g.charm || 0;
 
@@ -614,7 +688,7 @@ export class Player {
       this.legendAura = grp;
       this.group.add(grp);
     }
-    this.legendAura.visible = legend;
+    this.legendAura.visible = legend && !this.avatar;   // 外部モデルでは骨に付けた外套と光輪を使う
     this._legend = legend;
     // 護符の等級で足元が輝く
     if (!this.charmGlow) {

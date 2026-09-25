@@ -3,7 +3,7 @@
      部屋5〜8＋通路。天窓（シャフト）でのみ陽力を補給できる
    ══════════════════════════════════════════════════════════════ */
 import * as THREE from 'three';
-import { stoneMaterial, metalMaterial, glowMaterial, fleshMaterial, noiseTexture } from './gfx.js';
+import { stoneMaterial, metalMaterial, glowMaterial, fleshMaterial, noiseTexture, patternMaterial, worldUV } from './gfx.js';
 import { biomeOf } from './biomes.js';
 
 const WALL_H = 6.5;      // 天井を高く
@@ -107,6 +107,7 @@ export class World {
       out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
       out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
       out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+      if (mat.userData && mat.userData.worldUV) worldUV(out, mat.userData.worldUV);
       const m = new THREE.Mesh(out, mat);
       m.castShadow = false; m.receiveShadow = true;
       this.group.add(m);
@@ -148,6 +149,7 @@ export class World {
       out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
       out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
       out.setIndex(new THREE.BufferAttribute(idx, 1));
+      if (mat.userData && mat.userData.worldUV) worldUV(out, mat.userData.worldUV);   // 模様を世界の寸法で貼る
       const m = new THREE.Mesh(out, mat);
       m.castShadow = false; m.receiveShadow = true;
       this.group.add(m);
@@ -186,6 +188,7 @@ export class World {
         out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
         out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
         out.setIndex(new THREE.BufferAttribute(idx, 1));
+        if (mat.userData && mat.userData.worldUV) worldUV(out, mat.userData.worldUV);
         const m = new THREE.Mesh(out, mat);
         m.castShadow = false; m.receiveShadow = true;
         this.group.add(m);
@@ -197,6 +200,7 @@ export class World {
 
   _box(w, h, d, x, y, z, mat, collide) {
     const g = new THREE.BoxGeometry(w, h, d);
+    if (mat.userData && mat.userData.worldUV) { g.translate(x, y, z); worldUV(g, mat.userData.worldUV); g.translate(-x, -y, -z); }
     const m = new THREE.Mesh(g, mat);
     m.position.set(x, y, z);
     m.castShadow = false; m.receiveShadow = true;   // 壁は影を落とさない（描画を軽く）
@@ -220,26 +224,26 @@ export class World {
     this.isSurface = true;
     this.torchColor = null;
 
-    const ground = stoneMaterial(11, 0x8d8471);
+    const ground = patternMaterial('dirt', 0x8a7a5e, 5);
     const f = new THREE.Mesh(new THREE.PlaneGeometry(220, 220), ground);
     f.rotation.x = -Math.PI / 2; f.receiveShadow = true;
     this.group.add(f);
 
-    const stone = stoneMaterial(13, 0x9a9287);
-    const dark  = stoneMaterial(15, 0x5a5560);
-    const wood  = stoneMaterial(16, 0x6a5238);
+    const stone = patternMaterial('block', 0x9a9287, 2.4);
+    const dark  = patternMaterial('block', 0x5a5560, 2.4);
+    const wood  = patternMaterial('plank', 0x6a5238, 1.6);
 
     /* ── 街の敷石（中央の広場と大路） ── */
-    const plaza = new THREE.Mesh(new THREE.CircleGeometry(20, 48), stoneMaterial(14, 0xb0a690));
+    const plaza = new THREE.Mesh(new THREE.CircleGeometry(20, 48), patternMaterial('cobble', 0xb0a490, 2.2));
     plaza.rotation.x = -Math.PI / 2; plaza.position.set(0, 0.02, 0);
     plaza.receiveShadow = true;
     this.group.add(plaza);
     // 南へ伸びる参道（遺跡へ）
-    const road = new THREE.Mesh(new THREE.PlaneGeometry(11, 60), stoneMaterial(17, 0xa89c88));
+    const road = new THREE.Mesh(new THREE.PlaneGeometry(11, 60), patternMaterial('flag', 0xa89c88, 3));
     road.rotation.x = -Math.PI / 2; road.position.set(0, 0.02, 34);
     this.group.add(road);
     // 西へ伸びる小径（聖域へ）
-    const lane = new THREE.Mesh(new THREE.PlaneGeometry(46, 7), stoneMaterial(18, 0x8f8574));
+    const lane = new THREE.Mesh(new THREE.PlaneGeometry(46, 7), patternMaterial('flag', 0x8f8574, 3));
     lane.rotation.x = -Math.PI / 2; lane.position.set(-30, 0.02, 0);
     this.group.add(lane);
 
@@ -247,7 +251,7 @@ export class World {
     const SX = -52, SZ = 0;
     this.sanctuary = { x: SX, z: SZ, r: 22 };
     // 荒れた土
-    const soil = new THREE.Mesh(new THREE.CircleGeometry(21, 40), stoneMaterial(19, 0x4a4640));
+    const soil = new THREE.Mesh(new THREE.CircleGeometry(21, 40), patternMaterial('dirt', 0x4a4640, 4));
     soil.rotation.x = -Math.PI / 2; soil.position.set(SX, 0.03, SZ);
     this.group.add(soil);
     // 教会（尖塔つき）
@@ -312,7 +316,7 @@ export class World {
 
     /* ══ 遺跡（南に遠く）── 階段状の神殿 ══ */
     const PX = 0, PZ = 74;
-    const pyr = stoneMaterial(23, 0x9c8d70);
+    const pyr = patternMaterial('block', 0x9c8d70, 3);
     // 五段のピラミッド
     for (let i = 0; i < 5; i++) {
       const w = 34 - i * 6;
@@ -378,8 +382,103 @@ export class World {
     em.rotation.x = -Math.PI / 2; em.position.set(PX, 17.2, PZ - 4.5);
     this.group.add(em);
 
+    this._sky();
+    this._meadow();
+    // 模様の材質は、形ごとに世界の寸法で UV を貼り直す
+    this.group.updateMatrixWorld(true);
+    this.group.traverse(o => {
+      if (o.isMesh && o.material && o.material.userData && o.material.userData.worldUV && !o.userData.wuv) {
+        o.userData.wuv = true;
+        worldUV(o.geometry, o.material.userData.worldUV, o.matrixWorld);
+      }
+    });
+
     this.playerStart = new THREE.Vector3(0, 0, -6);
     return this;
+  }
+
+  /** 空：天頂の青から地平の白、太陽の光暈（外部画像なし） */
+  _sky() {
+    const mat = new THREE.ShaderMaterial({
+      side: THREE.BackSide, depthWrite: false, fog: false,
+      uniforms: { sunDir: { value: new THREE.Vector3(18, 30, 12).normalize() } },
+      vertexShader: `varying vec3 vDir; void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+      fragmentShader: `
+        uniform vec3 sunDir; varying vec3 vDir;
+        void main(){
+          float h = clamp(vDir.y, -0.2, 1.0);
+          vec3 zen = vec3(0.16, 0.34, 0.72), hor = vec3(0.78, 0.86, 0.94), gnd = vec3(0.55, 0.52, 0.48);
+          vec3 c = mix(hor, zen, pow(max(h, 0.0), 0.55));
+          c = mix(c, gnd, smoothstep(0.0, -0.2, h));
+          float s = max(dot(normalize(vDir), sunDir), 0.0);
+          c += vec3(1.0, 0.9, 0.7) * (pow(s, 600.0) * 6.0 + pow(s, 12.0) * 0.35);
+          // 薄い雲
+          float cl = sin(vDir.x * 9.0 + vDir.z * 4.0) * sin(vDir.z * 7.0 - vDir.x * 3.0);
+          c = mix(c, vec3(1.0), smoothstep(0.55, 1.0, cl) * smoothstep(0.05, 0.4, h) * 0.35);
+          gl_FragColor = vec4(c * 1.05, 1.0);
+        }`
+    });
+    const sky = new THREE.Mesh(new THREE.SphereGeometry(230, 32, 16), mat);
+    sky.frustumCulled = false; sky.renderOrder = -10;
+    this.group.add(sky);
+    this.sky = sky;
+  }
+
+  /** 草原と木立ち：道・広場・建物を避けて、外周に草と木を生やす */
+  _meadow() {
+    const rnd = rngFactory(4242);
+    const free = (x, z) => {
+      if (Math.hypot(x, z) < 34) return false;                          // 街
+      if (Math.abs(x) < 8 && z > 0 && z < 104) return false;            // 参道と遺跡
+      if (Math.abs(z) < 6 && x < 0 && x > -60) return false;            // 聖域への小径
+      if (Math.hypot(x + 52, z) < 24) return false;                     // 聖域
+      if (Math.abs(x) < 22 && z > 48 && z < 100) return false;          // 遺跡の台
+      return Math.hypot(x, z) < 105;
+    };
+    // 草（一本ずつ向きと丈を変える）
+    const blade = new THREE.BufferGeometry();
+    blade.setAttribute('position', new THREE.Float32BufferAttribute([-0.05, 0, 0, 0.05, 0, 0, 0.0, 0.6, 0.03, 0.05, 0, 0, 0.12, 0.45, 0.02, 0.0, 0.6, 0.03, -0.12, 0.42, 0.02, -0.05, 0, 0, 0.0, 0.6, 0.03], 3));
+    blade.computeVertexNormals();
+    const COUNT = 9000;
+    const grass = new THREE.InstancedMesh(blade, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85, side: THREE.DoubleSide }), COUNT);
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), pos = new THREE.Vector3(), c = new THREE.Color();
+    let n = 0;
+    for (let i = 0; i < COUNT * 3 && n < COUNT; i++) {
+      const x = (rnd() - 0.5) * 210, z = (rnd() - 0.5) * 210;
+      if (!free(x, z)) continue;
+      pos.set(x, 0, z);
+      q.setFromEuler(new THREE.Euler((rnd() - 0.5) * 0.3, rnd() * 6.28, (rnd() - 0.5) * 0.3));
+      const k = 0.7 + rnd() * 1.1;
+      sc.set(k * 1.6, k, k * 1.6);
+      m.compose(pos, q, sc);
+      grass.setMatrixAt(n, m);
+      c.setHSL(0.22 + rnd() * 0.07, 0.45 + rnd() * 0.2, 0.26 + rnd() * 0.12);
+      grass.setColorAt(n, c);
+      n++;
+    }
+    grass.count = n;
+    grass.receiveShadow = true;
+    this.group.add(grass);
+    // 木立ち（幹と葉叢を材質ごとにまとめる）
+    const bark = patternMaterial('plank', 0x5a4030, 1.2);
+    const leaf = new THREE.MeshStandardMaterial({ color: 0x3a6a30, roughness: 0.8, flatShading: true });
+    const leaf2 = new THREE.MeshStandardMaterial({ color: 0x4a7a38, roughness: 0.8, flatShading: true });
+    const trunkG = new THREE.CylinderGeometry(0.28, 0.45, 1, 8);
+    const ballG = new THREE.IcosahedronGeometry(1, 1);
+    let trees = 0;
+    for (let i = 0; i < 400 && trees < 70; i++) {
+      const x = (rnd() - 0.5) * 200, z = (rnd() - 0.5) * 200;
+      if (!free(x, z) || Math.hypot(x, z) < 42) continue;
+      const hgt = 4 + rnd() * 4;
+      this._prop(trunkG, bark, x, hgt / 2, z, 0, [1, hgt, 1]);
+      for (let k = 0; k < 4; k++) {
+        const a = rnd() * 6.28, r = rnd() * 1.4;
+        this._prop(ballG, k % 2 ? leaf : leaf2, x + Math.cos(a) * r, hgt + (rnd() - 0.2) * 1.6, z + Math.sin(a) * r, rnd() * 3, 1.6 + rnd() * 1.4);
+      }
+      this.colliders.push({ min: { x: x - 0.5, z: z - 0.5 }, max: { x: x + 0.5, z: z + 0.5 } });
+      trees++;
+    }
+    this._flushGeos();
   }
 
   /* ── 地下ダンジョン（迷路） ─────────────────
@@ -403,14 +502,17 @@ export class World {
 
     // 10階ごとに趣が変わる：床・壁・天井の素材と灯りの色
     const B = this.biome = biomeOf(this.floor);
-    const tuned = (seed, color) => {
-      const m = stoneMaterial(seed, color).clone();
-      m.roughness = B.rough; m.metalness = B.metal || 0.06;
-      return m;
-    };
-    const floorMat = tuned(21 + this.band, B.floor);
-    const wallMat  = tuned(22 + this.band, B.wall);
-    this._ceilMat  = tuned(23 + this.band, B.ceil);
+    // 趣ごとの模様：床・壁・天井（煉瓦・敷石・タイル・板・土・切石・漆喰）
+    const PAT = {
+      grave:   ['flag', 'brick', 'brick'],  forest: ['dirt', 'plank', 'plank'],   palace: ['tile', 'plaster', 'plank'],
+      frost:   ['flag', 'block', 'block'],  volcano: ['cobble', 'block', 'cobble'], grass: ['dirt', 'brick', 'plaster'],
+      sky:     ['tile', 'block', 'plaster'], abyss: ['cobble', 'brick', 'cobble'], desert: ['flag', 'block', 'block'],
+      void:    ['tile', 'block', 'tile']
+    }[B.id] || ['flag', 'brick', 'brick'];
+    const tuned = (kind, color, meters) => patternMaterial(kind, color, meters, { rough: Math.min(1, B.rough + 0.15), metal: B.metal || 0 });
+    const floorMat = tuned(PAT[0], B.floor, PAT[0] === 'tile' ? 2.4 : 3);
+    const wallMat  = tuned(PAT[1], B.wall, 2.6);
+    this._ceilMat  = tuned(PAT[2], B.ceil, 3);
     this.torchColor = B.torch;
 
     // ── 迷路を掘る（深さ優先） ──
