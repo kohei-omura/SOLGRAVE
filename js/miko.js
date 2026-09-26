@@ -118,7 +118,7 @@ export class Miko {
     this._lookG = g;
     const wr = g.weapon || 0, ar = g.armor || 0, cr = g.charm || 0;
     if (this.avatar) dressHeroine(this.avatar, g);
-    const key = wr + '|' + ar + '|' + cr;
+    const key = wr + '|' + ar + '|' + cr + '|' + (g.pal ? g.pal.halo : '') + '|' + (g.cpal ? g.cpal.mote : '');
     if (this._lookKey === key) { if (this.look) this.look.visible = !this.avatar; return; }
     this._lookKey = key;
     if (this.look) this.group.remove(this.look);
@@ -222,6 +222,14 @@ export class Miko {
     // 伝説級の光
     this._legendGlow = (wr >= 5 || ar >= 5 || cr >= 5);
     L.visible = !this.avatar;      // 外部モデルでは骨に付けた装身具を使う
+    // 伝説の装束ごとの色：光る飾りを羽衣の色に染める（共有の材質は複製してから）
+    if (ar >= 5 && g.pal && g.pal.halo) {
+      L.traverse(o => {
+        if (!o.isMesh || !o.material || !o.material.emissive || o.material.emissiveIntensity < 0.5) return;
+        o.material = o.material.clone();
+        o.material.color.setHex(g.pal.halo); o.material.emissive.setHex(g.pal.emi || g.pal.halo);
+      });
+    }
     L.traverse(o => { if (o.isMesh) o.castShadow = true; });
   }
 

@@ -357,7 +357,8 @@ export class Gfx {
 
   /** 新しく並んだ物の材質を、先に（止めずに）用意しておく */
   prewarm() {
-    try { if (this.renderer.compileAsync) this.renderer.compileAsync(this.scene, this.camera); } catch (e) {}
+    // 非同期版は場面を作り替えると解放済みの材質を覗いて例外を出すため、場面の切り替え中に同期で済ませる
+    try { this.renderer.compile(this.scene, this.camera); } catch (e) {}
   }
 
   render(t) {
@@ -591,13 +592,22 @@ function _pattern(kind, color, seed) {
  * 模様の材質。meters は模様1枚が覆う長さ（世界の単位）。
  * 形の UV を世界の位置から作り直して使う（worldUV を参照）。
  */
+const PAT_GREY = 0xb4b4b4;
+const _patTex = new Map();
 export function patternMaterial(kind, color, meters, opts) {
   opts = opts || {};
   const key = kind + '|' + color + '|' + (opts.rough || '') + '|' + (opts.metal || '');
   let m = _patCache.get(key);
   if (m) return m;
-  const T = _pattern(kind, color, (color & 0xffff) + kind.length * 97);
+  // 模様の絵は種類ごとに一組だけ作り、色は材質の色で染める（色ごとに絵を作ると記憶を食い潰す）
+  let T = _patTex.get(kind);
+  if (!T) { T = _pattern(kind, PAT_GREY, 1234 + kind.length * 97); _patTex.set(kind, T); }
+  // 灰色で作った絵に掛けて、元の色で作った時と同じ明るさになるよう色を補う
+  const want = new THREE.Color(color), grey = new THREE.Color(PAT_GREY);
+  const lin = v => v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  const tint = new THREE.Color(lin(want.r) / Math.max(1e-4, lin(grey.r)), lin(want.g) / Math.max(1e-4, lin(grey.g)), lin(want.b) / Math.max(1e-4, lin(grey.b)));
   m = new THREE.MeshStandardMaterial({
+    color: tint,
     map: T.map, normalMap: T.nor, roughnessMap: T.rough,
     roughness: opts.rough == null ? 1 : opts.rough, metalness: opts.metal || 0,
     normalScale: new THREE.Vector2(opts.bump || 1.2, opts.bump || 1.2)

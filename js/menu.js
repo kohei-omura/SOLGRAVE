@@ -274,7 +274,8 @@ export class Menu {
     const RN = ['', '★', '★★', '★★★', '★★★★', '伝説'];
     const item = (id, cur) =>
       '<button class="gr-item r' + GEAR[id].rare + (id === cur ? ' on' : '') + '" data-id="' + id + '">' +
-      '<i class="gr-rr">' + RN[GEAR[id].rare] + '</i>' + esc(GEAR[id].name) + '<span class="gr-mod">' + modTxt(GEAR[id]) + '</span></button>';
+      '<i class="gr-rr">' + RN[GEAR[id].rare] + '</i>' + esc(GEAR[id].name) + '<span class="gr-mod">' + modTxt(GEAR[id]) + '</span>' +
+      (GEAR[id].legend ? '<span class="gr-lg">✦ ' + esc(GEAR[id].legend) + '</span>' : '') + '</button>';
     const byRare = (a, b) => GEAR[b].rare - GEAR[a].rare;
     el.innerHTML = SLOTS.map(sl => {
       const cur = c.gear[sl.id];
@@ -294,7 +295,8 @@ export class Menu {
           '<div class="gr-list">' + groups[sel].map(id => item(id, cur)).join('') + '</div>';
       } else body = '<div class="gr-list">' + owned.map(id => item(id, cur)).join('') + '</div>';
       return '<div class="gr-slot"><div class="gr-hd">' + sl.name + '</div>' +
-        '<div class="gr-cur">' + (cur && GEAR[cur] ? esc(GEAR[cur].name) + '<span class="gr-mod">' + modTxt(GEAR[cur]) + '</span>' : '—') + '</div>' +
+        '<div class="gr-cur">' + (cur && GEAR[cur] ? esc(GEAR[cur].name) + '<span class="gr-mod">' + modTxt(GEAR[cur]) + '</span>' +
+          (GEAR[cur].legend ? '<div class="gr-lg">✦ ' + esc(GEAR[cur].legend) + '</div>' : '') : '—') + '</div>' +
         body + '</div>';
     }).join('');
     el.querySelectorAll('.gr-tab').forEach(b => {

@@ -670,7 +670,7 @@ export class World {
 
         // 四方の壁（通じている面だけ戸口を空ける）
         const rowZ = (zPos, open) => {
-          if (!open) { this._box(w + T2 * 2, WALL_H, T2, cx, WALL_H / 2, zPos, wallMat, true); return; }
+          if (!open) { this._batch(w + T2 * 2, WALL_H, T2, cx, WALL_H / 2, zPos, wallMat, true); return; }   // 隠し部屋の穴を切り抜けるよう、まとめ描きに入れる
           // 戸口ぶんだけ空け、左右は必ず端まで届かせる
           const total = w + T2 * 2;
           const side = (total - DOOR) / 2;
@@ -815,6 +815,25 @@ export class World {
           r.forEach(([w2, d2, x2, z2]) => keep.push([w2, h, d2, x2, y, z2]));
         });
         this._batches.set(mat, keep);
+      });
+      // 開口の手前（宿主の部屋の内側）に置かれた小物と、その当たりを退ける。塞がれると通れない
+      const sgn = (d0 === 'E' || d0 === 'S') ? 1 : -1, IN = 4.5, HW = gap / 2 + 1.2;
+      const Q = horizC
+        ? { x0: Math.min(hx0, hx0 - sgn * IN), x1: Math.max(hx0, hx0 - sgn * IN), z0: hz0 - HW, z1: hz0 + HW }
+        : { x0: hx0 - HW, x1: hx0 + HW, z0: Math.min(hz0, hz0 - sgn * IN), z1: Math.max(hz0, hz0 - sgn * IN) };
+      const inQ = (x, z) => x > Q.x0 && x < Q.x1 && z > Q.z0 && z < Q.z1;
+      this.colliders = this.colliders.filter(c => {
+        const w = c.max.x - c.min.x, d = c.max.z - c.min.z;
+        if (w > 3 || d > 3) return true;                       // 壁は残す
+        return !inQ((c.min.x + c.max.x) / 2, (c.min.z + c.max.z) / 2);
+      });
+      if (this._geos) this._geos.forEach((arr, mat) => {
+        this._geos.set(mat, arr.filter(g => {
+          if (!g.boundingBox) g.computeBoundingBox();
+          const b = g.boundingBox;
+          if (b.max.y < 0.12) return true;                     // 床の敷物などはそのまま
+          return !inQ((b.min.x + b.max.x) / 2, (b.min.z + b.max.z) / 2);
+        }));
       });
     }
 

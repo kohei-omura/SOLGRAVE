@@ -3,6 +3,7 @@
      位が上がるごとに技の点を得て、条件を満たした技を覚えていく。
      技は霊力（MP）を使う。装備は能力値を底上げする。
    ══════════════════════════════════════════════════════════════ */
+import { legendGear, LEGEND } from './legend.js';
 import { weaponGear } from './weapons.js';
 
 /* ── 五つの職 ──
@@ -162,6 +163,9 @@ export const GEAR = {
   mt5: { who: 'miko', slot: 'charm',  name: '八尺瓊勾玉',   rare: 5, mods: { MATK: 50, LUK: 60, MP: 50, DEX: 30 }, desc: '伝説。宙に浮かぶ勾玉の輪' }
 };
 Object.assign(GEAR, weaponGear());
+Object.assign(GEAR, legendGear());
+// 伝説の品には固有の力の説明を添える
+Object.keys(LEGEND).forEach(id => { if (GEAR[id]) GEAR[id].legend = LEGEND[id].text; });
 /** 銃以外の武器の種類（未指定は銃） */
 export function wtypeOf(id) {
   const g = GEAR[id];

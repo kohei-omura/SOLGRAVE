@@ -26,6 +26,32 @@ function tx(mode, fn) {
   }));
 }
 
+/**
+ * 2048 四方の絵を 1024 四方に縮める。
+ * 二人の模型には 2048 四方の絵が合わせて14枚あり、それだけで描画用の記憶が 300MB を超える。
+ * iPhone の Safari は記憶が足りなくなると画面ごと落とすため、見た目の差がほとんど無い大きさへ詰める。
+ */
+const _shrunk = new WeakSet();
+function shrinkTexture(tex, max) {
+  max = max || 1024;
+  const img = tex && tex.image;
+  if (!img || _shrunk.has(tex)) return;
+  const w = img.width || 0, h = img.height || 0;
+  if (w <= max && h <= max) return;
+  try {
+    const k = max / Math.max(w, h);
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(h * k));
+    const ctx = c.getContext('2d');
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(img, 0, 0, c.width, c.height);
+    if (img.close) img.close();
+    tex.image = c;
+    tex.needsUpdate = true;
+    _shrunk.add(tex);
+  } catch (e) {}
+}
+
 export const ModelStore = {
   /** 端末に保存する { buf, name, flip } */
   save(who, buf, name) { return tx('readwrite', st => st.put({ buf, name, flip: false, at: Date.now() }, who)); },
@@ -113,6 +139,7 @@ export class AvatarRig {
         });
         n.envMapIntensity = 0.45;
         if (n.map) n.map.colorSpace = THREE.SRGBColorSpace;
+        [n.map, n.normalMap, n.emissiveMap].forEach(shrinkTexture);
         conv.set(m, n);
         return n;
       };

@@ -18,6 +18,7 @@ import { Miko } from './miko.js';
 import { Solar, SOLAR_DMG_MUL } from './solar.js';
 import { Party, expOf, STAT_KEYS } from './stats.js';
 import { SKILLS, GEAR, JOBS, rollGear, wtypeOf } from './jobs.js';
+import { legendOf } from './legend.js';
 import { Town, talkTo } from './town.js';
 import { Minimap } from './minimap.js';
 import { Menu } from './menu.js';
@@ -75,6 +76,7 @@ class Game {
     this.bullets = new Bullets(this.gfx.scene, 90);
     this.enemies = new Enemies(this.gfx.scene, this.particles);
     this.player = new Player(this.gfx.scene);
+    this.player.onHurt = (r) => this.legendHurt(r);
     this.miko = new Miko(this.gfx.scene, this.particles);
     this.solar = new Solar(this.gfx.scene, this.particles);
     this.town = new Town(this.gfx.scene, this.particles);
@@ -83,7 +85,7 @@ class Game {
     this.coffin = new Coffin(this.gfx.scene, this.particles);
     this.pile = new Purifier(this.gfx.scene, this.particles);
     // 敵の弾（主・中ボス・撃つ雑魚・思念体が共用）
-    this.hostile = new Hostile(this.gfx.scene, 110);
+    this.hostile = new Hostile(this.gfx.scene, 240);
     this.enemies.hostile = this.hostile;
     this.boss.hostile = this.hostile;
     this.boss.summon = (p, n) => this.summonAround(p, n);
@@ -189,20 +191,37 @@ class Game {
       if (this.player.guard > this.player.guardMax) this.player.guard = this.player.guardMax;
       UI.hp(this.player.hp, this.player.maxHp, this.player.guard, this.player.guardMax);
     }
-    if (this.miko) this.miko.applyStats(m);
+    // 伝説の装備の力
+    const lg = this.lg = { w: legendOf(h.gear.weapon), a: legendOf(h.gear.armor), c: legendOf(h.gear.charm),
+      mw: legendOf(m.gear.weapon), ma: legendOf(m.gear.armor), mt: legendOf(m.gear.charm) };
+    if (this.player) {
+      this.player.mirage = !!(lg.a && lg.a.ab === 'mirage');
+      if (this.player.mirage) this.player.evade = Math.min(0.6, this.player.evade + 0.2);
+    }
+    if (this.miko) {
+      this.miko.applyStats(m);
+      const M = this.miko;
+      if (lg.mw && lg.mw.ab === 'blessing') M.healAmount += 1;
+      if (lg.ma && lg.ma.ab === 'haste') M.cdMax *= 0.65;
+      if (lg.mt && lg.mt.ab === 'overflow') { M.wardSec *= 2; M.wardCut = Math.min(0.7, M.wardCut + 0.15); }
+      if (lg.mt && lg.mt.ab === 'spring') M.mpRegen *= 2;
+    }
     const rar = (id) => (id && GEAR[id]) ? GEAR[id].rare : 0;
     if (this.player && this.player.applyLook) {
       this.player.applyLook({
-        weapon: rar(h.gear.weapon), armor: rar(h.gear.armor), charm: rar(h.gear.charm)
+        weapon: rar(h.gear.weapon), armor: rar(h.gear.armor), charm: rar(h.gear.charm),
+        pal: lg.a && lg.a.pal, cpal: lg.c && lg.c.pal,
+        gun: lg.w && lg.w.gun ? Object.assign({ glow: lg.w.glow }, lg.w.gun) : null
       });
       // 持つ武器の種類と手元の模型
       this.wtype = wtypeOf(h.gear.weapon);
-      this.player.setWeapon(this.wtype, rar(h.gear.weapon));
+      this.player.setWeapon(this.wtype, rar(h.gear.weapon), lg.w && lg.w.glow);
       this.player.setStance(this.stance);
       this.updateWeaponUI();
     }
     if (this.miko && this.miko.applyLook) {
-      this.miko.applyLook({ weapon: rar(m.gear.weapon), armor: rar(m.gear.armor), charm: rar(m.gear.charm) });
+      this.miko.applyLook({ weapon: rar(m.gear.weapon), armor: rar(m.gear.armor), charm: rar(m.gear.charm),
+        pal: lg.ma && lg.ma.pal, cpal: lg.mt && lg.mt.pal });
     }
   }
 
@@ -264,6 +283,7 @@ class Game {
       if (e.code === 'KeyE') this.invokeHeal();
       if (e.code === 'KeyR') this.useSkill();
       if (e.code === 'KeyT') this.cycleSkill();
+      if (e.code === 'KeyV') this.toggleChain();
       if (e.code === 'KeyF') { if (this.talking) this.closeTalk(); else this.doTalk(); }
       if (e.code === 'KeyG') this.askUseKey();
       if (e.code === 'Tab') { e.preventDefault(); this.cycleWeapon(1); }
@@ -417,6 +437,12 @@ class Game {
       const go3 = e => { if (e) e.preventDefault(); this.audio.unlock(); this.voice.unlock(); this.useSkill(); };
       skb.addEventListener('touchstart', go3, { passive: false });
       skb.addEventListener('click', go3);
+    }
+    const chb = document.getElementById('btn-chain');
+    if (chb) {
+      const go6 = e => { if (e) { e.preventDefault(); e.stopPropagation(); } this.audio.unlock(); this.toggleChain(); };
+      chb.addEventListener('touchstart', go6, { passive: false });
+      chb.addEventListener('click', go6);
     }
     const sks = document.getElementById('btn-sksel');
     if (sks) {
@@ -584,7 +610,7 @@ class Game {
       UI.toast('鍵が回った。大扉が軋みながら開いてゆく……', 4200);
       this.voice.say(null, 'hero', { segments: [{ t: '開いた……', p: 1.0, r: 0.95, gap: 240 }, { t: '行くぞ、日和！', p: 1.1, r: 1.1 }] });
       const st = this.world.bossStand;
-      if (st) { this.boss.setFloor(this.floor); this.boss.spawn(st.clone()); this.boss.alive = false; this.boss.group.visible = true; }
+      if (st) { (this.boss.powerK = this.bossPowerK(), this.boss.setFloor(this.floor)); this.boss.spawn(st.clone()); this.boss.alive = false; this.boss.group.visible = true; }
     }
   }
 
@@ -806,6 +832,148 @@ class Game {
   /** 技の消費：霊力の器より大きい技でも必ず撃てるよう、器の9割を上限にする */
   skillCost(sk) { return Math.min(sk.cost, Math.floor(this.party.hero.maxMp * 0.9)); }
 
+  /* ── 伝説の装備の力 ───────────────────── */
+  critRateOf() {
+    const h = this.party.hero, lg = this.lg || {};
+    return Math.min(0.9, h.critRate + (lg.w && lg.w.ab === 'crit' ? 0.25 : 0) + (lg.c && lg.c.ab === 'fury' ? 0.2 : 0));
+  }
+  critMulOf() {
+    const h = this.party.hero, lg = this.lg || {};
+    return h.critMul + (lg.w && lg.w.ab === 'crit' ? 0.5 : 0) + (lg.c && lg.c.ab === 'fury' ? 0.8 : 0);
+  }
+  fortuneK() { return this.lg && this.lg.c && this.lg.c.ab === 'fortune' ? 1.6 : 1; }
+  /** 弾に伝説の力を持たせる（追う・当たった時の働き） */
+  legendShot(bo) {
+    const lw = this.lg && this.lg.w;
+    if (!lw) return bo;
+    if (lw.ab === 'homing') { bo.homing = Math.max(bo.homing || 0, 4); bo.pierce = true; }
+    bo.onHit = this._lgHit || (this._lgHit = (e, b) => this.legendHit(e, b.dmg));
+    return bo;
+  }
+  _lgColor() { const c = new THREE.Color((this.lg && this.lg.w && this.lg.w.glow) || 0xffd24a); return [c.r, c.g, c.b]; }
+  /** 範囲に傷を与える（伝説の力の共通口） */
+  _area(x, z, r, dmg, col) {
+    let n = 0;
+    for (const e of this.enemies.list) {
+      if (e.dead) continue;
+      if (Math.hypot(e.p.x - x, e.p.z - z) < r + (e.r || 0.5)) { this.enemies._damage(e, dmg, this._onKill); n++; }
+    }
+    if (this.phase === Phase.BOSS && this.boss.alive && Math.hypot(this.boss.p.x - x, this.boss.p.z - z) < r + this.boss.hitR) {
+      this.boss.takeHit(dmg, false); UI.bossBar(this.boss.hp / this.boss.maxHp);
+      if (this.boss.hp <= 0) this.onBossDead();
+    }
+    this.particles.emit(new THREE.Vector3(x, 0.6, z), 8, { color: col.map(v => v * 0.7), size: 1.8, up: 1.0, spread: r * 1.2 });
+    return n;
+  }
+  /** 当たった敵に伝説の武器の力を働かせる */
+  legendHit(e, dmg) {
+    const lw = this.lg && this.lg.w;
+    if (!lw || !e) return;
+    const t = performance.now() / 1000, col = this._lgColor();
+    switch (lw.ab) {
+      case 'sun': case 'burst': {
+        if ((this._burstT || 0) > t) break;
+        this._burstT = t + 0.12;
+        this._area(e.p.x, e.p.z, 2.6, dmg * 0.5, col);
+        this.slash.ring(new THREE.Vector3(e.p.x, 0, e.p.z), 2.6, lw.glow || 0xffd24a);
+        break;
+      }
+      case 'chain': {
+        const done = new Set([e]);
+        let src = e;
+        for (let k = 0; k < 2; k++) {
+          let best = null, bd = 49;
+          for (const o of this.enemies.list) {
+            if (o.dead || done.has(o)) continue;
+            const d2 = (o.p.x - src.p.x) ** 2 + (o.p.z - src.p.z) ** 2;
+            if (d2 < bd) { bd = d2; best = o; }
+          }
+          if (!best) break;
+          done.add(best);
+          for (let q = 1; q <= 6; q++) {
+            const f = q / 7;
+            this.particles.emit(new THREE.Vector3(src.p.x + (best.p.x - src.p.x) * f, 1.2 + Math.sin(q * 2.3) * 0.25, src.p.z + (best.p.z - src.p.z) * f), 1, { color: col.map(v => v * 0.8), size: 1.5, up: 0.2, spread: 0.2, life: 0.3, yOff: 0 });
+          }
+          this.enemies._damage(best, dmg * 0.5, this._onKill, { stun: 0.4 });
+          src = best;
+        }
+        break;
+      }
+      case 'freeze':
+        e.stagger = Math.max(e.stagger || 0, 1.4);
+        this.particles.emit(new THREE.Vector3(e.p.x, 1, e.p.z), 4, { color: col.map(v => v * 0.7), size: 1.8, up: 0.6 });
+        break;
+      case 'vamp':
+        if (Math.random() < 0.14 && (this._vampT || 0) < t && this.player.hp < this.player.maxHp) {
+          this._vampT = t + 5;
+          this.player.heal(1);
+          UI.hp(this.player.hp, this.player.maxHp, this.player.guard, this.player.guardMax);
+          UI.toast('生命を吸った（心＋1）', 1200);
+          this.particles.emit(this.player.pos, 12, { color: [1, 0.3, 0.3], size: 2.6, up: 1.4 });
+        }
+        break;
+    }
+  }
+  /** 傷を受けた時（防具・護符の力） */
+  legendHurt(res) {
+    const lg = this.lg || {}, P = this.player, h = this.party.hero;
+    if (res === 'evade') return;
+    if (lg.a && lg.a.ab === 'thorns') {
+      this._area(P.pos.x, P.pos.z, 4.5, 3 * h.atkMul, [0.75, 0.5, 1]);
+      this.slash.ring(P.pos, 4.5, 0xb07aff);
+    }
+    if (lg.c && lg.c.ab === 'reflect') {
+      for (let i = 0; i < 12; i++) {
+        const a = i / 12 * Math.PI * 2;
+        this.bullets.fire(new THREE.Vector3(P.pos.x, 1.2, P.pos.z), new THREE.Vector3(Math.sin(a), 0, Math.cos(a)), { speed: 26, life: 0.9, dmg: 1.5 * h.atkMul, r: 0.3 });
+      }
+    }
+  }
+  /** 時が経つと働く力（防具・日和） */
+  legendTick(dt) {
+    const lg = this.lg || {}, P = this.player;
+    if (lg.a && lg.a.ab === 'regen') {
+      this._regenT = (this._regenT || 0) + dt;
+      if (this._regenT > 15) { this._regenT = 0; if (P.hp < P.maxHp) { P.heal(1); UI.hp(P.hp, P.maxHp, P.guard, P.guardMax); this.particles.emit(P.pos, 14, { color: [1, 0.85, 0.4], size: 2.6, up: 1.6 }); } }
+    }
+    if (lg.a && lg.a.ab === 'aegis') {
+      this._aegisT = (this._aegisT || 0) + dt;
+      if (this._aegisT > 20) { this._aegisT = 0; P.wardT = Math.max(P.wardT || 0, 5); P.wardCut = Math.max(P.wardCut || 0, 0.5); UI.toast('鱗の守り（5秒・被ダメ半減）', 1400); this.particles.emit(P.pos, 16, { color: [0.4, 1, 0.6], size: 3, up: 1.4 }); }
+    }
+    if (lg.ma && lg.ma.ab === 'steadfast' && this.miko) this.miko.stagger = 0;
+  }
+
+  /** 主人公の攻めの強さ（会心込み）から、主の体力の倍率を決める。強くなっても一方的にならないように */
+  bossPowerK() {
+    const h = this.party.hero;
+    const dps = (h.atkMul || 1) * (1 + (h.critRate || 0) * ((h.critMul || 1.8) - 1));
+    return Math.max(1, Math.sqrt(dps / 1.6));
+  }
+
+  /** 棺の鎖を掛ける／外す */
+  canChain() { return this.phase === Phase.CARRY || (this.phase === Phase.PILE && this.pile.step === Step.WAIT); }
+  toggleChain() {
+    if (!this.canChain()) return;
+    const P = this.player;
+    if (this.coffin.chained) { this.coffin.release(); P.pushing = false; this.audio.sfx('empty'); UI.toast('鎖を外した'); return; }
+    if (this.coffin.grab(P.pos.x, P.pos.z)) { this.audio.sfx('seal'); UI.toast('鎖を掛けた。歩けば棺が付いてくる（撃つこともできる）'); }
+    else UI.toast('棺に近づいてから鎖を掛けよ');
+  }
+  /** 鎖ボタンの表示（運ぶ場面だけ・近いか掛けている時に目立たせる） */
+  updateChainUI() {
+    const b = document.getElementById('btn-chain');
+    if (!b) return;
+    const show = this.canChain();
+    const on = !!this.coffin.chained;
+    const near = show && Math.hypot(this.player.pos.x - this.coffin.p.x, this.player.pos.z - this.coffin.p.z) < 3.6;
+    const k = (show ? 1 : 0) + (on ? 2 : 0) + (near ? 4 : 0);
+    if (k === this._chainKey) return;
+    this._chainKey = k;
+    b.hidden = !show;
+    b.classList.toggle('on', on);
+    b.textContent = on ? '⛓ 鎖を外す' : (near ? '⛓ 鎖を掛ける' : '⛓ 棺へ近づく');
+  }
+
   /** 使う技を順に切り替える */
   cycleSkill() {
     const list = this.party.hero.activeSkills();
@@ -885,6 +1053,12 @@ class Game {
     const healed = this.player.heal(amount);
     UI.hp(this.player.hp, this.player.maxHp, this.player.guard, this.player.guardMax);
     UI.shout(crit ? '大 祓 い ！' : '祓 い ま す');
+    if (this.lg && this.lg.mw && this.lg.mw.ab === 'dance') {   // 神楽の舞：日和と主人公の周りを打ち払う
+      const d = 2.5 * this.party.miko.matkMul;
+      this._area(m.pos.x, m.pos.z, 5, d, [1, 0.7, 0.9]);
+      this.slash.ring(m.pos, 5, 0xffb0e0);
+      this.enemies.pushAway(m.pos.x, m.pos.z, 6, 2.0);
+    }
     this.line(crit ? 'healCrit' : 'heal');
     this.audio.sfx('seal');
     UI.toast((healed ? ('心を' + amount + 'つ癒した') : '傷は無いが加護を得た') +
@@ -1167,6 +1341,7 @@ class Game {
   }
 
   enterDungeon() {
+    if (this.phase === Phase.SURFACE || this.phase === Phase.TITLE || this.phase === Phase.INTERIOR) this._revived = false;   // 潜るたびに生玉の力が戻る
     this.phase = Phase.DUNGEON;
     this._snapCam = true;
     const mm2 = document.getElementById('minimap'); if (mm2) mm2.hidden = false;
@@ -1215,7 +1390,7 @@ class Game {
     this._bossIntro = true;
     this._bossDying = false;
     this.phase = Phase.BOSS;
-    const lord = this.boss.setFloor(this.floor);
+    const lord = (this.boss.powerK = this.bossPowerK(), this.boss.setFloor(this.floor));
     const st = this.world.bossStand || new THREE.Vector3(this.world.bossRoom.x, 0, this.world.bossRoom.z);
     this.boss.spawn(st.clone());
     this.boss.alive = false;                 // 会話のあいだは動かない
@@ -1298,6 +1473,12 @@ class Game {
     const gid = rollGear(this.floor + 2, this.party.hero.get('LUK'));
     let gearMsg = '';
     if (gid && this.party.hero.pick(gid)) gearMsg = '　' + GEAR[gid].name + ' を得た';
+    // 五層より深い主は、ときに伝説の品を遺す
+    if (this.floor >= 5 && Math.random() < 0.22) {
+      const pool = Object.keys(GEAR).filter(id => GEAR[id].rare === 5 && (GEAR[id].who || 'hero') === 'hero' && this.party.hero.bag.indexOf(id) < 0);
+      const lid = pool[Math.floor(Math.random() * pool.length)];
+      if (lid && this.party.hero.pick(lid)) { gearMsg += '　伝説「' + GEAR[lid].name + '」を得た！'; UI.shout('伝 説 の 品'); }
+    }
     Party.save(this.party);
 
     // 記録は残すが、ここで終わりにはしない
@@ -1363,6 +1544,17 @@ class Game {
   }
 
   async gameOver() {
+    // 天の生玉：一度の潜行につき一度だけ立ち上がる
+    if (this.lg && this.lg.c && this.lg.c.ab === 'revive' && !this._revived && this.phase !== Phase.RESULT) {
+      this._revived = true;
+      const P = this.player;
+      P.hp = P.maxHp; P.guard = P.guardMax; P.invuln = 3;
+      UI.hp(P.hp, P.maxHp, P.guard, P.guardMax);
+      UI.shout('生 玉 が 命 を 繋 ぐ');
+      this.particles.emit(P.pos, 60, { color: [0.4, 1, 0.6], size: 4, up: 3 });
+      this.audio.sfx('purify');
+      return;
+    }
     this.phase = Phase.RESULT;
     this.hostile.clear();
     this.floor = (this.checkpoint && this.checkpoint.floor) ? this.checkpoint.floor : 1;
@@ -1523,7 +1715,8 @@ class Game {
       if (this.chargeT >= chargeNeed) { if (this.wtype === 'gun') this.fire(true); else this.attack(true); }
       this.chargeT = 0; P.charging = 0; this._chargeSfx = false;
     }
-    const canAtk = !P.pushing && !this.coffin.chained && !(this.phase === Phase.CARRY || (this.phase === Phase.PILE && this.pile.step === Step.WAIT));
+    // 棺を運んでいる間も、鎖を掛けたままでも撃てる（鎖は専用のボタンで掛け外し）
+    const canAtk = true;
     if (this.input.fire && !this.input.charge && canAtk) {
       this._holdT = (this._holdT || 0) + dt;
       if (this.shotCd <= 0) { if (this.wtype === 'gun') this.fire(false); else this.attack(false); }
@@ -1608,6 +1801,10 @@ class Game {
       if (G && G.solved && !this._eliteWoke) this.wakeElite();
     }
 
+    this.updateChainUI();
+    this.legendTick(dt);
+    // 鎖を外したら必ず身軽に戻す（以前は外した後も「押している」扱いが残り、撃てなかった）
+    if (!this.coffin.chained) P.pushing = false;
     // 主人公の霊力
     const hh = this.party.hero;
     this.heroMp = Math.min(hh.maxMp, this.heroMp + hh.mpRegen * dt);
@@ -1841,7 +2038,7 @@ class Game {
             this.voice.say(null, 'hero', { segments: [{ t: '開いた……', p: 1.0, r: 0.95, gap: 240 }, { t: '行くぞ、日和！', p: 1.1, r: 1.1 }] });
             // 主は広間の中央で待っている
             const st = this.world.bossStand;
-            if (st) { this.boss.setFloor(this.floor); this.boss.spawn(st.clone()); this.boss.alive = false; this.boss.group.visible = true; }
+            if (st) { (this.boss.powerK = this.bossPowerK(), this.boss.setFloor(this.floor)); this.boss.spawn(st.clone()); this.boss.alive = false; this.boss.group.visible = true; }
           }
         } else if (!this._doorHint) {
           this._doorHint = true;
@@ -1900,19 +2097,13 @@ class Game {
       }
       if (this.coffin.state === 'carry') {
         this.phase = Phase.CARRY;
-        UI.objective('棺を出口まで押して運べ');
+        UI.objective('棺を出口まで運べ（「鎖」ボタンで掛け外し）');
         UI.toast('封印 ' + this.coffin.sealHits + '/4');
         // 運搬中の追加湧き
         this.spawnT = 4;
       }
     } else if (this.phase === Phase.CARRY) {
-      // 長押しで鎖を掛け、そのまま歩けば棺が付いてくる
-      if (this.input.fire) {
-        if (!this.coffin.chained) {
-          if (this.coffin.grab(P.pos.x, P.pos.z)) UI.toast('鎖を掛けた。そのまま歩け');
-          else if (!this._farHint) { this._farHint = true; UI.toast('棺に近づいて長押し'); }
-        }
-      } else { this.coffin.release(); this._farHint = false; }
+      // 鎖は「鎖」ボタン（V キー）で掛け外し。掛けたまま歩けば棺が付いてくる。撃つのは自由
       P.pushing = this.coffin.chained;
       if (this.coffin.chained) {
         this.coffin.drag(P.pos.x, P.pos.z, dt, this.world);
@@ -1948,8 +2139,7 @@ class Game {
 
       // ① 棺を鎖で曳いて台座へ。乗せると固定される
       if (pl.step === Step.WAIT) {
-        if (this.input.fire && !this.coffin.chained) this.coffin.grab(P.pos.x, P.pos.z);
-        if (!this.input.fire) this.coffin.release();
+        P.pushing = this.coffin.chained;
         if (this.coffin.chained) {
           this.coffin.drag(P.pos.x, P.pos.z, dt, this.world);
           this.coffin.drawChain(P.pos.x, P.pos.z);
@@ -1965,7 +2155,7 @@ class Game {
           UI.toast('棺が鉤爪で固定された。四基の照射機を撃て', 3800);
           this.voice.say(null, 'hero', { segments: [{ t: '据えたぞ。', p: 1.05, r: 1.1, gap: 140 }, { t: '照射機だ！', p: 1.12, r: 1.15 }] });
         }
-        UI.objective('棺を陣の中心へ運べ（長押しで鎖）');
+        UI.objective('棺を陣の中心へ運べ（「鎖」ボタンで掛け外し）');
       }
 
       // ② 照射機を撃って棺へ向ける
@@ -2115,8 +2305,8 @@ class Game {
     const job = JOBS[h.job];
     const fit = !!(job && job.arms && job.arms.indexOf(W.id) >= 0);   // 得意な武器
     let mul = (this.solar.active ? SOLAR_DMG_MUL : 1) * (W.stat === 'MATK' ? h.matkMul : h.atkMul) * (fit ? 1.2 : 1);
-    const crit = Math.random() < h.critRate + (W.crit || 0);
-    if (crit) mul *= h.critMul;
+    const crit = Math.random() < this.critRateOf() + (W.crit || 0);
+    if (crit) mul *= this.critMulOf();
     const dmg = W.dmg * mul * (charged ? 2.6 : 1);
     // 狙い（近くの敵へ少し寄せる）
     let dir = P.aim.clone();
@@ -2132,8 +2322,14 @@ class Game {
       // 忍者刀：駆けながら振ると居合の一閃
       if (W.dashLine && P.dashT > 0) { opts = { range: W.dashLine, width: 1.4 }; shape = 'line'; }
       if (charged) { opts = { range: W.range * 1.35, arc: Math.PI, width: W.width }; shape = 'arc'; }
+      const lw = this.lg && this.lg.w;
       const WW = Object.assign({}, W, { shape });
+      if (lw && lw.ab === 'giant') { WW.range = W.range * 1.5; if (opts.range) opts.range *= 1.5; if (WW.width) WW.width *= 1.4; }
       const hits = this.enemies.strike(P.pos.x, P.pos.z, dir.x, dir.z, WW, dmg, this._onKill, this.audio, opts);
+      hits.forEach(e => this.legendHit(e, dmg));
+      if (lw && lw.ab === 'wave') {   // 斬撃の波
+        this.bullets.fire(new THREE.Vector3(P.pos.x, 1.2, P.pos.z), dir, { speed: 24, life: 0.7, pierce: true, dmg: dmg * 0.9, r: 0.9, look: 'wave', grow: 1.6 });
+      }
       // 主にも届く
       if (this.phase === Phase.BOSS && this.boss.alive) {
         const range = (opts.range || W.range);
@@ -2146,7 +2342,7 @@ class Game {
         }
       }
       // 仕掛け・罅・照射機にも届くよう、見えない当たりを先端へ走らせる
-      const reach = (opts.range || W.range);
+      const reach = (opts.range || WW.range);
       this.bullets.fire(new THREE.Vector3(P.pos.x, 1.3, P.pos.z), dir, { probe: true, speed: 70, life: reach / 70, r: 0.6, dmg: 0 });
       // 見た目
       const col = crit ? 0xffe070 : (this.solar.active ? 0xffc040 : 0xfff0c0);
@@ -2179,13 +2375,16 @@ class Game {
     // ── 遠隔（杖・弓・本・楽器・手裏剣） ──
     const pr = W.proj;
     const from = P.muzzleWorld();
-    const n = (pr.count || 1) * (charged ? 3 : 1);
+    const lw = this.lg && this.lg.w;
+    const n = (pr.count || 1) * (charged ? 3 : 1) * (lw && lw.ab === 'multi' ? (pr.count > 1 ? 2 : 3) : 1);
     for (let i = 0; i < n; i++) {
       const spread = pr.spread || (charged ? 0.18 : 0);
-      const a = n === 1 ? 0 : (i - (n - 1) / 2) * (spread || 0.12);
+      const a = n === 1 ? 0 : (i - (n - 1) / 2) * (spread || 0.12) * (n > 4 ? 0.6 : 1);
       const d = dir.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), a);
-      this.bullets.fire(from, d, { speed: pr.speed, life: pr.life, r: pr.r, dmg, pierce: pr.pierce, look: pr.look,
-        homing: pr.homing, boomerang: pr.boomerang, grow: pr.grow });
+      const bo = { speed: pr.speed, life: pr.life, r: pr.r * (lw && lw.ab === 'giant' ? 1.8 : 1), dmg, pierce: pr.pierce || (lw && lw.ab === 'giant'), look: pr.look,
+        homing: pr.homing, boomerang: pr.boomerang, grow: pr.grow };
+      this.legendShot(bo);
+      this.bullets.fire(from, d, bo);
     }
     P.playAttack(W.anim, step);
     this.audio.sfx(W.id === 'bow' ? 'arrow' : W.id === 'lute' ? 'strum' : W.id === 'shuriken' ? 'throw' : 'shot');
@@ -2212,7 +2411,7 @@ class Game {
     this.hostile.clear();
     const bh2 = document.getElementById('hud-boss');
     if (bh2) bh2.hidden = true;
-    UI.objective('棺を陣の中心へ運べ（長押しで鎖）');
+    UI.objective('棺を陣の中心へ運べ（「鎖」ボタンで掛け外し）');
     UI.toast('聖域の陽輪盤。棺を据え、四基の照射機のゲージを陽光弾で満たせ', 5200);
     this.voice.say(null, 'hero', { segments: [{ t: '浄めるぞ、', p: 1.0, r: 1.05, gap: 150 }, { t: '日和！', p: 1.1, r: 1.1 }] });
   }
@@ -2241,8 +2440,10 @@ class Game {
     const loot = [];
     ['w5', 'a5', 't5'].forEach(id => { if (H.bag.indexOf(id) < 0) loot.push(['hero', id]); });
     pickFrom(heroW.filter(id => id !== 'w5'), H, 3, true).forEach(id => loot.push(['hero', id]));
-    pickFrom(['a3', 'a4', 'a5'].filter(id => !loot.some(l => l[1] === id)), H, 1).forEach(id => loot.push(['hero', id]));
-    pickFrom(['t3', 't4', 't5'].filter(id => !loot.some(l => l[1] === id)), H, 1).forEach(id => loot.push(['hero', id]));
+    // 防具・護符は、まだ持っていない伝説の品を優先（無ければレア）
+    const firstNew = (ids2, fallback) => { const nw = ids2.filter(id => H.bag.indexOf(id) < 0 && !loot.some(l => l[1] === id)); return nw.length ? pickFrom(nw, H, 1) : pickFrom(fallback, H, 1); };
+    firstNew(['a5', 'a6', 'a7', 'a8'], ['a3', 'a4']).forEach(id => loot.push(['hero', id]));
+    firstNew(['t5', 't6', 't7', 't8'], ['t3', 't4']).forEach(id => loot.push(['hero', id]));
     pickFrom(ids.filter(id => GEAR[id].who === 'miko' && GEAR[id].rare >= 3), M, 2).forEach(id => loot.push(['miko', id]));
     let bonus = 0;
     const RN = ['', '★', '★★', '★★★', '★★★★', '伝説'];
@@ -2253,7 +2454,7 @@ class Game {
       const icon = g.slot === 'weapon' ? (who === 'miko' ? '幣' : WEAPONS[wtypeOf(id)].icon) : g.slot === 'armor' ? '衣' : '飾';
       const kind = (who === 'miko' ? '日和・' : '') + (g.slot === 'weapon' ? (who === 'miko' ? '祭具' : WEAPONS[wtypeOf(id)].name) : g.slot === 'armor' ? '防具' : '飾り');
       return '<div class="loot-it r' + g.rare + (fresh ? '' : ' dup') + '" style="animation-delay:' + (i * 0.12) + 's"><b>' + icon + '</b><span>' + g.name +
-        '<i>' + kind + '　' + RN[g.rare] + (fresh ? '' : '　（所持・陽貨に）') + '</i></span></div>';
+        '<i>' + kind + '　' + RN[g.rare] + (fresh ? '' : '　（所持・陽貨に）') + '</i>' + (g.legend ? '<em>✦ ' + g.legend + '</em>' : '') + '</span></div>';
     }).join('');
     this.coin += bonus;
     Party.save(this.party);
@@ -2271,7 +2472,7 @@ class Game {
     this.stats.kills++;
     this.audio.sfx('ash');
     // 階が深いほど、レアなら大きく
-    this.coin += Math.round((2 + this.floor) * (e.rare ? 12 : 1) * (e.elite ? 8 : 1));
+    this.coin += Math.round((2 + this.floor) * (e.rare ? 12 : 1) * (e.elite ? 8 : 1) * this.fortuneK());
     if (e.golden) {
       const exp = Math.round(9000 * (1 + (this.floor - 1) * 0.8));
       this.grantExp(exp);
@@ -2323,6 +2524,7 @@ class Game {
 
   /** 経験値を配る（巫女は7割） */
   grantExp(n) {
+    n = Math.round(n * this.fortuneK());
     const up1 = this.party.hero.gain(n);
     const up2 = this.party.miko.gain(Math.floor(n * 0.7));
     if (up1 || up2) {
@@ -2366,10 +2568,14 @@ class Game {
     mul *= charged ? h.matkMul : h.atkMul;
     mul *= charged ? 1 : S.dmg;
     if (fit) mul *= 1.1;
-    if (Math.random() < h.critRate) { mul *= h.critMul; this._crit = true; } else this._crit = false;
-    this.bullets.fire(from, dir, charged
+    if (Math.random() < this.critRateOf()) { mul *= this.critMulOf(); this._crit = true; } else this._crit = false;
+    const bo = charged
       ? { speed: 46, life: 1.4, pierce: true, dmg: 4 * mul, r: 0.4 }
-      : { speed: 34 * S.speed, life: 1.2, dmg: 1 * mul, r: 0.2 });
+      : { speed: 34 * S.speed, life: 1.2, dmg: 1 * mul, r: 0.2 };
+    this.legendShot(bo);
+    const lw = this.lg && this.lg.w;
+    if (lw && lw.ab === 'multi') [-0.14, 0.14].forEach(a => this.bullets.fire(from, dir.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), a), Object.assign({}, bo)));
+    this.bullets.fire(from, dir, bo);
     P.muzzleFlash(charged);
     P.playAttack('shoot', 0);
     this.audio.sfx(charged ? 'beam' : 'shot');

@@ -1,7 +1,7 @@
 /* SOLGRAVE ── Service Worker
    自前資産は Cache First、CDN(three.js)は Stale-While-Revalidate */
-const CACHE = 'solgrave-v45';
-const CDN = 'solgrave-cdn-v45';
+const CACHE = 'solgrave-v46';
+const CDN = 'solgrave-cdn-v46';
 /* 置き方が「フォルダ分け」でも「直下まとめ」でも動くよう、
    両方の場所を候補に入れる。無い物は取得に失敗しても無視される。 */
 const ASSETS = [
@@ -37,6 +37,7 @@ const ASSETS = [
   './js/avatar.js',
   './js/attire.js',
   './js/bestiary.js',
+  './js/legend.js',
   './audio.js',
   './boss.js',
   './coffin.js',
@@ -61,6 +62,7 @@ const ASSETS = [
   './avatar.js',
   './attire.js',
   './bestiary.js',
+  './legend.js',
   './icons/icon-192.png',
   './icon-192.png',
   './icons/icon-512.png',
