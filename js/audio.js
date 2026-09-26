@@ -8,12 +8,41 @@
 ─────────────────────────────────────── */
 
 /* 人物ごとの地の声 */
+/* ── 声の型 ──
+   g：男 m／女 f、prefer：合う声の名前（端末に入っていれば使う）、pitch／rate：高さと速さ。
+   端末の日本語の声（iPhone：Kyoko・O-Ren・Otoya・Hattori、Eddy・Flo・Grandma・Grandpa・Reed・Rocko・Sandy・Shelley など、
+   Windows：Haruka・Ayumi・Sayaka・Nanami・Ichiro・Keita、Chrome：Google 日本語）を人ごとに振り分け、
+   同じ声しか無い端末でも高さ・速さ・揺らぎで一人ずつ違う声に聞こえるようにする。 */
 const VOICE_PROFILE = {
   // 主人公：やんちゃで元気な少年。高めで速く、跳ねるように
-  hero:  { pitch: 1.32, rate: 1.16, jitterP: 0.07, jitterR: 0.06, prefer: /Otoya|Hattori|Male|男/i },
+  hero:  { g: 'm', pitch: 1.32, rate: 1.16, jitterP: 0.07, jitterR: 0.06, prefer: /Otoya|Hattori|Keita|Reed/i },
   // 日和：芯のある豊かな声。高すぎず、ゆっくりめで体温を出す
-  miko:  { pitch: 1.12, rate: 0.94, jitterP: 0.04, jitterR: 0.03, prefer: /Kyoko|Female|女/i }
+  miko:  { g: 'f', pitch: 1.12, rate: 0.94, jitterP: 0.04, jitterR: 0.03, prefer: /O-?Ren|Kyoko|Nanami|Haruka/i },
+  // 街の人々
+  shop:     { g: 'f', pitch: 1.22, rate: 1.12, prefer: /Sandy|Kyoko|Ayumi/i },            // 道具屋・陽子：明るい商売声
+  inn:      { g: 'f', pitch: 1.38, rate: 1.04, prefer: /Shelley|Flo|Sayaka/i },           // 宿の娘・芹：幼さの残る声
+  smith:    { g: 'm', pitch: 0.62, rate: 0.9,  prefer: /Grandpa|Rocko|Ichiro/i },         // 鍛冶・鉄爺：太くしゃがれた声
+  kid:      { g: 'm', pitch: 1.8,  rate: 1.24, prefer: /Eddy|Otoya/i },                   // 豆太：元気な男の子
+  girl1:    { g: 'f', pitch: 1.5,  rate: 1.06, prefer: /Flo|Kyoko/i },                    // 花売り・燐：ふわりと甘い
+  girl2:    { g: 'f', pitch: 1.18, rate: 0.9,  prefer: /O-?Ren|Haruka/i },                // 水汲み・澪：落ち着いた声
+  old:      { g: 'm', pitch: 0.72, rate: 0.78, prefer: /Grandpa|Hattori|Ichiro/i },       // 語り部・宗庵：ゆったり低い
+  friend:   { g: 'm', pitch: 0.98, rate: 1.1,  prefer: /Reed|Hattori|Keita/i },           // 狩人仲間・颯：兄貴分
+  guest:    { g: 'm', pitch: 0.88, rate: 1.0,  prefer: /Rocko|Otoya/i },                  // 旅の薬売り
+  traveler: { g: 'f', pitch: 1.3,  rate: 1.1,  prefer: /Sandy|Sayaka/i },                 // 行商の娘・紬
+  cook:     { g: 'f', pitch: 0.92, rate: 1.0,  prefer: /Grandma|Kyoko|Ayumi/i },          // 女将・千代：貫禄
+  appr:     { g: 'm', pitch: 1.14, rate: 1.18, prefer: /Eddy|Keita/i },                   // 弟子・鋼太：勢いのある若者
+  scholar:  { g: 'f', pitch: 1.1,  rate: 0.96, prefer: /Shelley|Nanami/i },               // 書生・蛍：知的で静か
+  mother:   { g: 'f', pitch: 1.0,  rate: 0.92, prefer: /Kyoko|Haruka/i },                 // 母・結：やわらかい
+  child:    { g: 'f', pitch: 1.9,  rate: 1.15, prefer: /Flo|Sandy/i },                    // 娘・小春：小さな女の子
+  gp:       { g: 'm', pitch: 0.66, rate: 0.82, prefer: /Grandpa|Ichiro/i },               // 祖父・源蔵
+  farmer:   { g: 'm', pitch: 0.84, rate: 0.96, prefer: /Rocko|Otoya/i },                  // 百姓・茂：素朴
+  weaver:   { g: 'f', pitch: 1.06, rate: 0.88, prefer: /Grandma|O-?Ren|Ayumi/i },         // 機織り・綾
+  boy:      { g: 'm', pitch: 1.7,  rate: 1.2,  prefer: /Eddy|Reed/i }                     // 息子・太一
 };
+const MALE_RE = /Otoya|Hattori|Ichiro|Keita|Eddy|Grandpa|Reed|Rocko|Daichi|Naoki|Takumi|Male|男/i;
+const FEMALE_RE = /Kyoko|O-?Ren|Haruka|Ayumi|Sayaka|Nanami|Mizuki|Flo\b|Grandma|Sandy|Shelley|Female|女/i;
+/** 名前から決まった数を作る（同じ人はいつも同じ声になる） */
+function _hash(str) { let h = 7; for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0; return h; }
 
 export class Voice {
   constructor() {
@@ -43,8 +72,12 @@ export class Voice {
       if (!list.length) return;
       this.voices = list;
       const ja = list.filter(v => /^ja/i.test(v.lang) || /Japanese|日本/i.test(v.name));
-      this.jaFemale = ja.find(v => VOICE_PROFILE.miko.prefer.test(v.name)) || ja[0] || null;
-      this.jaMale   = ja.find(v => VOICE_PROFILE.hero.prefer.test(v.name)) || ja[0] || null;
+      this.ja = ja;
+      this.poolM = ja.filter(v => MALE_RE.test(v.name));
+      this.poolF = ja.filter(v => FEMALE_RE.test(v.name) || (!MALE_RE.test(v.name)));
+      this._cache = {};
+      this.jaFemale = this._voiceFor('miko');
+      this.jaMale   = this._voiceFor('hero');
     } catch (e) { this.lastError = String(e); }
   }
 
@@ -60,7 +93,30 @@ export class Voice {
     return this.unlocked;
   }
 
-  _voiceFor(who) { return (who === 'miko') ? this.jaFemale : this.jaMale; }
+  /** 人ごとの声：合う名前の声 → 同じ性別の声を名前で振り分け → どれか日本語の声 */
+  _voiceFor(who) {
+    if (!this.ja || !this.ja.length) return null;
+    this._cache = this._cache || {};
+    if (this._cache[who] !== undefined) return this._cache[who];
+    const prof = VOICE_PROFILE[who] || VOICE_PROFILE.hero;
+    let v = null;
+    const good = this.ja.filter(x => prof.prefer && prof.prefer.test(x.name));
+    if (good.length) {
+      // 名前の並び順に合わせて、最初に挙げた声ほど優先する
+      const src = String(prof.prefer.source).split('|').map(t => t.replace(/[\\^$()]/g, ''));
+      good.sort((a, b) => src.findIndex(t => new RegExp(t, 'i').test(a.name)) - src.findIndex(t => new RegExp(t, 'i').test(b.name)));
+      // いちばん合う声の、高音質版（Enhanced／Premium）があればそちら
+      const top = src.find(t => new RegExp(t, 'i').test(good[0].name));
+      const same = good.filter(x => new RegExp(top, 'i').test(x.name));
+      v = same.find(x => /Enhanced|Premium|拡張|高品質/i.test(x.name)) || good[0];
+    } else {
+      const pool = prof.g === 'f' ? this.poolF : this.poolM;
+      if (pool && pool.length) v = pool[_hash(who) % pool.length];
+      else v = this.ja[_hash(who) % this.ja.length];
+    }
+    this._cache[who] = v;
+    return v;
+  }
 
   /** 1句を喋る（内部用） */
   _utter(text, who, pitch, rate, vol, delay) {
@@ -91,8 +147,8 @@ export class Voice {
 
       const prof = VOICE_PROFILE[who] || VOICE_PROFILE.hero;
       // 毎回わずかに揺らして機械らしさを消す
-      const jp = 1 + (Math.random() - 0.5) * (prof.jitterP || 0);
-      const jr = 1 + (Math.random() - 0.5) * (prof.jitterR || 0);
+      const jp = 1 + (Math.random() - 0.5) * (prof.jitterP ?? 0.04);
+      const jr = 1 + (Math.random() - 0.5) * (prof.jitterR ?? 0.03);
       let basePitch = prof.pitch * jp;
       let baseRate = prof.rate * jr;
       let baseVol = this.volume;

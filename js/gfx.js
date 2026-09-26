@@ -263,34 +263,69 @@ export class Gfx {
    * 見た目を変えずに負荷を下げる最も効く手立て。
    */
   /** 場面を作り替えたら光源を集め直す */
-  rescanLights() { this._lightScan = 0; this._lights = null; }
+  rescanLights() { this._lightScan = 0; this._warm = 2; }
 
+  /**
+   * 近い点光源だけを「代役」の固定数の灯りに写す。
+   * three.js は描画に効く点光源の数が変わるたびに全材質のシェーダーを作り直す（数十〜数百ms固まる）。
+   * 以前は個々の灯りの visible を切り替えていたため、歩くたびに数が変わって引っかかっていた。
+   * 今は本物の灯りをカメラに映らない層へ移し、決まった数の代役だけが常に描画に効く。
+   */
   cullPointLights(px, pz, budget) {
     budget = budget || 6;
-    if (!this._lightScan || this._lightScan < 1) {
-      this._lights = [];
-      this.scene.traverse(o => { if (o.isPointLight) this._lights.push(o); });
+    const S = this.scene;
+    if (!this._proxies || this._proxies.length !== budget) {
+      if (this._proxies) this._proxies.forEach(l => S.remove(l));
+      this._proxies = [];
+      for (let i = 0; i < budget; i++) {
+        const l = new THREE.PointLight(0xffffff, 0, 10, 2);
+        l.userData.proxy = true;
+        S.add(l);
+        this._proxies.push(l);
+      }
+    }
+    // 新しい灯りは毎フレーム拾う（描画に一度でも混ざると作り直しが走るため）
+    if (true) {
+      const arr = this._lights || (this._lights = []);
+      arr.length = 0;
+      S.traverse(o => {
+        if (o.isPointLight && !o.userData.proxy) {
+          if (o.layers.mask !== 0x80000000) o.layers.set(31);
+          arr.push(o);
+        }
+      });
       this._lightScan = 20;
     }
     this._lightScan--;
     const arr = this._lights;
-    if (!arr || !arr.length) return 0;
-    const wp = new THREE.Vector3();
+    const wp = this._wp || (this._wp = new THREE.Vector3());
+    const cand = this._cand || (this._cand = []);
+    cand.length = 0;
     for (const l of arr) {
+      if (l.intensity <= 0.01) continue;
+      // 親のどこかが隠れていれば灯りも消えている
+      let v = true;
+      for (let o = l; o; o = o.parent) { if (!o.visible) { v = false; break; } }
+      if (!v) continue;
       l.getWorldPosition(wp);
       const dx = wp.x - px, dz = wp.z - pz;
       l._d2 = dx * dx + dz * dz;
-      if (l._base === undefined) l._base = l.intensity;
+      if (l._d2 > 2500) continue;
+      l._wx = wp.x; l._wy = wp.y; l._wz = wp.z;
+      cand.push(l);
     }
-    const sorted = arr.slice().sort((a, b) => a._d2 - b._d2);
-    let on = 0;
-    for (let i = 0; i < sorted.length; i++) {
-      const l = sorted[i];
-      const want = (i < budget) && (l._d2 < 2500) && (l._base > 0.01);
-      if (l.visible !== want) l.visible = want;
-      if (want) on++;
+    cand.sort((a, b) => a._d2 - b._d2);
+    const P = this._proxies;
+    for (let i = 0; i < P.length; i++) {
+      const d = P[i], l = cand[i];
+      if (!l) { d.intensity = 0; continue; }
+      d.position.set(l._wx, l._wy, l._wz);
+      d.color.copy(l.color);
+      d.intensity = l.intensity;
+      d.distance = l.distance;
+      d.decay = l.decay;
     }
-    return on;
+    return Math.min(P.length, cand.length);
   }
 
   /** fpsが落ち続けたら解像度を下げる */
@@ -299,18 +334,30 @@ export class Gfx {
     this._fpsSamples.push(fps);
     if (this._fpsSamples.length > 30) this._fpsSamples.shift();
     const avg = this._fpsSamples.reduce((a, b) => a + b, 0) / this._fpsSamples.length;
-    if (avg < 45) {
-      this._lowSince += dt;
-      if (this._lowSince > 2 && this.scale > 0.6) {
-        this.scale = Math.max(0.6, this.scale - 0.15);
-        this._applyPixelRatio();
+    // 画面の書き換え回数（60Hz／120Hz）を、いちばん速かった間隔から見積もる
+    this._hzBest = Math.max((this._hzBest || 60) * 0.9995, Math.min(125, fps));
+    const hz = this._hzBest > 100 ? 120 : this._hzBest > 80 ? 90 : 60;
+    // 狙いの速さを割り続けたら描く解像度を少し下げ、余裕が続けば戻す（動的解像度）
+    if (avg < hz * 0.8) {
+      this._lowSince += dt; this._highSince = 0;
+      if (this._lowSince > 1.5 && this.scale > 0.7) {
+        this.scale = Math.max(0.7, this.scale - 0.1);
         this.resize();
         this._lowSince = 0;
       }
     } else {
       this._lowSince = 0;
+      if (avg > hz * 0.95 && this.scale < 1) {
+        this._highSince = (this._highSince || 0) + dt;
+        if (this._highSince > 6) { this.scale = Math.min(1, this.scale + 0.05); this.resize(); this._highSince = 0; }
+      } else this._highSince = 0;
     }
     return Math.round(avg);
+  }
+
+  /** 新しく並んだ物の材質を、先に（止めずに）用意しておく */
+  prewarm() {
+    try { if (this.renderer.compileAsync) this.renderer.compileAsync(this.scene, this.camera); } catch (e) {}
   }
 
   render(t) {
@@ -318,6 +365,8 @@ export class Gfx {
     this._shadowTick = (this._shadowTick + 1) % 3;
     this.renderer.shadowMap.needsUpdate = (this._shadowTick === 0);
     if (this.grade) this.grade.material.uniforms.time.value = t;
+    // 場面を作り替えた直後：灯りの数が決まってから、見えている物の材質をまとめて用意する
+    if (this._warm > 0 && --this._warm === 0) this.prewarm();
     this.composer.render();
   }
 }

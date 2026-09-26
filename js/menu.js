@@ -5,7 +5,8 @@
    ══════════════════════════════════════════════════════════════ */
 import * as THREE from 'three';
 import { STAT_KEYS, STAT_INFO, expToNext, MAX_LV } from './stats.js';
-import { JOBS, SKILLS, GEAR, SLOTS, skillsOf, canLearn } from './jobs.js';
+import { JOBS, SKILLS, GEAR, SLOTS, skillsOf, canLearn, wtypeOf } from './jobs.js';
+import { WEAPONS, WEAPON_ORDER } from './weapons.js';
 
 /* いまの値が実際に何をもたらしているかを言葉にする */
 function effectOf(k, c, who) {
@@ -237,9 +238,13 @@ export class Menu {
         const cls = has ? 'learned' : (ck.ok ? '' : 'locked');
         const kind = sk.kind === 'active' ? '技' : '常';
         const cost = sk.kind === 'active' ? ('　霊力' + sk.cost + '／' + sk.cd + '秒') : '';
+        const cur = this.curSkill ? this.curSkill() : null;
+        const pick = has && sk.kind === 'active'
+          ? (cur === sk.id ? '<span class="sk-have">技ボタン</span>' : '<button class="sk-pick" data-id="' + sk.id + '">技ボタンに</button>')
+          : '<span class="sk-have">習得</span>';
         return '<div class="sk-row ' + cls + '">' +
           '<span class="sk-nm">' + esc(sk.name) + '<i>' + kind + '</i></span>' +
-          (has ? '<span class="sk-have">習得</span>'
+          (has ? pick
                : '<button class="sk-btn" data-id="' + sk.id + '"' + (ck.ok && c.skillPts > 0 ? '' : ' disabled') + '>覚える</button>') +
           '<div class="sk-ds">' + esc(sk.desc) + cost +
             (has ? '' : (ck.ok ? '' : '　<span style="color:var(--shu)">' + esc(ck.why) + '</span>')) + '</div>' +
@@ -248,8 +253,15 @@ export class Menu {
     el.querySelectorAll('.sk-btn').forEach(b => {
       b.addEventListener('click', () => {
         const r = c.learn(b.dataset.id);
-        if (r.ok) { this.render(); if (this.onChange) this.onChange(); }
+        if (r.ok) {
+          // 覚えたばかりの技をすぐ技ボタンで撃てるようにする
+          if (SKILLS[b.dataset.id] && SKILLS[b.dataset.id].kind === 'active' && this.onPickSkill) this.onPickSkill(b.dataset.id);
+          this.render(); if (this.onChange) this.onChange();
+        }
       });
+    });
+    el.querySelectorAll('.sk-pick').forEach(b => {
+      b.addEventListener('click', () => { if (this.onPickSkill) this.onPickSkill(b.dataset.id); this.render(); });
     });
   }
 
@@ -259,18 +271,35 @@ export class Menu {
     if (!el) return;
     const modTxt = (g) => Object.keys(g.mods || {}).filter(k => g.mods[k])
       .map(k => k + '+' + g.mods[k]).join(' ');
+    const RN = ['', '★', '★★', '★★★', '★★★★', '伝説'];
+    const item = (id, cur) =>
+      '<button class="gr-item r' + GEAR[id].rare + (id === cur ? ' on' : '') + '" data-id="' + id + '">' +
+      '<i class="gr-rr">' + RN[GEAR[id].rare] + '</i>' + esc(GEAR[id].name) + '<span class="gr-mod">' + modTxt(GEAR[id]) + '</span></button>';
+    const byRare = (a, b) => GEAR[b].rare - GEAR[a].rare;
     el.innerHTML = SLOTS.map(sl => {
       const cur = c.gear[sl.id];
-      const owned = c.bag.filter(id => GEAR[id] && GEAR[id].slot === sl.id);
+      const owned = c.bag.filter(id => GEAR[id] && GEAR[id].slot === sl.id).sort(byRare);
+      let body;
+      if (!owned.length) body = '<span style="font-size:11px;color:var(--mut)">持っていません</span>';
+      else if (sl.id === 'weapon' && owned.some(id => GEAR[id].who !== 'miko')) {
+        // 武器は種類ごとに束ねる：上の札で種類を選び、その種類だけを等級順に並べる
+        const groups = {};
+        owned.forEach(id => { const t = wtypeOf(id); (groups[t] = groups[t] || []).push(id); });
+        const types = WEAPON_ORDER.filter(t => groups[t]);
+        let sel = this._gearType && groups[this._gearType] ? this._gearType : (cur ? wtypeOf(cur) : types[0]);
+        if (!groups[sel]) sel = types[0];
+        body = '<div class="gr-tabs">' + types.map(t =>
+          '<button class="gr-tab' + (t === sel ? ' on' : '') + (cur && wtypeOf(cur) === t ? ' eq' : '') + '" data-t="' + t + '">' +
+          '<b>' + WEAPONS[t].icon + '</b>' + WEAPONS[t].name + '<i>' + groups[t].length + '</i></button>').join('') + '</div>' +
+          '<div class="gr-list">' + groups[sel].map(id => item(id, cur)).join('') + '</div>';
+      } else body = '<div class="gr-list">' + owned.map(id => item(id, cur)).join('') + '</div>';
       return '<div class="gr-slot"><div class="gr-hd">' + sl.name + '</div>' +
         '<div class="gr-cur">' + (cur && GEAR[cur] ? esc(GEAR[cur].name) + '<span class="gr-mod">' + modTxt(GEAR[cur]) + '</span>' : '—') + '</div>' +
-        '<div class="gr-list">' +
-          (owned.length ? owned.map(id =>
-            '<button class="gr-item' + (id === cur ? ' on' : '') + '" data-id="' + id + '">' +
-            esc(GEAR[id].name) + '<span class="gr-mod">' + modTxt(GEAR[id]) + '</span></button>').join('')
-            : '<span style="font-size:11px;color:var(--mut)">持っていません</span>') +
-        '</div></div>';
+        body + '</div>';
     }).join('');
+    el.querySelectorAll('.gr-tab').forEach(b => {
+      b.addEventListener('click', () => { this._gearType = b.dataset.t; this.render(); });
+    });
     el.querySelectorAll('.gr-item').forEach(b => {
       b.addEventListener('click', () => {
         if (c.equip(b.dataset.id)) { this.render(); if (this.onChange) this.onChange(); }

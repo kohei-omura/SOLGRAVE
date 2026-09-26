@@ -266,6 +266,7 @@ body{
   color:var(--shu);font-size:12px;cursor:pointer;font-family:var(--mincho)}
 .sk-btn:disabled{opacity:.3;cursor:default}
 .sk-have{color:#7ad4a0;font-size:11.5px;text-align:center}
+.sk-pick{font-family:var(--mincho);font-size:11px;padding:4px 6px;border:1px solid #9aa8ff;color:#cdd6ff;background:rgba(154,168,255,.1);border-radius:3px;cursor:pointer}
 .gr-slot{padding:9px 10px;border:1px solid var(--line);border-radius:5px}
 .gr-hd{font-size:11px;color:var(--mut);letter-spacing:.12em;margin-bottom:5px}
 .gr-cur{font-size:13.5px;color:var(--kin)}
@@ -406,3 +407,44 @@ body{
 .mdl-row>b{flex:1;min-width:6em;font-weight:400;font-size:11.5px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mdl-row .btn{flex:0 0 auto;min-width:52px;min-height:34px;padding:4px 8px;font-size:12px}
 .mdl-pick{display:inline-flex;align-items:center;justify-content:center}
+
+/* 技ボタン：選んだ技・霊力・待ち時間 */
+.pad-skill{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;line-height:1.1;overflow:hidden}
+.pad-skill #sk-nm{font-size:11px;letter-spacing:.02em;white-space:nowrap}
+.sk-mp{display:block;width:84%;height:3px;background:rgba(154,168,255,.18);border-radius:2px;overflow:hidden}
+.sk-mp s{display:block;height:100%;width:0;background:linear-gradient(90deg,#7f8cff,#cdd6ff);text-decoration:none}
+.pad-skill em{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-style:normal;
+  font-size:15px;color:#fff;background:rgba(6,7,10,.55)}
+.pad-skill em:empty{display:none}
+.pad-skill.wait{opacity:.55}
+.pad-skill.ready{box-shadow:0 0 10px rgba(154,168,255,.55)}
+.pad-sksel{min-width:46px!important;min-height:30px!important;font-size:10px!important;border-color:#9aa8ff;color:#cdd6ff;
+  right:calc(env(safe-area-inset-right) + 286px);bottom:calc(env(safe-area-inset-bottom) + 32px)}
+
+/* 装備：武器の種類の札 */
+.gr-tabs{display:flex;flex-wrap:wrap;gap:4px;margin-top:7px;padding-bottom:6px;border-bottom:1px dashed var(--line)}
+.gr-tab{display:flex;align-items:center;gap:3px;padding:3px 7px;border-radius:12px;border:1px solid var(--line);
+  background:rgba(255,255,255,.03);color:var(--ink);font-family:var(--mincho);font-size:11px;cursor:pointer}
+.gr-tab b{color:var(--kin);font-size:12px}
+.gr-tab i{font-style:normal;font-size:9.5px;color:var(--mut);margin-left:2px}
+.gr-tab.on{border-color:var(--kin);background:rgba(201,162,39,.16)}
+.gr-tab.eq{box-shadow:inset 0 -2px 0 #B3424A}
+.gr-rr{font-style:normal;font-size:9px;color:var(--kin);margin-right:4px}
+.gr-item.r3,.gr-item.r4{border-color:rgba(255,190,80,.55)}
+.gr-item.r5{border-color:#ffd24a;box-shadow:0 0 8px rgba(255,210,74,.35)}
+.sh-grp{font-size:11px;color:var(--kin);letter-spacing:.14em;margin:10px 0 3px;padding-bottom:3px;border-bottom:1px solid rgba(201,162,39,.3)}
+
+/* 黄金の宝箱の中身 */
+.loot-panel{border-color:#ffd24a;box-shadow:0 0 40px rgba(255,210,74,.25)}
+.loot-panel h2{color:#ffd24a;text-shadow:0 0 16px rgba(255,210,74,.5)}
+.loot-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px;max-height:52vh;overflow:auto;margin:8px 0}
+.loot-it{display:flex;gap:8px;align-items:center;padding:7px 8px;border-radius:4px;border:1px solid rgba(201,162,39,.4);
+  background:linear-gradient(135deg,rgba(201,162,39,.12),rgba(179,66,74,.08));opacity:0;transform:translateY(6px);animation:lootIn .4s forwards}
+.loot-it b{flex:0 0 30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  background:rgba(8,9,14,.7);color:var(--kin);font-size:15px;border:1px solid rgba(201,162,39,.6)}
+.loot-it span{font-size:12px;line-height:1.35}
+.loot-it i{display:block;font-style:normal;font-size:9.5px;color:var(--mut)}
+.loot-it.r5{border-color:#ffd24a;box-shadow:0 0 12px rgba(255,210,74,.45)}
+.loot-it.r5 b{background:radial-gradient(#ffe9a0,#b8860b);color:#2a1a00}
+.loot-it.dup{opacity:.6}
+@keyframes lootIn{to{opacity:1;transform:none}}

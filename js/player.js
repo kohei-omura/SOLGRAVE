@@ -1,7 +1,7 @@
 /* player.js ── 陽光狩人 */
 import * as THREE from 'three';
 import { metalMaterial, glowMaterial, fleshMaterial } from './gfx.js';
-import { buildWeaponModel } from './weapons.js';
+import { buildWeaponModel, buildGun } from './weapons.js';
 import { buildHero } from './figure.js';
 import { dressHero } from './attire.js';
 
@@ -92,18 +92,17 @@ export class Player {
   }
   /** 銃の構え */
   setStance(id) { this.stance = id || 'normal'; this._applyStance(); }
-  _applyStance() {
-    const dual = this.wtype === 'gun' && this.stance === 'dual';
-    if (dual && !this._gun2) {
-      this._gun2 = this.gun.clone(true);
-      this._gun2.position.set(0.26, 1.36, 0.2);
-      this.gripL.add(this._gun2);
-    }
-    if (this._gun2) this._gun2.visible = dual;
-  }
+  _applyStance() { this._refreshGun(); }
   /** 攻撃の所作を始める */
   playAttack(anim, step) {
     this._atk = { anim, t: 0, dur: ANIM_DUR[anim] || 0.2, step: step || 0 };
+  }
+  /** 構えごとの銃の前後位置 */
+  _gunZ() {
+    const B = this._gunBase;
+    if (this.stance === 'dual') return 0.3;
+    if (this.stance === 'hip') return B.z - 0.1;
+    return B.z;
   }
   /** 勝利の所作 */
   cheer() { this._victory = 2.4; }
@@ -128,9 +127,15 @@ export class Player {
         case 'cast':  rx = r[0] - back * 0.9; py += back * 0.2; break;
         case 'throw': rx = -2.2 + e * 2.6; ry = 0.3; break;
         case 'strum': rz = r[2] + Math.sin(k * Math.PI * 4) * 0.2; break;
-        case 'shoot': this.gun.position.z = 0.2 - 0.14 * back; if (this._gun2) this._gun2.position.z = 0.2 - 0.14 * back; break;
+        case 'shoot': {
+          // 反動：銃口が跳ね、手元へ戻る（長物は肩で受けるので小さく）
+          const kick = this._gunInfo && this._gunInfo.long ? 0.05 : 0.07;
+          this.gun.position.z = this._gunZ() - kick * back; this.gun.rotation.x = -back * (this._gunInfo && this._gunInfo.long ? 0.08 : 0.35);
+          if (this._gun2) { this._gun2.position.z = 0.3 - kick * back; this._gun2.rotation.x = -back * 0.35; }
+          break;
+        }
       }
-      if (k >= 1) { this._atk = null; this.gun.position.z = 0.2; if (this._gun2) this._gun2.position.z = 0.2; }
+      if (k >= 1) { this._atk = null; this.gun.position.z = this._gunZ(); this.gun.rotation.x = 0; if (this._gun2) { this._gun2.position.z = 0.3; this._gun2.rotation.x = 0; } }
     }
     // 鞭はしなる
     if (this._wModel && this._wModel.userData.whip) {
@@ -148,10 +153,12 @@ export class Player {
     // 銃の構え
     if (this.wtype === 'gun' && !this.charging) {
       const st = this.stance;
-      const gy = st === 'hip' ? 1.02 : st === 'rapid' ? 1.52 : 1.36;
+      const B = this._gunBase, lg = this._gunInfo && this._gunInfo.long;
+      const gy = st === 'hip' ? 1.02 : st === 'rapid' ? (lg ? 1.42 : 1.5) : st === 'dual' ? 1.34 : B.y;
       this.gun.position.y += (gy - this.gun.position.y) * Math.min(1, dt * 12);
       this.gun.rotation.z = st === 'hip' ? 0.5 : 0;
-      this.gun.position.x = st === 'rapid' ? -0.12 : -0.26;
+      this.gun.position.x = st === 'rapid' ? (lg ? -0.16 : -0.08) : st === 'dual' ? -0.24 : B.x;
+      if (!this._atk) this.gun.position.z = this._gunZ();
     }
   }
 
@@ -164,28 +171,14 @@ export class Player {
     this.legs = this.fig.legs;
     const brim = this.fig.hatParts[0], crown = this.fig.hatParts[1], band = this.fig.hatParts[2], collar = this.fig.hatParts[3];
 
-    // ── 陽光銃（正面 +Z） ──
+    // ── 陽光銃（正面 +Z）：等級ごとに実物に近い形へ組み替える（weapons.js の buildGun） ──
     this.gun = new THREE.Group();
-    const stock = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.16, 0.5), fleshMaterial(0x4a3524));
-    stock.position.z = -0.18;
-    this.gun.add(stock);
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.17, 0.42), metalMaterial(55, 0x6a6e78));
-    body.position.z = 0.2;
-    this.gun.add(body);
-    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.07, 0.9, 12), metalMaterial(56, 0x8a7a52));
-    barrel.rotation.x = Math.PI / 2; barrel.position.z = 0.82;
-    this.gun.add(barrel);
-    this.rings = [];
-    [0.55, 0.82, 1.08].forEach(z => {
-      const r = new THREE.Mesh(new THREE.TorusGeometry(0.11, 0.022, 8, 16), glowMaterial(0xffd98a, 0.6, true));
-      r.position.z = z; r.rotation.y = Math.PI / 2;
-      this.gun.add(r);
-      this.rings.push(r);
-    });
-    this.muzzle = new THREE.Mesh(new THREE.SphereGeometry(0.1, 12, 10), glowMaterial(0xffe9a8, 2.2, true));
-    this.muzzle.position.z = 1.28;
+    this.muzzle = new THREE.Mesh(new THREE.SphereGeometry(0.028, 10, 8), glowMaterial(0xffe9a8, 2.2, true));
     this.gun.add(this.muzzle);
-    this.gun.position.set(-0.26, 1.36, 0.2);   // 両手で構える位置（右手側）
+    this.rings = [];
+    this._gunBase = new THREE.Vector3(-0.14, 1.34, 0.34);
+    this.gun.position.copy(this._gunBase);
+    this._setGunModel(0);
     this.group.add(this.gun);
 
     // 溜め演出
@@ -285,6 +278,7 @@ export class Player {
     this.muzzleLight = new THREE.PointLight(0xffe9a8, 0, 9, 2);
     this.muzzleLight.position.set(-0.26, 1.36, 1.3);
     this.group.add(this.muzzleLight);
+    this._gunModelRare = -1; this._refreshGun();     // 溜めの輪・銃口の灯りを銃の長さに合わせ直す
   }
 
   reset(p) {
@@ -405,8 +399,8 @@ export class Player {
     const c = this.charging;
     if (c > 0) {
       this.group.position.y = this.pos.y - 0.14 * c;
-      this.gun.rotation.x = -0.4 * c;
-      this.gun.position.y = 1.36 + 0.14 * c;
+      this.gun.rotation.x = -0.25 * c;
+      this.gun.position.y = this._gunBase.y + 0.1 * c;
       this.orb.visible = true;
       this.orb.scale.setScalar(0.35 + c * 1.25 + Math.sin(t * 22) * 0.05 * c);
       this.orb.material.emissiveIntensity = 2 + c * 6;
@@ -471,7 +465,7 @@ export class Player {
       rt = v(gp.x, gp.y - 0.06, gp.z + 0.02);
       if (this.stance === 'dual' && this._gun2) { const g2 = this._gun2.position; lt = v(g2.x, g2.y - 0.06, g2.z + 0.02); }
       else if (this.stance === 'hip') lt = v(0.24, 1.02, 0.1 + Math.sin(t * 2) * 0.02);
-      else lt = v(gp.x + 0.05, gp.y - 0.05, gp.z + 0.42);
+      else { const sp = this._gunInfo ? this._gunInfo.support : null; lt = sp ? v(gp.x + 0.03 + sp.x, gp.y + sp.y, gp.z + sp.z) : v(gp.x + 0.05, gp.y - 0.05, gp.z + 0.1); }
     } else {
       rt = this.hand.position.clone();
       if (this.wtype === 'katar' || this.wtype === 'claw' || this.wtype === 'bow' || this.wtype === 'lute' || this.wtype === 'tome') lt = this.offHand.position.clone();
@@ -503,17 +497,21 @@ export class Player {
       st.right = this.body.localToWorld(rt.clone());
       st.gripR = 1; st.palmR = B(1, 0, 0);
     } else if (w === 'gun') {
-      wantR = this.gun.position.clone().add(new THREE.Vector3(0, -0.07, 0.04));
+      // 握りの中ほど（原点の少し下）を右手で握る
+      wantR = this.gun.position.clone().add(new THREE.Vector3(0.006, -0.07, -0.01));
       st.right = this.body.localToWorld(wantR.clone());
       st.gripR = 0.9; st.trigger = 1; st.palmR = B(0.9, -0.2, 0);
+      const lg = this._gunInfo && this._gunInfo.long;
       if (this.stance === 'dual' && this._gun2) {
-        wantL = this._gun2.position.clone().add(new THREE.Vector3(0, -0.07, 0.04));
+        wantL = this._gun2.position.clone().add(new THREE.Vector3(-0.006, -0.07, -0.01));
         st.left = this.body.localToWorld(wantL.clone());
         st.gripL = 0.9; st.palmL = B(-0.9, -0.2, 0);
-      } else if (this.stance !== 'hip') {
-        // 銃身の下から支える
-        st.left = this.gun.localToWorld(new THREE.Vector3(0, -0.1, 0.52));
-        st.gripL = 0.6; st.palmL = B(0, 1, 0);
+      } else if (this.stance !== 'hip' || lg) {
+        // 拳銃は右手を左手で包み、長物は前の銃床の下から支える
+        this.gun.updateMatrixWorld(true);
+        st.left = this.gun.localToWorld((this._gunInfo ? this._gunInfo.support : new THREE.Vector3(0, -0.075, 0)).clone());
+        if (lg) { st.gripL = 0.6; st.palmL = B(0, 1, 0); }
+        else { st.gripL = 0.8; st.palmL = B(-0.7, 0.7, 0); }
       }
     } else {
       wantR = this.hand.position.clone();
@@ -626,6 +624,38 @@ export class Player {
     return g;
   }
 
+  /** 銃の模型を差し替える。構え・溜め・銃口の位置もそれに合わせる */
+  _setGunModel(r) {
+    if (this._gunModel) this.gun.remove(this._gunModel);
+    this._gunModel = buildGun(r);
+    this._gunModelRare = r;
+    this.gun.add(this._gunModel);
+    const u = this._gunInfo = this._gunModel.userData;
+    this.rings = u.rings;
+    this.muzzle.position.set(0, u.long ? 0.03 : 0.012, u.muzzleZ + 0.01);
+    this.muzzle.scale.setScalar(u.long ? 1.6 : 1);
+    // 長物は胸の前で抱え、拳銃は腕を伸ばした先で構える
+    this._gunBase.set(u.long ? -0.2 : -0.14, u.long ? 1.28 : 1.34, u.long ? 0.1 : 0.34);
+    this.gun.position.copy(this._gunBase);
+    const fz = this._gunBase.z + u.muzzleZ + 0.18;
+    [this.orb, this.chargeRing, this.chargeRing2].forEach(o => { if (o) o.position.set(this._gunBase.x, 1.36, fz); });
+    if (this.muzzleLight) this.muzzleLight.position.set(this._gunBase.x, 1.36, fz - 0.1);
+    if (this._gun2) { this._gun2.parent.remove(this._gun2); this._gun2 = null; }
+  }
+  /** 構えと等級から、持つ銃の形を決める（二丁拳銃で長物は持てないので大型拳銃にする） */
+  _refreshGun() {
+    const wr = this._gunRare || 0;
+    const eff = (this.stance === 'dual' && wr >= 5) ? 4 : wr;
+    if (eff !== this._gunModelRare) this._setGunModel(eff);
+    const dual = this.wtype === 'gun' && this.stance === 'dual';
+    if (dual && !this._gun2) {
+      this._gun2 = this.gun.clone(true);
+      this._gun2.position.set(0.24, 1.34, 0.3);
+      this.gripL.add(this._gun2);
+    }
+    if (this._gun2) this._gun2.visible = dual;
+  }
+
   /**
    * 装備に応じて姿を変える。
    * @param g {weapon, armor, charm} の等級 0〜5
@@ -636,21 +666,9 @@ export class Player {
     g = g || {};
     const wr = g.weapon || 0, ar = g.armor || 0, cr = g.charm || 0;
 
-    // ── 銃：等級が上がるほど銃身が太く、金環が増え、輝く ──
-    const gunCol = [0x6a6e78, 0x7a7e88, 0x9a8a5a, 0xc0a050, 0xd8b860, 0xffd24a][wr] || 0x6a6e78;
-    this.gun.traverse(o => {
-      if (o.isMesh && o.material && o.material.color && o !== this.muzzle) {
-        if (o.material.metalness > 0.5) o.material.color.setHex(gunCol);
-      }
-    });
-    this.rings.forEach((r, i) => {
-      r.visible = (i < 1 + Math.floor(wr * 0.8));
-      if (r.material.emissive) {
-        r.material.emissive.setHex(wr >= 5 ? 0xffd24a : 0xffd98a);
-        r.material.emissiveIntensity = 0.6 + wr * 0.5;
-      }
-    });
-    this.gun.scale.set(1 + wr * 0.05, 1 + wr * 0.05, 1 + wr * 0.07);
+    // ── 銃：等級ごとに別の銃になる（拳銃→M500風→デザートイーグル風→バレット風） ──
+    this._gunRare = wr;
+    this._refreshGun();
     this.muzzle.material.emissiveIntensity = 2.2 + wr * 0.8;
 
     // ── 防具：外套の色と肩当ての大きさ ──
@@ -709,7 +727,7 @@ export class Player {
   muzzleWorld(left) {
     const right = new THREE.Vector3(-this.aim.z, 0, this.aim.x);
     return new THREE.Vector3(this.pos.x, this.pos.y + 1.36, this.pos.z)
-      .addScaledVector(this.aim, this.wtype === 'gun' ? 1.3 : 0.9)
+      .addScaledVector(this.aim, this.wtype === 'gun' ? (this._gunBase.z + (this._gunInfo ? this._gunInfo.muzzleZ : 0.2) + 0.1) : 0.9)
       .addScaledVector(right, left ? -0.26 : 0.26);
   }
 }
