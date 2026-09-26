@@ -529,6 +529,26 @@ function _pattern(kind, color, seed) {
         put(i, arch * (0.4 + v * 0.6), (0.6 + arch * 0.5) * (0.85 + n * 0.25), 0.45 + (1 - arch) * 0.4);
       }
     }
+  } else if (kind === 'bark') {   // 樹皮：縦に走る深い溝
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const i = y * N + x, w = nz(x, y * 0.15, 14, 61), n = nz(x, y, 30, 63);
+      const ridge = Math.pow(Math.abs(Math.sin((x / N) * Math.PI * 18 + w * 7)), 0.6);
+      put(i, ridge * 0.8 + n * 0.2, (0.55 + ridge * 0.55) * (0.85 + n * 0.3), 0.85 + (1 - ridge) * 0.1);
+    }
+  } else if (kind === 'rock') {   // 岩：大小の凹凸と割れ目
+    const vo = voronoi(24, 0.9);
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const v = vo(x, y), i = y * N + x, n = nz(x, y, 12, 71), m = nz(x, y, 48, 73);
+      const crack = v.edge < 3 ? 0.4 : 0;
+      put(i, 0.35 + n * 0.45 + m * 0.2 - crack, (0.65 + v.id * 0.25 + n * 0.3) * (1 - crack * 0.6), 0.8 + m * 0.2);
+    }
+  } else if (kind === 'marble') { // 大理石：流れる筋と艶
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const i = y * N + x, w = nz(x, y, 5, 81), n = nz(x, y, 40, 83);
+      const vein = Math.abs(Math.sin((x + y) * 0.012 + w * 11));
+      const dark = vein < 0.035 ? 0.16 : vein < 0.1 ? 0.05 : 0;
+      put(i, 0.7 - dark * 0.3 + n * 0.05, 0.95 - dark + n * 0.06, 0.16 + dark * 0.4);
+    }
   } else {                        // plaster 漆喰
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
       const i = y * N + x, n = nz(x, y, 8, 51), c = nz(x, y, 60, 57);

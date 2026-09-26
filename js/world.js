@@ -9,6 +9,55 @@ import { biomeOf } from './biomes.js';
 const WALL_H = 6.5;      // 天井を高く
 const T = 1.0;   // 壁の厚み
 
+/* 小物の形（一度だけ作り、使い回す） */
+function _propGeos() {
+  const g = {
+    box: new THREE.BoxGeometry(1, 1, 1), cyl: new THREE.CylinderGeometry(0.5, 0.5, 1, 14),
+    cone: new THREE.ConeGeometry(0.5, 1, 12), cone4: new THREE.ConeGeometry(0.5, 1, 4),
+    sph: new THREE.SphereGeometry(0.5, 16, 12), oct: new THREE.OctahedronGeometry(0.5, 0),
+    dod: new THREE.DodecahedronGeometry(0.5, 0), tor: new THREE.TorusGeometry(0.5, 0.08, 8, 28),
+    hemi: new THREE.SphereGeometry(0.5, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2),
+    disc: new THREE.CircleGeometry(0.5, 24).rotateX(-Math.PI / 2),
+    ring: new THREE.RingGeometry(0.48, 0.5, 40).rotateX(-Math.PI / 2),
+    taper: new THREE.CylinderGeometry(0.3, 0.5, 1, 10),
+    halfcyl: new THREE.CylinderGeometry(0.5, 0.5, 1, 20, 1, false, 0, Math.PI),
+    flute: new THREE.CylinderGeometry(0.5, 0.5, 1, 24),
+    hex: new THREE.CylinderGeometry(0.5, 0.5, 1, 6), hexTip: new THREE.ConeGeometry(0.5, 1, 6),
+    flame: new THREE.SphereGeometry(0.5, 8, 6),
+    shard: new THREE.ConeGeometry(0.5, 1, 5),
+    obelisk: new THREE.CylinderGeometry(0.33, 0.5, 1, 4).translate(0, 0.5, 0),
+    blade: new THREE.ConeGeometry(0.08, 1, 3)
+  };
+  // 柱の溝：縦の筋を外周に刻む（半径を周期的に凹ませる）
+  { const p = g.flute.attributes.position;
+    for (let i = 0; i < p.count; i++) { const x = p.getX(i), z = p.getZ(i), r = Math.hypot(x, z); if (r < 0.01) continue;
+      const a = Math.atan2(z, x), k = 1 - 0.06 * Math.pow(Math.abs(Math.cos(a * 6)), 4); p.setX(i, x * k); p.setZ(i, z * k); }
+    g.flute.computeVertexNormals(); }
+  // 岩と葉むら：球を揺らして不揃いに
+  const lumpy = (geo, amt, seed, smooth) => {
+    const p = geo.attributes.position; let s = seed;
+    const r = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
+    const map = new Map();
+    for (let i = 0; i < p.count; i++) {
+      const key = Math.round(p.getX(i) * 1000) + ',' + Math.round(p.getY(i) * 1000) + ',' + Math.round(p.getZ(i) * 1000);
+      let k = map.get(key); if (k == null) { k = 1 + (r() - 0.5) * amt; map.set(key, k); }
+      p.setXYZ(i, p.getX(i) * k, p.getY(i) * k * (p.getY(i) < 0 ? 0.7 : 1), p.getZ(i) * k);
+    }
+    geo.computeVertexNormals();
+    if (smooth) {   // 葉叢は丸みのある陰に（面ごとの角を消す）
+      const n = geo.attributes.normal, v = new THREE.Vector3();
+      for (let i = 0; i < p.count; i++) { v.set(p.getX(i), p.getY(i) * 1.2, p.getZ(i)).normalize(); n.setXYZ(i, n.getX(i) * 0.35 + v.x * 0.65, n.getY(i) * 0.35 + v.y * 0.65, n.getZ(i) * 0.35 + v.z * 0.65); }
+    }
+    return geo;
+  };
+  g.rock = lumpy(new THREE.IcosahedronGeometry(0.5, 2), 0.35, 11);
+  g.leaf = lumpy(new THREE.IcosahedronGeometry(0.5, 2), 0.35, 23, true);
+  // 壺：ろくろの輪郭
+  const prof = [[0, 0], [0.18, 0], [0.26, 0.08], [0.32, 0.3], [0.3, 0.5], [0.2, 0.62], [0.13, 0.7], [0.15, 0.78], [0.19, 0.8]].map(([x, y]) => new THREE.Vector2(x, y));
+  g.urn = new THREE.LatheGeometry(prof, 20);
+  return g;
+}
+
 function rngFactory(seed) {
   let s = seed >>> 0;
   return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
@@ -224,7 +273,7 @@ export class World {
     this.isSurface = true;
     this.torchColor = null;
 
-    const ground = patternMaterial('dirt', 0x8a7a5e, 5);
+    const ground = patternMaterial('dirt', 0x6f7a4c, 5);   // 草の根が覆う土（草原と地続きに見える緑がかった地面）
     const f = new THREE.Mesh(new THREE.PlaneGeometry(220, 220), ground);
     f.rotation.x = -Math.PI / 2; f.receiveShadow = true;
     this.group.add(f);
@@ -435,12 +484,42 @@ export class World {
       if (Math.abs(x) < 22 && z > 48 && z < 100) return false;          // 遺跡の台
       return Math.hypot(x, z) < 105;
     };
-    // 草（一本ずつ向きと丈を変える）
+    // 草：細く反った葉を五枚束ねた株。根元は暗く、葉先は明るい。風で葉先がそよぐ
+    const bp = [], bc = [];
+    for (let j = 0; j < 5; j++) {
+      const ang = j * 1.2566 + 0.3, lean = 0.12 + (j % 3) * 0.08, hgt = 0.45 + (j % 2) * 0.2;
+      const cx = Math.cos(ang), sz = Math.sin(ang);
+      const P3 = (w, t) => {          // t：根元0→先1、w：幅方向
+        const bend = lean * t * t;
+        return [cx * (bend + w * 0) - sz * w, hgt * t, sz * (bend) + cx * w];
+      };
+      const seg = [[0, 0.028], [0.55, 0.02], [1, 0]];
+      for (let k = 0; k < 2; k++) {
+        const [t0, w0] = seg[k], [t1, w1] = seg[k + 1];
+        const a0 = P3(-w0, t0), b0 = P3(w0, t0), a1 = P3(-w1, t1), b1 = P3(w1, t1);
+        bp.push(...a0, ...b0, ...b1, ...a0, ...b1, ...a1);
+        const g0 = 0.35 + t0 * 0.75, g1 = 0.35 + t1 * 0.75;
+        [g0, g0, g1, g0, g1, g1].forEach(v => bc.push(v, v, v));
+      }
+    }
     const blade = new THREE.BufferGeometry();
-    blade.setAttribute('position', new THREE.Float32BufferAttribute([-0.05, 0, 0, 0.05, 0, 0, 0.0, 0.6, 0.03, 0.05, 0, 0, 0.12, 0.45, 0.02, 0.0, 0.6, 0.03, -0.12, 0.42, 0.02, -0.05, 0, 0, 0.0, 0.6, 0.03], 3));
+    blade.setAttribute('position', new THREE.Float32BufferAttribute(bp, 3));
+    blade.setAttribute('color', new THREE.Float32BufferAttribute(bc, 3));
     blade.computeVertexNormals();
+    // 葉の面の向きではなく上向きの法線にして、陽の当たりを柔らかく揃える
+    { const nn = blade.attributes.normal; for (let i = 0; i < nn.count; i++) nn.setXYZ(i, nn.getX(i) * 0.3, 1, nn.getZ(i) * 0.3); }
     const COUNT = 9000;
-    const grass = new THREE.InstancedMesh(blade, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85, side: THREE.DoubleSide }), COUNT);
+    const gmat = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.8, side: THREE.DoubleSide });
+    gmat.userData.uTime = { value: 0 };
+    gmat.onBeforeCompile = sh => {
+      sh.uniforms.uTime = gmat.userData.uTime;
+      sh.vertexShader = 'uniform float uTime;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
+        { vec4 wp = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+          float sway = sin(uTime * 1.7 + wp.x * 0.35 + wp.z * 0.23) * 0.5 + sin(uTime * 3.1 + wp.x * 0.9) * 0.2;
+          transformed.x += sway * position.y * position.y * 0.35; transformed.z += sway * position.y * position.y * 0.18; }`);
+    };
+    this._grassMat = gmat;
+    const grass = new THREE.InstancedMesh(blade, gmat, COUNT);
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), pos = new THREE.Vector3(), c = new THREE.Color();
     let n = 0;
     for (let i = 0; i < COUNT * 3 && n < COUNT; i++) {
@@ -449,7 +528,7 @@ export class World {
       pos.set(x, 0, z);
       q.setFromEuler(new THREE.Euler((rnd() - 0.5) * 0.3, rnd() * 6.28, (rnd() - 0.5) * 0.3));
       const k = 0.7 + rnd() * 1.1;
-      sc.set(k * 1.6, k, k * 1.6);
+      sc.set(k * 1.5, k, k * 1.5);
       m.compose(pos, q, sc);
       grass.setMatrixAt(n, m);
       c.setHSL(0.22 + rnd() * 0.07, 0.45 + rnd() * 0.2, 0.26 + rnd() * 0.12);
@@ -460,20 +539,24 @@ export class World {
     grass.receiveShadow = true;
     this.group.add(grass);
     // 木立ち（幹と葉叢を材質ごとにまとめる）
-    const bark = patternMaterial('plank', 0x5a4030, 1.2);
-    const leaf = new THREE.MeshStandardMaterial({ color: 0x3a6a30, roughness: 0.8, flatShading: true });
-    const leaf2 = new THREE.MeshStandardMaterial({ color: 0x4a7a38, roughness: 0.8, flatShading: true });
-    const trunkG = new THREE.CylinderGeometry(0.28, 0.45, 1, 8);
-    const ballG = new THREE.IcosahedronGeometry(1, 1);
+    // 樹皮の溝、斑のある葉叢（三色）、枝分かれと根張り
+    const bark = patternMaterial('bark', 0x5a4432, 1.0);
+    const leaves = [patternMaterial('dirt', 0x5a9a44, 1.2, { rough: 0.8 }), patternMaterial('dirt', 0x6aa84c, 1.2, { rough: 0.8 }), patternMaterial('dirt', 0x4a8a3c, 1.2, { rough: 0.8 })];
+    const PG = this._pg || (this._pg = _propGeos());
     let trees = 0;
     for (let i = 0; i < 400 && trees < 70; i++) {
       const x = (rnd() - 0.5) * 200, z = (rnd() - 0.5) * 200;
       if (!free(x, z) || Math.hypot(x, z) < 42) continue;
       const hgt = 4 + rnd() * 4;
-      this._prop(trunkG, bark, x, hgt / 2, z, 0, [1, hgt, 1]);
-      for (let k = 0; k < 4; k++) {
-        const a = rnd() * 6.28, r = rnd() * 1.4;
-        this._prop(ballG, k % 2 ? leaf : leaf2, x + Math.cos(a) * r, hgt + (rnd() - 0.2) * 1.6, z + Math.sin(a) * r, rnd() * 3, 1.6 + rnd() * 1.4);
+      this._prop(PG.taper, bark, x, hgt / 2, z, rnd() * 6, [1.0, hgt, 1.0]);
+      for (let k = 0; k < 5; k++) { const a = k * 1.26 + rnd() * 0.4; this._prop(PG.taper, bark, x + Math.sin(a) * 0.45, 0.2, z + Math.cos(a) * 0.45, a, [0.35, 1.0, 0.35], 1.2); }
+      for (let k = 0; k < 3; k++) {   // 太い枝
+        const a = k * 2.1 + rnd(), rx = 0.7 + rnd() * 0.3, L = 1.6 + rnd();
+        this._prop(PG.taper, bark, x + Math.sin(rx) * Math.sin(a) * L / 2, hgt * 0.7 + Math.cos(rx) * L / 2, z + Math.sin(rx) * Math.cos(a) * L / 2, a, [0.3, L, 0.3], rx);
+      }
+      for (let k = 0; k < 9; k++) {   // 葉叢：上ほど小さく、外へ張り出す
+        const a = rnd() * 6.28, r = k < 3 ? rnd() * 0.6 : 1.0 + rnd() * 1.2, y = hgt + (k < 3 ? 0.8 + rnd() : (rnd() - 0.3) * 1.4);
+        this._prop(PG.leaf, leaves[k % 3], x + Math.cos(a) * r, y, z + Math.sin(a) * r, rnd() * 3, (k < 3 ? 2.4 : 1.8) + rnd() * 1.2);
       }
       this.colliders.push({ min: { x: x - 0.5, z: z - 0.5 }, max: { x: x + 0.5, z: z + 0.5 } });
       trees++;
@@ -1536,159 +1619,227 @@ export class World {
     };
     const solid = (x, z, r) => this.colliders.push({ min: { x: x - r, z: z - r }, max: { x: x + r, z: z + r } });
     const pick = isStart ? [] : shoulders.filter(() => rnd() < 0.7);
-    const G = this._pg || (this._pg = {
-      box: new THREE.BoxGeometry(1, 1, 1), cyl: new THREE.CylinderGeometry(0.5, 0.5, 1, 10),
-      cone: new THREE.ConeGeometry(0.5, 1, 8), cone4: new THREE.ConeGeometry(0.5, 1, 4),
-      sph: new THREE.SphereGeometry(0.5, 10, 8), oct: new THREE.OctahedronGeometry(0.5, 0),
-      dod: new THREE.DodecahedronGeometry(0.5, 0), tor: new THREE.TorusGeometry(0.5, 0.08, 6, 20),
-      hemi: new THREE.SphereGeometry(0.5, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2),
-      disc: new THREE.CircleGeometry(0.5, 16).rotateX(-Math.PI / 2)
-    });
+    const G = this._pg || (this._pg = _propGeos());
     const P = (g, m, x, y, z, sc, ry, rx, rz) => this._prop(g, m, x, y, z, ry || 0, sc, rx, rz);
     const H = WALL_H;
+    /* ── 小物の部品 ── */
+    // 根元から伸びる枝（rx：傾き、ry：向き）。先へ行くほど細く、枝分かれする
+    const branch = (x, y, z, len, r, rx, ry, mat, depth, leaf) => {
+      const sx = Math.sin(rx) * Math.sin(ry), sy = Math.cos(rx), sz = Math.sin(rx) * Math.cos(ry);
+      P(G.taper, mat, x + sx * len / 2, y + sy * len / 2, z + sz * len / 2, [r * 2, len, r * 2], ry, rx);
+      const tx = x + sx * len, ty = y + sy * len, tz = z + sz * len;
+      if (depth <= 0) { if (leaf) P(G.leaf, leaf, tx, ty, tz, 0.5 + rnd() * 0.5, rnd() * 6, rnd()); return; }
+      const n = 2 + (rnd() < 0.4 ? 1 : 0);
+      for (let i = 0; i < n; i++) branch(tx, ty, tz, len * (0.6 + rnd() * 0.15), r * 0.58, Math.min(1.4, rx + 0.25 + rnd() * 0.5), ry + (i - (n - 1) / 2) * 1.3 + (rnd() - 0.5) * 0.6, mat, depth - 1, leaf);
+    };
+    // 根：幹の根元から四方へ這う
+    const roots = (x, z, r, mat) => { for (let k = 0; k < 5; k++) { const a = k * 1.26 + rnd() * 0.4; P(G.taper, mat, x + Math.sin(a) * r * 0.9, 0.18, z + Math.cos(a) * r * 0.9, [r * 0.7, r * 2.2, r * 0.7], a, 1.25); } };
+    // 苔むした岩
+    const rock = (x, y, z, sc, mat, moss) => { P(G.rock, mat, x, y, z, sc, rnd() * 6, (rnd() - 0.5) * 0.4); if (moss) P(G.hemi, moss, x, y + (Array.isArray(sc) ? sc[1] : sc) * 0.3, z, Array.isArray(sc) ? [sc[0] * 0.8, sc[1] * 0.3, sc[2] * 0.8] : [sc * 0.8, sc * 0.3, sc * 0.8], rnd() * 6); };
+    // 髑髏：眼窩・鼻・顎
+    const skull = (x, z, ry, s, bone, dark) => {
+      s = s || 1;
+      P(G.sph, bone, x, 0.13 * s, z, [0.26 * s, 0.24 * s, 0.3 * s], ry);
+      P(G.box, bone, x + Math.sin(ry) * 0.08 * s, 0.05 * s, z + Math.cos(ry) * 0.08 * s, [0.16 * s, 0.07 * s, 0.12 * s], ry);
+      [-1, 1].forEach(sd => P(G.sph, dark, x + Math.sin(ry) * 0.12 * s + Math.cos(ry) * sd * 0.055 * s, 0.14 * s, z + Math.cos(ry) * 0.12 * s - Math.sin(ry) * sd * 0.055 * s, 0.06 * s));
+    };
+    // 蝋燭：蝋と、揺らがない小さな炎
+    const candle = (x, z, h, wax, flame) => { P(G.cyl, wax, x, h / 2, z, [0.09, h, 0.09]); P(G.sph, wax, x, h * 0.25, z, [0.13, 0.08, 0.13]); P(G.flame, flame, x, h + 0.06, z, [0.05, 0.13, 0.05]); };
+    // 柱：台座・柱身（溝彫り）・柱頭
+    const column = (x, z, h, stone, trim) => {
+      P(G.box, stone, x, 0.2, z, [1.5, 0.4, 1.5]); P(G.tor, trim || stone, x, 0.45, z, [1.25, 1.25, 1.8], 0, Math.PI / 2);
+      P(G.flute, stone, x, h / 2, z, [0.95, h - 1.0, 0.95]);
+      P(G.tor, trim || stone, x, h - 0.55, z, [1.25, 1.25, 1.8], 0, Math.PI / 2);
+      P(G.box, trim || stone, x, h - 0.25, z, [1.5, 0.5, 1.5]);
+    };
+    // 六角の氷柱の群れ
+    const crystal = (x, z, sc, mat, n) => {
+      for (let k = 0; k < (n || 5); k++) {
+        const a = k * 2.4 + rnd(), t = (k === 0 ? 0 : 0.35 + rnd() * 0.3), h = (k === 0 ? 2.6 : 1.1 + rnd() * 1.2) * sc, rr = (k === 0 ? 0.55 : 0.3) * sc;
+        const rx = k === 0 ? 0 : 0.35 + rnd() * 0.3;
+        const sx = Math.sin(rx) * Math.sin(a), sy = Math.cos(rx), sz = Math.sin(rx) * Math.cos(a);
+        const bx = x + Math.sin(a) * t, bz = z + Math.cos(a) * t;
+        P(G.hex, mat, bx + sx * h / 2, sy * h / 2, bz + sz * h / 2, [rr * 2, h, rr * 2], a, rx);
+        P(G.hexTip, mat, bx + sx * (h + rr * 0.6), sy * (h + rr * 0.6), bz + sz * (h + rr * 0.6), [rr * 2, rr * 1.2, rr * 2], a, rx);
+      }
+    };
+    // 壺（ろくろで挽いた形）
+    const urn = (x, z, s, mat, band) => { P(G.urn, mat, x, 0, z, s, rnd() * 6); if (band) P(G.tor, band, x, 0.62 * s, z, [0.62 * s, 0.62 * s, 0.6], 0, Math.PI / 2); };
+
     switch (B.id) {
       case 'grave': {
-        const st = stoneMaterial(401, 0x5a5a64), wood = fleshMaterial(0x3a2a1c);
+        const st = patternMaterial('rock', 0x6a6a72, 1.2), moss = fleshMaterial(0x3a4a2a), bark = patternMaterial('bark', 0x4a3a2c, 1.0);
+        const bone = fleshMaterial(0xd8d0b8), dark = fleshMaterial(0x14100c), wax = fleshMaterial(0xe8e0c8), flame = glowMaterial(0xffb050, 3.0);
         pick.forEach(([x, z], i) => {
-          if (i % 3 === 0) {   // 枯れ木
-            P(G.cyl, wood, x, 1.6, z, [0.35, 3.2, 0.35]);
-            for (let k = 0; k < 4; k++) P(G.cone, wood, x + Math.cos(k * 1.7) * 0.6, 2.4 + k * 0.4, z + Math.sin(k * 1.7) * 0.6, [0.12, 1.4, 0.12], k * 1.7, 0.9, 0);
+          if (i % 3 === 0) {   // 枯れ木：根と、捻れて枝分かれする幹
+            roots(x, z, 0.35, bark);
+            branch(x, 0, z, 2.0, 0.28, 0.08, rnd() * 6, bark, 3);
             solid(x, z, 0.4);
-          } else {             // 墓石と十字
-            P(G.box, st, x, 0.6, z, [0.9, 1.2, 0.3], rnd() * 0.3);
-            P(G.box, st, x, 1.26, z, [1.1, 0.14, 0.42]);
-            if (i % 2) { P(G.box, st, x + 0.9, 0.9, z, [0.14, 1.8, 0.14]); P(G.box, st, x + 0.9, 1.4, z, [0.7, 0.14, 0.14]); }
-            solid(x, z, 0.55);
+          } else {             // 墓石：丸い頭、刻まれた十字、苔むす台
+            const ry = (rnd() - 0.5) * 0.3, tilt = (rnd() - 0.5) * 0.12;
+            P(G.box, st, x, 0.1, z, [1.3, 0.2, 0.7], ry);
+            P(G.box, st, x, 0.72, z, [0.9, 1.1, 0.26], ry, 0, tilt);
+            P(G.halfcyl, st, x, 1.27, z, [0.9, 0.26, 0.9], ry, Math.PI / 2, Math.PI / 2 + tilt);
+            P(G.box, dark, x + Math.sin(ry) * 0.135, 0.95, z + Math.cos(ry) * 0.135, [0.07, 0.42, 0.01], ry);
+            P(G.box, dark, x + Math.sin(ry) * 0.135, 1.05, z + Math.cos(ry) * 0.135, [0.28, 0.07, 0.01], ry);
+            P(G.hemi, moss, x - 0.3, 0.18, z, [0.5, 0.2, 0.35], rnd() * 6);
+            if (i % 2) { candle(x + 0.45, z + 0.45, 0.35, wax, flame); candle(x + 0.6, z + 0.3, 0.22, wax, flame); }
+            solid(x, z, 0.6);
           }
         });
-        scatter(6).forEach(([x, z]) => P(G.sph, fleshMaterial(0xd8d0b8), x, 0.12, z, [0.3, 0.24, 0.3]));   // 髑髏
+        scatter(6).forEach(([x, z]) => { skull(x, z, rnd() * 6, 1, bone, dark); for (let k = 0; k < 3; k++) P(G.cyl, bone, x + (rnd() - 0.5) * 0.8, 0.04, z + (rnd() - 0.5) * 0.8, [0.06, 0.5, 0.06], rnd() * 6, Math.PI / 2); });
+        scatter(4).forEach(([x, z]) => rock(x, 0.1, z, [0.6, 0.35, 0.5], st, moss));
         break;
       }
       case 'forest': {
-        const bark = fleshMaterial(0x3a2818), leaf = fleshMaterial(0x1f3a1a), cap = glowMaterial(0x9affc0, 1.4);
-        pick.forEach(([x, z]) => {
-          P(G.cyl, bark, x, 2.2, z, [0.7, 4.4, 0.7]);
-          P(G.cone, leaf, x, 3.4, z, [3.2, 2.2, 3.2]);
-          P(G.cone, leaf, x, 4.6, z, [2.4, 1.8, 2.4]);
-          for (let k = 0; k < 4; k++) P(G.cone, bark, x + Math.cos(k * 1.57) * 0.6, 0.2, z + Math.sin(k * 1.57) * 0.6, [0.2, 0.9, 0.2], 0, Math.cos(k * 1.57) * 1.2, -Math.sin(k * 1.57) * 1.2);
-          solid(x, z, 0.5);
+        const bark = patternMaterial('bark', 0x4a3622, 1.2), leaf = fleshMaterial(0x24461e), leaf2 = fleshMaterial(0x33582a);
+        const stem = fleshMaterial(0xe8e0c8), cap = fleshMaterial(0x8a2a3a), spot = glowMaterial(0x9affc0, 1.6), rockM = patternMaterial('rock', 0x6a6a5a, 1.2), moss = fleshMaterial(0x3a5a2a);
+        pick.forEach(([x, z], i) => {
+          roots(x, z, 0.55, bark);
+          P(G.taper, bark, x, 2.4, z, [1.1, 4.8, 1.1], rnd() * 6);
+          for (let k = 0; k < 4; k++) branch(x, 3.2 + k * 0.5, z, 1.3, 0.14, 0.9 + rnd() * 0.3, k * 1.57 + rnd(), bark, 1, k % 2 ? leaf : leaf2);
+          for (let k = 0; k < 7; k++) { const a = k * 0.9, rr = 1.2 + rnd() * 0.8; P(G.leaf, k % 2 ? leaf : leaf2, x + Math.sin(a) * rr, 4.6 + rnd() * 1.4, z + Math.cos(a) * rr, 1.6 + rnd() * 0.8, rnd() * 6, rnd()); }
+          solid(x, z, 0.55);
         });
         scatter(10).forEach(([x, z], i) => {
-          if (i % 2) { P(G.cyl, fleshMaterial(0xe8e0c8), x, 0.2, z, [0.08, 0.4, 0.08]); P(G.hemi, cap, x, 0.38, z, [0.4, 0.3, 0.4]); }
-          else for (let k = 0; k < 5; k++) P(G.cone, leaf, x + (k - 2) * 0.15, 0.25, z + (k % 2) * 0.1, [0.1, 0.5, 0.1], 0, (k - 2) * 0.2);
+          if (i % 2) { // 光る茸の群れ
+            for (let k = 0; k < 3; k++) { const s = 0.5 + rnd() * 0.7, ox = (rnd() - 0.5) * 0.6, oz = (rnd() - 0.5) * 0.6;
+              P(G.taper, stem, x + ox, 0.2 * s, z + oz, [0.12 * s, 0.4 * s, 0.12 * s]);
+              P(G.hemi, cap, x + ox, 0.38 * s, z + oz, [0.5 * s, 0.3 * s, 0.5 * s]);
+              for (let q = 0; q < 4; q++) P(G.sph, spot, x + ox + Math.cos(q * 1.6) * 0.14 * s, 0.47 * s, z + oz + Math.sin(q * 1.6) * 0.14 * s, 0.05 * s); }
+          } else { rock(x, 0.15, z, [0.8, 0.45, 0.7], rockM, moss); for (let k = 0; k < 6; k++) P(G.blade, leaf2, x + (rnd() - 0.5) * 1.2, 0.25, z + (rnd() - 0.5) * 1.2, [0.35, 0.5, 0.35], rnd() * 6, (rnd() - 0.5) * 0.5); }
         });
-        for (let k = 0; k < 6; k++) P(G.cone, leaf, cx + (rnd() - 0.5) * w, H - 0.8, cz + (rnd() - 0.5) * d, [1.6, 1.6, 1.6], 0, Math.PI);
+        for (let k = 0; k < 6; k++) P(G.leaf, leaf, cx + (rnd() - 0.5) * w, H - 0.6, cz + (rnd() - 0.5) * d, [2.2, 1.0, 2.2], rnd() * 6);
         break;
       }
       case 'palace': {
-        const marble = stoneMaterial(402, 0xe8e0d0), gold = metalMaterial(403, 0xc9a227), red = fleshMaterial(0x8a1a24);
-        // 赤い絨毯（戸口の筋に沿う）
-        P(G.disc, red, cx, 0.02, cz, [7, 1, 7]);
-        if (c.N || c.S) P(G.box, red, cx, 0.015, cz, [4, 0.01, d]);
-        if (c.E || c.W) P(G.box, red, cx, 0.015, cz, [w, 0.01, 4]);
-        pick.forEach(([x, z], i) => {
-          P(G.cyl, marble, x, H / 2, z, [1.0, H, 1.0]);
-          P(G.box, gold, x, 0.2, z, [1.4, 0.4, 1.4]);
-          P(G.box, gold, x, H - 0.3, z, [1.4, 0.4, 1.4]);
-          solid(x, z, 0.7);
-        });
-        // 燭台の吊り灯り
-        P(G.tor, gold, cx, H - 1.2, cz, [3, 3, 3], 0, Math.PI / 2);
-        for (let k = 0; k < 8; k++) P(G.sph, glowMaterial(0xffd080, 2.4), cx + Math.cos(k * 0.785) * 1.5, H - 1.05, cz + Math.sin(k * 0.785) * 1.5, 0.18);
-        P(G.cyl, gold, cx, H - 0.6, cz, [0.06, 1.2, 0.06]);
-        // 壁の旗
+        const marble = patternMaterial('marble', 0xe8e0d0, 2.5, { rough: 0.35 }), gold = metalMaterial(403, 0xc9a227), red = fleshMaterial(0x8a1a24), dark = fleshMaterial(0x3a0a10);
+        const flame = glowMaterial(0xffd080, 3.0), wax = fleshMaterial(0xf0e8d8);
+        // 赤い絨毯と金の縁（戸口の筋に沿う）
+        P(G.disc, red, cx, 0.02, cz, [7, 1, 7]); P(G.ring, gold, cx, 0.025, cz, [7.2, 1, 7.2]);
+        if (c.N || c.S) { P(G.box, red, cx, 0.015, cz, [4, 0.01, d]); [-2.05, 2.05].forEach(o => P(G.box, gold, cx + o, 0.018, cz, [0.12, 0.01, d])); }
+        if (c.E || c.W) { P(G.box, red, cx, 0.015, cz, [w, 0.01, 4]); [-2.05, 2.05].forEach(o => P(G.box, gold, cx, 0.018, cz + o, [w, 0.01, 0.12])); }
+        pick.forEach(([x, z]) => { column(x, z, H, marble, gold); solid(x, z, 0.75); });
+        // 燭台の吊り灯り：二重の輪と蝋燭、鎖
+        P(G.tor, gold, cx, H - 1.3, cz, [3, 3, 3], 0, Math.PI / 2);
+        P(G.tor, gold, cx, H - 1.1, cz, [1.8, 1.8, 2], 0, Math.PI / 2);
+        for (let k = 0; k < 10; k++) { const a = k * 0.628; P(G.cyl, wax, cx + Math.cos(a) * 1.5, H - 1.15, cz + Math.sin(a) * 1.5, [0.08, 0.26, 0.08]); P(G.flame, flame, cx + Math.cos(a) * 1.5, H - 0.95, cz + Math.sin(a) * 1.5, [0.06, 0.14, 0.06]); }
+        for (let k = 0; k < 3; k++) P(G.cyl, gold, cx + Math.cos(k * 2.09) * 0.75, H - 0.6, cz + Math.sin(k * 2.09) * 0.75, [0.03, 1.3, 0.03], 0, 0, Math.cos(k * 2.09) * 0.5);
+        // 壁の旗：房飾りと紋
         [[cx - w / 2 + 0.6, cz - 4, Math.PI / 2], [cx + w / 2 - 0.6, cz + 4, -Math.PI / 2]].forEach(([x, z, r]) => {
           P(G.box, red, x, H - 2.2, z, [1.4, 2.8, 0.05], r);
-          P(G.box, gold, x, H - 2.2, z, [0.4, 0.4, 0.08], r);
+          P(G.box, dark, x, H - 2.2, z, [1.1, 2.5, 0.055], r);
+          P(G.cyl, gold, x, H - 0.75, z, [0.06, 1.7, 0.06], r, 0, Math.PI / 2);
+          P(G.sph, gold, x, H - 2.0, z, [0.5, 0.5, 0.08], r);
+          P(G.cone, gold, x, H - 3.75, z, [0.3, 0.3, 0.06], r, Math.PI);
         });
+        scatter(3, 6).forEach(([x, z]) => { urn(x, z, 1.0, marble, gold); solid(x, z, 0.4); });
         break;
       }
       case 'frost': {
-        if (!this._iceMat) this._iceMat = new THREE.MeshStandardMaterial({ color: 0xbfe8ff, roughness: 0.08, metalness: 0.1,
-          emissive: new THREE.Color(0x3a8ab0), emissiveIntensity: 0.5, transparent: true, opacity: 0.8 });
-        const snow = fleshMaterial(0xf0f6ff);
-        pick.forEach(([x, z]) => {
-          for (let k = 0; k < 4; k++) P(G.oct, this._iceMat, x + (k % 2 - 0.5) * 0.8, 1.0 + k * 0.3, z + (k > 1 ? 0.4 : -0.4), [0.8, 2.4 + k * 0.5, 0.8], k, (k - 1.5) * 0.25);
-          P(G.sph, snow, x, 0.1, z, [2.4, 0.5, 2.4]);
-          solid(x, z, 0.8);
-        });
-        scatter(6).forEach(([x, z]) => P(G.sph, snow, x, 0.05, z, [1.6 + rnd(), 0.35, 1.2 + rnd()]));
-        for (let k = 0; k < 14; k++) P(G.cone, this._iceMat, cx + (rnd() - 0.5) * (w - 2), H - 0.6, cz + (rnd() - 0.5) * (d - 2), [0.25, 1.2 + rnd(), 0.25], 0, Math.PI);
+        if (!this._iceMat) this._iceMat = new THREE.MeshStandardMaterial({ color: 0xbfe8ff, roughness: 0.06, metalness: 0.1,
+          emissive: new THREE.Color(0x3a8ab0), emissiveIntensity: 0.45, transparent: true, opacity: 0.82 });
+        const snow = fleshMaterial(0xe6eef8), rockM = patternMaterial('rock', 0x5a6470, 1.5);
+        pick.forEach(([x, z]) => { crystal(x, z, 1, this._iceMat, 6); P(G.hemi, snow, x, 0, z, [2.6, 0.5, 2.6], rnd() * 6); solid(x, z, 0.8); });
+        scatter(6).forEach(([x, z], i) => { if (i % 2) rock(x, 0.1, z, [0.9, 0.5, 0.8], rockM, snow); else P(G.hemi, snow, x, 0, z, [1.8 + rnd(), 0.4, 1.3 + rnd()], rnd() * 6); });
+        for (let k = 0; k < 14; k++) { const x = cx + (rnd() - 0.5) * (w - 2), z = cz + (rnd() - 0.5) * (d - 2), h = 1 + rnd() * 1.4; P(G.hexTip, this._iceMat, x, H - h / 2, z, [0.3, h, 0.3], rnd(), Math.PI); }
         break;
       }
       case 'volcano': {
         if (!this._lavaMats) this._lavaMats = [glowMaterial(0xff5a10, 2.2, true)];
-        const lava = this._lavaMats[0], obs = metalMaterial(404, 0x1a1418);
-        pick.forEach(([x, z], i) => {
-          for (let k = 0; k < 3; k++) P(G.cone, obs, x + (k - 1) * 0.6, 1.1 + k * 0.2, z + (k % 2) * 0.4, [0.8, 2.2 + k * 0.6, 0.8], k, (k - 1) * 0.2);
+        const lava = this._lavaMats[0], obs = metalMaterial(404, 0x1a1418), crust = patternMaterial('rock', 0x2a1e1a, 1.2), ember = glowMaterial(0xff8a30, 2.6);
+        pick.forEach(([x, z]) => {
+          for (let k = 0; k < 4; k++) { const a = k * 1.9 + rnd(); P(G.shard, obs, x + Math.sin(a) * 0.4 * (k > 0), 1.2 + k * 0.1, z + Math.cos(a) * 0.4 * (k > 0), [0.7, 2.4 + (k === 0 ? 1.2 : rnd()), 0.7], a, (k > 0 ? 0.3 : 0)); }
+          rock(x, 0.1, z, [1.4, 0.5, 1.2], crust);
           solid(x, z, 0.8);
         });
-        scatter(4, 5).forEach(([x, z]) => { P(G.disc, lava, x, 0.03, z, [2.4 + rnd() * 2, 1, 1.8 + rnd()]); P(G.tor, obs, x, 0.04, z, [2.6, 1.4, 2.0], 0, Math.PI / 2); });
+        scatter(4, 5).forEach(([x, z]) => {
+          const sx = 2.4 + rnd() * 2, sz = 1.8 + rnd();
+          P(G.disc, lava, x, 0.03, z, [sx, 1, sz]);
+          for (let k = 0; k < 9; k++) { const a = k * 0.7; rock(x + Math.cos(a) * sx * 0.52, 0.05, z + Math.sin(a) * sz * 0.52, [0.45, 0.25, 0.4], crust); }
+          for (let k = 0; k < 3; k++) P(G.sph, ember, x + (rnd() - 0.5) * sx * 0.5, 0.06, z + (rnd() - 0.5) * sz * 0.5, [0.25, 0.05, 0.25]);
+        });
         for (let k = 0; k < 8; k++) P(G.box, lava, cx + (rnd() - 0.5) * w, 0.02, cz + (rnd() - 0.5) * d, [0.1, 0.02, 2 + rnd() * 3], rnd() * 3);
         break;
       }
       case 'grass': {
-        const grass = fleshMaterial(0x3a6a2a), rock = stoneMaterial(405, 0x7a7a70), wood = fleshMaterial(0x5a4028);
+        const grass = fleshMaterial(0x3a6a2a), grass2 = fleshMaterial(0x4f7a34), rockM = patternMaterial('rock', 0x7a7a70, 1.5), wood = patternMaterial('plank', 0x6a4c30, 1.5), moss = fleshMaterial(0x4a6a2a);
         pick.forEach(([x, z], i) => {
-          if (i % 2) { P(G.dod, rock, x, 0.6, z, [1.8, 1.3, 1.6], rnd() * 3); solid(x, z, 0.8); }
-          else { for (let k = 0; k < 3; k++) P(G.box, wood, x + (k - 1) * 0.9, 0.5, z, [0.12, 1.0, 0.12]); P(G.box, wood, x, 0.8, z, [2.0, 0.08, 0.06]); P(G.box, wood, x, 0.45, z, [2.0, 0.08, 0.06]); solid(x, z, 0.3); }
+          if (i % 2) { rock(x, 0.45, z, [1.9, 1.3, 1.7], rockM, moss); rock(x + 0.9, 0.2, z + 0.5, [0.7, 0.5, 0.6], rockM); solid(x, z, 0.85); }
+          else { // 柵：尖った杭と二本の横木
+            for (let k = 0; k < 3; k++) { P(G.box, wood, x + (k - 1) * 0.9, 0.5, z, [0.14, 1.0, 0.14], 0, 0, (rnd() - 0.5) * 0.08); P(G.cone4, wood, x + (k - 1) * 0.9, 1.08, z, [0.2, 0.18, 0.2], Math.PI / 4); }
+            P(G.box, wood, x, 0.78, z + 0.08, [2.1, 0.1, 0.06], 0, 0, 0.03); P(G.box, wood, x, 0.42, z + 0.08, [2.1, 0.1, 0.06], 0, 0, -0.02);
+            solid(x, z, 0.3);
+          }
         });
-        const flowers = [glowMaterial(0xffe08a, 0.8), glowMaterial(0xff8ad0, 0.8), glowMaterial(0x9ad8ff, 0.8)];
+        const petals = [glowMaterial(0xffe08a, 0.6), glowMaterial(0xff8ad0, 0.6), glowMaterial(0x9ad8ff, 0.6)];
         scatter(16, 1).forEach(([x, z], i) => {
-          for (let k = 0; k < 4; k++) P(G.cone, grass, x + (k - 1.5) * 0.14, 0.22, z + (k % 2) * 0.12, [0.08, 0.45, 0.08], 0, (k - 1.5) * 0.25);
-          if (i % 3 === 0) P(G.sph, flowers[i % 3], x, 0.5, z, 0.14);
+          for (let k = 0; k < 6; k++) P(G.blade, k % 2 ? grass : grass2, x + (rnd() - 0.5) * 0.4, 0.22, z + (rnd() - 0.5) * 0.4, [0.3, 0.45 + rnd() * 0.3, 0.3], rnd() * 6, (rnd() - 0.5) * 0.4);
+          if (i % 3 === 0) { P(G.cyl, grass, x, 0.25, z, [0.02, 0.5, 0.02]); for (let q = 0; q < 5; q++) P(G.sph, petals[i % 3], x + Math.cos(q * 1.26) * 0.06, 0.5, z + Math.sin(q * 1.26) * 0.06, [0.07, 0.03, 0.07]); P(G.sph, petals[0], x, 0.51, z, 0.04); }
         });
         for (let k = 0; k < 30; k++) P(G.sph, glowMaterial(0xffffff, 2.2), cx + (rnd() - 0.5) * w, H - 0.05, cz + (rnd() - 0.5) * d, 0.06);
         P(G.sph, glowMaterial(0xfff4d0, 1.8), cx + w * 0.3, H - 0.1, cz - d * 0.3, [1.2, 0.1, 1.2]);   // 月
         break;
       }
       case 'sky': {
-        const marble = stoneMaterial(406, 0xf4f0e6), gold = metalMaterial(407, 0xd8b040), rock = stoneMaterial(408, 0x8a8a9a);
-        pick.forEach(([x, z], i) => {
-          P(G.cyl, marble, x, H / 2, z, [0.9, H, 0.9]);
-          P(G.box, gold, x, H - 0.25, z, [1.3, 0.3, 1.3]);
-          P(G.box, marble, x, 0.25, z, [1.4, 0.5, 1.4]);
-          solid(x, z, 0.7);
-        });
-        // 浮島（当たりなし・宙に）
+        const marble = patternMaterial('marble', 0xf4f0e6, 2.5, { rough: 0.3 }), gold = metalMaterial(407, 0xd8b040), rockM = patternMaterial('rock', 0x8a8a9a, 1.5), turf = fleshMaterial(0x6a9a5a), cloud = fleshMaterial(0xdde4f4);
+        pick.forEach(([x, z]) => { column(x, z, H, marble, gold); solid(x, z, 0.75); });
+        // 浮島（当たりなし・宙に）：岩の根と草の上面、小さな木
         for (let k = 0; k < 3; k++) {
           const x = cx + (rnd() - 0.5) * (w - 6), z = cz + (rnd() - 0.5) * (d - 6), y = 3.8 + rnd() * 1.2;
-          P(G.cone, rock, x, y - 0.6, z, [2.0, 1.6, 2.0], rnd() * 3, Math.PI);
-          P(G.cyl, fleshMaterial(0x6a9a5a), x, y + 0.2, z, [2.0, 0.2, 2.0]);
+          P(G.shard, rockM, x, y - 0.8, z, [2.2, 1.8, 2.2], rnd() * 3, Math.PI);
+          rock(x + 0.4, y - 0.3, z, [1.6, 0.6, 1.4], rockM);
+          P(G.hemi, turf, x, y, z, [2.2, 0.3, 2.0]);
+          P(G.taper, fleshMaterial(0x5a4030), x + 0.3, y + 0.5, z, [0.15, 1.0, 0.15]); P(G.leaf, turf, x + 0.3, y + 1.1, z, 0.9);
         }
         for (let k = 0; k < 24; k++) P(G.sph, glowMaterial(0xd8e8ff, 2.2), cx + (rnd() - 0.5) * w, H - 0.05, cz + (rnd() - 0.5) * d, 0.07);
-        for (let k = 0; k < 4; k++) P(G.sph, fleshMaterial(0xdde4f4), cx + (rnd() - 0.5) * w, H - 0.4, cz + (rnd() - 0.5) * d, [3, 0.3, 1.6]);
+        for (let k = 0; k < 4; k++) { const x = cx + (rnd() - 0.5) * w, z = cz + (rnd() - 0.5) * d; for (let q = 0; q < 5; q++) P(G.sph, cloud, x + (q - 2) * 0.7, H - 0.5 + Math.sin(q) * 0.15, z + (rnd() - 0.5) * 0.5, [1.3, 0.5, 1.0]); }
         break;
       }
       case 'abyss': {
-        const flesh = fleshMaterial(0x4a1a4a), crys = glowMaterial(0xc06aff, 1.6);
-        pick.forEach(([x, z], i) => {
-          for (let k = 0; k < 7; k++) P(G.sph, flesh, x + Math.sin(k * 0.8) * 0.3, 0.3 + k * 0.45, z + Math.cos(k * 0.6) * 0.3, 0.6 - k * 0.06);
+        const flesh = fleshMaterial(0x4a1a4a), vein = glowMaterial(0xff4040, 1.6), crys = glowMaterial(0xc06aff, 1.6), bone = fleshMaterial(0xc8b8b0);
+        pick.forEach(([x, z]) => {
+          for (let k = 0; k < 7; k++) P(G.sph, flesh, x + Math.sin(k * 0.8) * 0.3, 0.3 + k * 0.45, z + Math.cos(k * 0.6) * 0.3, 0.62 - k * 0.06);
+          for (let k = 0; k < 4; k++) P(G.tor, vein, x, 0.6 + k * 0.7, z, [0.62 - k * 0.07, 0.62 - k * 0.07, 0.5], k, Math.PI / 2 + (rnd() - 0.5) * 0.5);
           P(G.sph, glowMaterial(0xff4040, 2.8), x, 3.5, z, 0.2);
+          for (let k = 0; k < 5; k++) { const a = k * 1.26; P(G.taper, bone, x + Math.sin(a) * 0.55, 0.5, z + Math.cos(a) * 0.55, [0.08, 1.0, 0.08], a, -0.5); }
           solid(x, z, 0.5);
         });
-        scatter(6).forEach(([x, z]) => { for (let k = 0; k < 3; k++) P(G.oct, crys, x + (k - 1) * 0.3, 0.4 + k * 0.15, z, [0.35, 1.2, 0.35], 0, (k - 1) * 0.4); });
+        scatter(6).forEach(([x, z]) => crystal(x, z, 0.45, crys, 4));
         for (let k = 0; k < 6; k++) P(G.sph, glowMaterial(0xff6040, 2.4), cx + (rnd() < 0.5 ? -1 : 1) * (w / 2 - 0.1), 2 + rnd() * 3, cz + (rnd() - 0.5) * d, [0.1, 0.16, 0.16]);
         break;
       }
       case 'desert': {
-        const sand = stoneMaterial(409, 0xd8b880), sandstone = stoneMaterial(410, 0xc8a070), gold = metalMaterial(411, 0xd8b040);
+        const sand = fleshMaterial(0xd8b880), sandstone = patternMaterial('block', 0xc8a070, 2.0), gold = metalMaterial(411, 0xd8b040), clay = fleshMaterial(0x9a5e3a), lapis = glowMaterial(0x3a6aff, 0.8);
         pick.forEach(([x, z], i) => {
-          if (i % 2) { P(G.cone4, sandstone, x, 2.2, z, [1.2, 4.4, 1.2], Math.PI / 4); P(G.cone4, gold, x, 4.6, z, [0.35, 0.5, 0.35], Math.PI / 4); solid(x, z, 0.6); }
-          else { P(G.box, sandstone, x, 0.45, z, [1.2, 0.9, 2.4]); P(G.box, gold, x, 0.95, z, [1.0, 0.1, 2.0]); solid(x, z, 0.9); }
+          if (i % 2) { // 方尖柱：金の冠と刻まれた紋
+            P(G.box, sandstone, x, 0.2, z, [1.6, 0.4, 1.6]);
+            P(G.obelisk, sandstone, x, 0.4, z, [1.1, 4.0, 1.1], Math.PI / 4);
+            P(G.cone4, gold, x, 4.65, z, [0.62, 0.5, 0.62], Math.PI / 4);
+            for (let q = 0; q < 3; q++) P(G.box, lapis, x, 1.4 + q * 0.8, z + 0.5, [0.25, 0.25, 0.02], 0);
+            solid(x, z, 0.8);
+          } else { // 石棺：蓋と金の帯
+            P(G.box, sandstone, x, 0.45, z, [1.2, 0.9, 2.4]);
+            P(G.box, sandstone, x, 0.98, z, [1.3, 0.16, 2.5]);
+            P(G.halfcyl, sandstone, x, 1.06, z, [0.35, 2.2, 1.3], 0, Math.PI / 2, Math.PI / 2);
+            [-0.8, 0, 0.8].forEach(o => P(G.box, gold, x, 0.6, z + o, [1.22, 0.08, 0.1]));
+            solid(x, z, 0.9);
+          }
         });
-        scatter(5).forEach(([x, z]) => P(G.sph, sand, x, 0, z, [3 + rnd() * 2, 0.7, 2 + rnd()]));
-        scatter(4).forEach(([x, z]) => { P(G.sph, fleshMaterial(0x8a5a3a), x, 0.45, z, [0.6, 0.9, 0.6]); P(G.cyl, fleshMaterial(0x8a5a3a), x, 0.95, z, [0.3, 0.2, 0.3]); });
+        scatter(5).forEach(([x, z]) => P(G.hemi, sand, x, 0, z, [3 + rnd() * 2, 0.6, 2 + rnd()], rnd() * 6));
+        scatter(4).forEach(([x, z]) => { urn(x, z, 0.9 + rnd() * 0.4, clay, gold); if (rnd() < 0.5) urn(x + 0.6, z + 0.3, 0.6, clay); });
         break;
       }
       case 'void': {
-        const dark = metalMaterial(412, 0x14141c), red = glowMaterial(0xff4a6a, 2.0);
-        pick.forEach(([x, z], i) => {
-          P(G.box, dark, x, H / 2, z, [1, H, 1], Math.PI / 4);
-          P(G.box, red, x, H / 2, z, [0.08, H, 1.05], Math.PI / 4);
+        const dark = metalMaterial(412, 0x14141c), red = glowMaterial(0xff4a6a, 2.0), stone = patternMaterial('rock', 0x22222c, 2.0);
+        pick.forEach(([x, z]) => {
+          P(G.box, stone, x, 0.3, z, [1.8, 0.6, 1.8], Math.PI / 4);
+          P(G.obelisk, dark, x, 0.6, z, [1.0, H - 0.6, 1.0], Math.PI / 4);
+          for (let q = 0; q < 6; q++) P(G.box, red, x, 1.2 + q * 0.75, z, [0.06, 0.4 + (q % 2) * 0.2, 1.02], Math.PI / 4 + (q % 2 ? 0.2 : -0.2));
           solid(x, z, 0.7);
         });
-        for (let k = 0; k < 6; k++) P(G.box, red, cx + (rnd() - 0.5) * w, 2.5 + rnd() * 3, cz + (rnd() - 0.5) * d, 0.3 + rnd() * 0.4, rnd() * 3, rnd() * 3);
+        for (let k = 0; k < 6; k++) P(G.shard, red, cx + (rnd() - 0.5) * w, 2.5 + rnd() * 3, cz + (rnd() - 0.5) * d, 0.3 + rnd() * 0.4, rnd() * 3, rnd() * 3);
+        scatter(5).forEach(([x, z]) => rock(x, 0.15, z, [0.8, 0.5, 0.7], stone));
         break;
       }
     }
@@ -2056,6 +2207,7 @@ export class World {
     const dt = this._lastT != null ? Math.min(0.1, t - this._lastT) : 0.016;
     this._lastT = t;
     this._updateGimmick(t, dt);
+    if (this._grassMat) this._grassMat.userData.uTime.value = t;
     if (this._lavaMats) this._lavaMats.forEach(m => { m.emissiveIntensity = 1.8 + Math.sin(t * 1.7) * 0.6; });
     if (this.gimmicks) {
       if (this.gimmicks.hazards) {

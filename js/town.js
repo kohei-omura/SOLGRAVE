@@ -3,6 +3,7 @@
      縦穴のまわりに開けた宿場町。住人と話し、道具を購う。
    ══════════════════════════════════════════════════════════════ */
 import * as THREE from 'three';
+import { buildFolk, folkMaterial } from './bestiary.js';
 import { stoneMaterial, metalMaterial, glowMaterial, fleshMaterial, patternMaterial, worldUV } from './gfx.js';
 
 /* ── 住人 ──
@@ -53,37 +54,12 @@ export const TOWNSFOLK = [
 /** 住人の姿を作る（街と家の中で共用） */
 export function makeFolk(def, ox, oz) {
   const g = new THREE.Group();
-  const body = new THREE.Mesh(new THREE.CapsuleGeometry(def.fat ? 0.34 : 0.26, def.small ? 0.36 : 0.62, 5, 10), fleshMaterial(def.cloth));
-  body.position.y = def.small ? 0.62 : 0.92;
+  // 姿は bestiary.js：着物・帯・袖・髪型・顔まで一つの形にまとめる（描く手間は一回）
+  const body = new THREE.Mesh(buildFolk(def), folkMaterial());
+  body.castShadow = true; body.receiveShadow = true;
+  body.customDepthMaterial = folkMaterial().userData.depth;
   g.add(body);
   const hy = def.small ? 1.08 : 1.5;
-  const head = new THREE.Mesh(new THREE.SphereGeometry(def.small ? 0.2 : 0.22, 14, 12), fleshMaterial(def.skin));
-  head.position.y = hy;
-  g.add(head);
-  const hair = new THREE.Mesh(new THREE.SphereGeometry(def.small ? 0.215 : 0.235, 14, 12, 0, Math.PI * 2, 0, Math.PI * 0.6),
-    fleshMaterial(def.hair));
-  hair.position.y = hy + 0.03;
-  g.add(hair);
-  if (def.long || def.id === 'girl1' || def.id === 'girl2' || def.id === 'inn') {
-    const back = new THREE.Mesh(new THREE.CapsuleGeometry(0.16, 0.5, 5, 9), fleshMaterial(def.hair));
-    back.position.set(0, hy - 0.3, -0.15);
-    g.add(back);
-  }
-  if (def.apron) {
-    const ap = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.6, 0.05), fleshMaterial(def.apron));
-    ap.position.set(0, 0.8, 0.26);
-    g.add(ap);
-  }
-  if (def.beard) {
-    const bd = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.3, 8), fleshMaterial(def.hair));
-    bd.position.set(0, hy - 0.22, 0.14); bd.rotation.x = Math.PI;
-    g.add(bd);
-  }
-  [-1, 1].forEach(sx => {
-    const e = new THREE.Mesh(new THREE.SphereGeometry(0.028, 8, 6), fleshMaterial(0x241c26));
-    e.position.set(0.075 * sx, hy - 0.01, 0.2);
-    g.add(e);
-  });
   const mark = new THREE.Mesh(new THREE.SphereGeometry(0.11, 10, 8),
     glowMaterial(def.kind === 'shop' ? 0xffd24a : def.kind === 'inn' ? 0x8ad0ff :
                  def.kind === 'smith' ? 0xff8a5a : 0xa0ffc0, 2.0));
