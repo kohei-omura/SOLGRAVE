@@ -6,7 +6,7 @@
    ══════════════════════════════════════════════════════════════ */
 import * as THREE from 'three';
 import { World } from './world.js';
-import { stoneMaterial, metalMaterial, glowMaterial, fleshMaterial } from './gfx.js';
+import { stoneMaterial, metalMaterial, glowMaterial, fleshMaterial, patternMaterial, worldUV } from './gfx.js';
 import { makeFolk, TOWNSFOLK, talkTo } from './town.js';
 import { buildWeaponModel } from './weapons.js';
 
@@ -83,8 +83,10 @@ export class Interior {
     const D = DEF[kind] || DEF.home;
     this.kind = kind; this.def = D;
     const W = D.w, Dp = D.d;
-    const floorMat = stoneMaterial(501, D.floor), wallMat = stoneMaterial(502, D.wall);
-    const wood = stoneMaterial(503, 0x6a4a2a), dark = fleshMaterial(0x2a1c14);
+    // 木目の床・漆喰の壁・木目の柱（鍛冶場の床は敷石）
+    const floorMat = patternMaterial(kind === 'smith' ? 'flag' : 'plank', D.floor, kind === 'smith' ? 3 : 2);
+    const wallMat = patternMaterial('plaster', D.wall, 3);
+    const wood = patternMaterial('plank', 0x6a4a2a, 1.2), dark = fleshMaterial(0x2a1c14);
     this.floorMat = floorMat;
     // 床
     this._batchPlane(W, Dp, OX, 0, OZ, true, floorMat);
@@ -151,9 +153,22 @@ export class Interior {
     return def ? this._folk(def, x, z, face) : null;
   }
   _table(x, z, w, d, h, mat) {
-    this._box(w, 0.1, d, x, h, z, mat);
-    [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([sx, sz]) => this._box(0.1, h, 0.1, x + sx * (w / 2 - 0.1), h / 2, z + sz * (d / 2 - 0.1), mat));
+    // 天板（面取りの縁）・幕板・ろくろ挽きの脚
+    this._box(w, 0.08, d, x, h + 0.02, z, mat);
+    this._box(w + 0.06, 0.04, d + 0.06, x, h - 0.03, z, mat);
+    this._box(w - 0.2, 0.12, 0.04, x, h - 0.1, z - d / 2 + 0.12, mat); this._box(w - 0.2, 0.12, 0.04, x, h - 0.1, z + d / 2 - 0.12, mat);
+    [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([sx, sz]) => this._prop(this._g('leg'), mat, x + sx * (w / 2 - 0.12), 0, z + sz * (d / 2 - 0.12), 0, [1, h, 1]));
     this._solid(x, z, w / 2, d / 2);
+  }
+  /** 提灯：ろくろの膨らみ、竹の骨、黒い口金 */
+  _chochin(x, y, z, color, s) {
+    s = s || 1;
+    const lan = new THREE.Mesh(this._g('lantern'), glowMaterial(color, 1.4));
+    lan.scale.setScalar(s); lan.position.set(x, y - 0.35 * s, z); this.group.add(lan);
+    const cap = fleshMaterial(0x1a1414);
+    this._prop(this._g('cyl'), cap, x, y + 0.36 * s, z, 0, [0.32 * s, 0.07 * s, 0.32 * s]);
+    this._prop(this._g('cyl'), cap, x, y - 0.36 * s, z, 0, [0.32 * s, 0.07 * s, 0.32 * s]);
+    for (let k = 0; k < 5; k++) { const yy = -0.24 + k * 0.12, r = Math.sqrt(Math.max(0.02, 1 - Math.pow(yy / 0.36, 2))) * 0.3; this._prop(this._g('tor'), fleshMaterial(0x6a4a30), x, y + yy * s, z, 0, [r * 2 * s, r * 2 * s, 0.3], Math.PI / 2); }
   }
   _shelf(x, z, w, h, rot, mat, items) {
     // 奥行き0.5の棚（rot=0 で南向き）
@@ -171,9 +186,17 @@ export class Interior {
         const off = -w / 2 + 0.2 + i * 0.35;
         const px = rot ? x + (rot > 0 ? 0.3 : -0.3) : x + off, pz = rot ? z + off : z + 0.3;
         const col = cols[(i + r) % cols.length];
-        if (items === 'books') this._prop(this._g('box'), fleshMaterial(col), px, y + 0.2, pz, 0, [rot ? 0.3 : 0.12, 0.34 + (i % 3) * 0.05, rot ? 0.12 : 0.3]);
-        else if (items === 'jars') this._prop(this._g('cyl'), fleshMaterial(col), px, y + 0.16, pz, 0, [0.22, 0.3, 0.22]);
-        else this._prop(this._g('sph'), glowMaterial(col, 0.6), px, y + 0.13, pz, 0, [0.2, 0.26, 0.2]);
+        if (items === 'books') {   // 背表紙：高さと傾きが揃わない本、金の帯
+          const bh = 0.3 + ((i * 7 + r * 3) % 5) * 0.03, tilt = (i % 7 === 3) ? 0.2 : 0;
+          this._prop(this._g('box'), fleshMaterial(col), px, y + bh / 2 + 0.03, pz, 0, [rot ? 0.28 : 0.1, bh, rot ? 0.1 : 0.28], rot ? tilt : 0, rot ? 0 : tilt);
+          this._prop(this._g('box'), metalMaterial(515, 0xc9a227), px + (rot ? (rot > 0 ? 0.141 : -0.141) : 0), y + bh * 0.75, pz + (rot ? 0 : 0.141), 0, [rot ? 0.005 : 0.1, 0.025, rot ? 0.1 : 0.005]);
+        } else if (items === 'jars') {   // 釉薬の壺と木の蓋
+          this._prop(this._g('urn'), fleshMaterial(col), px, y + 0.03, pz, i, 0.5);
+          this._prop(this._g('cyl'), patternMaterial('plank', 0x6a4a2a, 1.2), px, y + 0.44, pz, 0, [0.2, 0.04, 0.2]);
+        } else {                         // 薬瓶：丸い胴・細い首・栓、中身が淡く光る
+          this._prop(this._g('flask'), glowMaterial(col, 0.6), px, y + 0.03, pz, i, 0.9);
+          this._prop(this._g('cyl'), fleshMaterial(0x8a6a4a), px, y + 0.36, pz, 0, [0.06, 0.06, 0.06]);
+        }
       }
     }
   }
@@ -181,7 +204,13 @@ export class Interior {
     if (!this._pg) this._pg = {
       box: new THREE.BoxGeometry(1, 1, 1), cyl: new THREE.CylinderGeometry(0.5, 0.5, 1, 12),
       sph: new THREE.SphereGeometry(0.5, 12, 10), cone: new THREE.ConeGeometry(0.5, 1, 10),
-      tor: new THREE.TorusGeometry(0.5, 0.06, 6, 20)
+      tor: new THREE.TorusGeometry(0.5, 0.06, 8, 28),
+      // ろくろで挽いた形：樽・壺・薬瓶・提灯・机の脚
+      barrel: new THREE.LatheGeometry([[0, 0], [0.4, 0], [0.45, 0.25], [0.47, 0.5], [0.45, 0.75], [0.4, 1.0], [0, 1.0]].map(([a, b]) => new THREE.Vector2(a, b)), 24),
+      urn: new THREE.LatheGeometry([[0, 0], [0.18, 0], [0.26, 0.1], [0.32, 0.36], [0.3, 0.58], [0.2, 0.74], [0.16, 0.8], [0.19, 0.84]].map(([a, b]) => new THREE.Vector2(a, b)), 20),
+      flask: new THREE.LatheGeometry([[0, 0], [0.1, 0], [0.13, 0.06], [0.14, 0.14], [0.11, 0.22], [0.04, 0.26], [0.035, 0.34], [0.045, 0.35]].map(([a, b]) => new THREE.Vector2(a, b)), 18),
+      lantern: new THREE.LatheGeometry(Array.from({ length: 9 }, (_, i) => { const t = i / 8; return new THREE.Vector2(0.06 + Math.sin(t * Math.PI) * 0.26, t * 0.7); }), 20),
+      leg: new THREE.LatheGeometry([[0, 0], [0.06, 0], [0.05, 0.08], [0.045, 0.3], [0.06, 0.45], [0.045, 0.6], [0.04, 0.92], [0.06, 1.0], [0, 1.0]].map(([a, b]) => new THREE.Vector2(a, b)), 12)
     };
     return this._pg[k];
   }
@@ -194,23 +223,28 @@ export class Interior {
     this.group.add(b);
   }
   _barrel(x, z, mat) {
-    this._prop(this._g('cyl'), mat || fleshMaterial(0x6a4a2a), x, 0.5, z, 0, [0.9, 1.0, 0.9]);
-    this._prop(this._g('tor'), metalMaterial(510, 0x4a4a4a), x, 0.25, z, 0, [0.9, 0.9, 0.9], Math.PI / 2);
-    this._prop(this._g('tor'), metalMaterial(510, 0x4a4a4a), x, 0.8, z, 0, [0.9, 0.9, 0.9], Math.PI / 2);
+    // 膨らんだ胴、縦の板目、三本の箍、蓋
+    const wm = mat || patternMaterial('plank', 0x6a4a2a, 0.6);
+    this._prop(this._g('barrel'), wm, x, 0, z, 0, 1);
+    for (let k = 0; k < 12; k++) { const a = k / 12 * Math.PI * 2; this._prop(this._g('box'), fleshMaterial(0x2a1a10), x + Math.cos(a) * 0.462, 0.5, z + Math.sin(a) * 0.462, -a, [0.012, 0.9, 0.02]); }
+    [0.12, 0.5, 0.88].forEach((y, k) => this._prop(this._g('tor'), metalMaterial(510, 0x4a4a4a), x, y, z, 0, k === 1 ? [0.96, 0.96, 0.8] : [0.88, 0.88, 0.8], Math.PI / 2));
+    this._prop(this._g('cyl'), wm, x, 0.99, z, 0, [0.8, 0.03, 0.8]);
     this._solid(x, z, 0.45, 0.45);
   }
   _tatami(x, z, w, d) {
-    const mat = fleshMaterial(0xc8c080);
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), mat);
-    m.rotation.x = -Math.PI / 2; m.position.set(x, 0.12, z); m.receiveShadow = true;
+    const mat = patternMaterial('tatami', 0xc8c080, 1.8);
+    const geo = new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2).translate(x, 0.12, z);
+    worldUV(geo, 1.8);
+    const m = new THREE.Mesh(geo, mat);
+    m.receiveShadow = true;
     this.group.add(m);
-    this._box(w + 0.2, 0.12, d + 0.2, x, 0.06, z, stoneMaterial(503, 0x6a4a2a));
+    this._box(w + 0.2, 0.12, d + 0.2, x, 0.06, z, patternMaterial('plank', 0x6a4a2a, 1.2));
     const edge = fleshMaterial(0x2a3a2a);
     for (let i = 0; i <= Math.floor(w / 1.8); i++) this._box(0.06, 0.02, d, x - w / 2 + i * 1.8, 0.13, z, edge);
     this._box(w, 0.02, 0.06, x, 0.13, z, edge);
   }
   _shoji(x, z, len, rotY) {
-    const frame = stoneMaterial(503, 0x6a4a2a), paper = new THREE.MeshStandardMaterial({ color: 0xfff8e8, emissive: new THREE.Color(0xffe8c0), emissiveIntensity: 0.25, roughness: 0.9 });
+    const frame = patternMaterial('plank', 0x6a4a2a, 1.2), paper = new THREE.MeshStandardMaterial({ color: 0xfff8e8, emissive: new THREE.Color(0xffe8c0), emissiveIntensity: 0.25, roughness: 0.9 });
     const ax = rotY ? 0.1 : len, az = rotY ? len : 0.1;
     const p = new THREE.Mesh(new THREE.BoxGeometry(ax, 2.2, az), paper);
     p.position.set(x, 1.1, z); this.group.add(p);
@@ -236,15 +270,15 @@ export class Interior {
     this._rug(OX, OZ + 2, 8, 5, 0x8a2a30);
     // 帳場（カウンター）
     this._box(10, 1.05, 1.0, OX, 0.52, OZ - 3, wood, true);
-    this._box(10.2, 0.08, 1.2, OX, 1.08, OZ - 3, stoneMaterial(504, 0x4a2a1a));
+    this._box(10.2, 0.08, 1.2, OX, 1.08, OZ - 3, patternMaterial('plank', 0x4a2a1a, 1.2));
     this._prop(this._g('cyl'), metalMaterial(505, 0xc9a227), OX + 3, 1.25, OZ - 3, 0, [0.3, 0.3, 0.3]);   // 秤
     this._prop(this._g('box'), fleshMaterial(0xe8d8b0), OX - 2, 1.16, OZ - 3, 0.2, [0.7, 0.05, 0.5]);   // 帳面
     this._townFolk('shop', OX, OZ - 5, 0);
     // 奥の棚
-    this._shelf(OX - 6, OZ - Dp / 2 + 0.6, 7, 2.5, 0, fleshMaterial(0x5a3a24), 'jars');
-    this._shelf(OX + 6, OZ - Dp / 2 + 0.6, 7, 2.5, 0, fleshMaterial(0x5a3a24), 'potions');
+    this._shelf(OX - 6, OZ - Dp / 2 + 0.6, 7, 2.5, 0, patternMaterial('plank', 0x5a3a24, 1.0), 'jars');
+    this._shelf(OX + 6, OZ - Dp / 2 + 0.6, 7, 2.5, 0, patternMaterial('plank', 0x5a3a24, 1.0), 'potions');
     // 横の棚
-    this._shelf(OX - W / 2 + 0.6, OZ + 1, 6, 2.2, 1, fleshMaterial(0x5a3a24), 'jars');
+    this._shelf(OX - W / 2 + 0.6, OZ + 1, 6, 2.2, 1, patternMaterial('plank', 0x5a3a24, 1.0), 'jars');
     // 品台（護符を並べる）
     this._table(OX + 7, OZ + 3, 3, 1.6, 0.8, wood);
     for (let i = 0; i < 5; i++) this._prop(this._g('sph'), glowMaterial([0x6affa0, 0xffd24a, 0xff8ad0, 0x8ad0ff, 0xffffff][i], 1.2), OX + 6 + i * 0.5, 0.95, OZ + 3, 0, 0.18);
@@ -253,10 +287,7 @@ export class Interior {
     for (let i = 0; i < 3; i++) this._prop(this._g('cyl'), fleshMaterial(0xd8c890), OX + 9.5, 0.35 + i * 0.55, OZ - 6, 0, [0.7, 1.1, 0.7], 0, Math.PI / 2);
     this._solid(OX + 9.5, OZ - 6, 0.6, 0.6);
     // 吊るした干し草と提灯
-    for (let i = 0; i < 4; i++) {
-      const lan = new THREE.Mesh(new THREE.SphereGeometry(0.3, 12, 10), glowMaterial(0xff6a4a, 1.4));
-      lan.scale.set(1, 1.3, 1); lan.position.set(OX - 4.5 + i * 3, 2.5, OZ - 1); this.group.add(lan);
-    }
+    for (let i = 0; i < 4; i++) this._chochin(OX - 4.5 + i * 3, 2.5, OZ - 1, 0xff6a4a, 1);
     this._folk(FOLK.shopGuest, OX - 3, OZ + 2.5, Math.PI);
   }
 
@@ -268,7 +299,7 @@ export class Interior {
     this._townFolk('inn', OX - 8, OZ + 1.6, 0);
     this._prop(this._g('sph'), metalMaterial(505, 0xc9a227), OX - 7, 1.1, OZ + 3, 0, 0.16);   // 呼び鈴
     // 囲炉裏
-    this._box(2.4, 0.3, 2.4, OX, 0.15, OZ - 1, stoneMaterial(506, 0x4a4a4a), true);
+    this._box(2.4, 0.3, 2.4, OX, 0.15, OZ - 1, patternMaterial('rock', 0x5a5a5a, 1.2), true);
     this._box(1.8, 0.1, 1.8, OX, 0.31, OZ - 1, fleshMaterial(0x2a1a14));
     this._fire(OX, 0.3, OZ - 1, 0.9);
     this._box(0.05, 2.4, 0.05, OX, 1.5, OZ - 1, fleshMaterial(0x1a1a1a));
@@ -276,7 +307,7 @@ export class Interior {
     // 膳と座布団
     [[-4, -4], [4, -4], [-4, 2], [4, 2]].forEach(([x, z]) => {
       this._table(OX + x, OZ + z, 2.2, 1.2, 0.4, wood);
-      [-1, 1].forEach(s => this._prop(this._g('box'), fleshMaterial(0x8a2a30), OX + x, 0.06, OZ + z + s * 1.1, 0, [0.8, 0.12, 0.8]));
+      [-1, 1].forEach(s => this._prop(this._g('sph'), fleshMaterial(0x8a2a30), OX + x, 0.07, OZ + z + s * 1.1, 0, [0.85, 0.14, 0.85]));
       this._prop(this._g('cyl'), fleshMaterial(0xf0ece0), OX + x - 0.4, 0.52, OZ + z, 0, [0.25, 0.14, 0.25]);
       this._prop(this._g('cyl'), fleshMaterial(0x3a2a1a), OX + x + 0.4, 0.52, OZ + z, 0, [0.25, 0.14, 0.25]);
     });
@@ -294,10 +325,7 @@ export class Interior {
       this._prop(this._g('cyl'), fleshMaterial(0xf0ece0), OX + W / 2 - 4.4, 0.4, OZ - 4 + z, 0, [0.3, 0.6, 0.3], 0, Math.PI / 2);
     });
     // 提灯
-    for (let i = 0; i < 5; i++) {
-      const lan = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.6, 12), glowMaterial(0xfff0d0, 1.4));
-      lan.position.set(OX - 10 + i * 5, 2.5, OZ + 6); this.group.add(lan);
-    }
+    for (let i = 0; i < 5; i++) this._chochin(OX - 10 + i * 5, 2.5, OZ + 6, 0xfff0d0, 0.9);
     // 湯殿へ続く暖簾
     const noren = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.2), new THREE.MeshStandardMaterial({ color: 0x3a5a8a, side: THREE.DoubleSide }));
     noren.position.set(OX + W / 2 - 0.3, 2.0, OZ + 5); noren.rotation.y = Math.PI / 2; this.group.add(noren);
@@ -306,7 +334,7 @@ export class Interior {
   /* ── 鍛冶 ── */
   _smith(o) {
     const { W, Dp, wood } = o;
-    const brick = stoneMaterial(508, 0x7a3a2a), iron = metalMaterial(509, 0x3a3a40);
+    const brick = patternMaterial('brick', 0x8a4a34, 1.6), iron = metalMaterial(509, 0x3a3a40);
     // 炉と煙突の覆い
     this._box(4, 1.3, 3, OX - 6, 0.65, OZ - Dp / 2 + 2.2, brick, true);
     this._box(3, 0.1, 2, OX - 6, 1.31, OZ - Dp / 2 + 2.2, glowMaterial(0xff4a10, 2.6, true));
@@ -314,7 +342,7 @@ export class Interior {
     const hood = new THREE.Mesh(new THREE.ConeGeometry(2.6, 1.8, 4), brick);
     hood.rotation.y = Math.PI / 4; hood.position.set(OX - 6, WH + 0.2, OZ - Dp / 2 + 2.2); this.group.add(hood);
     // 鞴（ふいご）
-    this._box(1.2, 0.5, 2, OX - 8.8, 0.5, OZ - Dp / 2 + 2.2, fleshMaterial(0x5a3a24), true);
+    this._box(1.2, 0.5, 2, OX - 8.8, 0.5, OZ - Dp / 2 + 2.2, patternMaterial('plank', 0x5a3a24, 1.0), true);
     // 金床
     this._box(1.4, 0.4, 0.6, OX - 1.5, 0.9, OZ - 3, iron);
     this._box(0.6, 0.7, 0.5, OX - 1.5, 0.35, OZ - 3, iron);
@@ -355,10 +383,10 @@ export class Interior {
   /* ── 語り部の庵 ── */
   _lib(o) {
     const { W, Dp, wood } = o;
-    this._shelf(OX - 6, OZ - Dp / 2 + 0.6, 8, 2.6, 0, fleshMaterial(0x4a2a18), 'books');
-    this._shelf(OX + 6, OZ - Dp / 2 + 0.6, 8, 2.6, 0, fleshMaterial(0x4a2a18), 'books');
-    this._shelf(OX - W / 2 + 0.6, OZ + 1, 8, 2.4, 1, fleshMaterial(0x4a2a18), 'books');
-    this._shelf(OX + W / 2 - 0.6, OZ + 1, 8, 2.4, -1, fleshMaterial(0x4a2a18), 'books');
+    this._shelf(OX - 6, OZ - Dp / 2 + 0.6, 8, 2.6, 0, patternMaterial('plank', 0x4a2a18, 1.0), 'books');
+    this._shelf(OX + 6, OZ - Dp / 2 + 0.6, 8, 2.6, 0, patternMaterial('plank', 0x4a2a18, 1.0), 'books');
+    this._shelf(OX - W / 2 + 0.6, OZ + 1, 8, 2.4, 1, patternMaterial('plank', 0x4a2a18, 1.0), 'books');
+    this._shelf(OX + W / 2 - 0.6, OZ + 1, 8, 2.4, -1, patternMaterial('plank', 0x4a2a18, 1.0), 'books');
     this._tatami(OX, OZ - 1, 8, 6);
     this._table(OX, OZ - 1, 2.6, 1.4, 0.45, wood);
     this._townFolk('old', OX, OZ - 2.6, 0);
@@ -398,7 +426,7 @@ export class Interior {
     this._solid(OX - 3, OZ - 3, 1.0, 1.0);
     for (let i = 0; i < 4; i++) {
       const a = i * Math.PI / 2;
-      this._prop(this._g('box'), fleshMaterial(0x8a3a4a), OX - 3 + Math.cos(a) * 1.5, 0.18, OZ - 3 + Math.sin(a) * 1.5, 0, [0.7, 0.1, 0.7]);
+      this._prop(this._g('sph'), fleshMaterial(0x8a3a4a), OX - 3 + Math.cos(a) * 1.5, 0.19, OZ - 3 + Math.sin(a) * 1.5, 0, [0.75, 0.12, 0.75]);
     }
     this._prop(this._g('cyl'), fleshMaterial(0xf0ece0), OX - 3.2, 0.6, OZ - 3, 0, [0.15, 0.12, 0.15]);
     this._prop(this._g('sph'), fleshMaterial(0xe8e0c8), OX - 2.7, 0.6, OZ - 3.1, 0, [0.35, 0.15, 0.35]);
@@ -409,7 +437,7 @@ export class Interior {
     this._prop(this._g('cyl'), fleshMaterial(0x3a5a6a), OX - 6, 0.5, OZ - Dp / 2 + 0.6, 0, [0.3, 0.5, 0.3]);
     for (let i = 0; i < 3; i++) this._prop(this._g('sph'), glowMaterial([0xff8ab0, 0xffe08a, 0xffffff][(i + v) % 3], 0.6), OX - 6 + (i - 1) * 0.15, 0.95 + i * 0.1, OZ - Dp / 2 + 0.6, 0, 0.14);
     // 竈（かまど）と水瓶
-    this._box(2.4, 1.0, 1.2, OX + W / 2 - 2, 0.5, OZ + 6, stoneMaterial(506, 0x6a5a4a), true);
+    this._box(2.4, 1.0, 1.2, OX + W / 2 - 2, 0.5, OZ + 6, patternMaterial('rock', 0x7a6a5a, 1.2), true);
     this._prop(this._g('sph'), metalMaterial(507, 0x2a2a2a), OX + W / 2 - 2.5, 1.2, OZ + 6, 0, [0.7, 0.5, 0.7]);
     this._fire(OX + W / 2 - 1.5, 0.25, OZ + 6.6, 0.4);
     this._barrel(OX + W / 2 - 1.2, OZ + 3.8, fleshMaterial(0x6a5a4a));
@@ -419,7 +447,7 @@ export class Interior {
     this._prop(this._g('box'), fleshMaterial(0xf0ece0), OX + 7, 0.25, OZ - 4.5, 0, [2.2, 0.2, 1.4]);
     this._prop(this._g('box'), fleshMaterial([0xb3424a, 0x4a6aa0, 0x6a8a4a][v]), OX + 7.3, 0.36, OZ - 4.5, 0, [1.6, 0.06, 1.3]);
     // 箪笥
-    this._box(1.6, 1.8, 0.6, OX + 9.5, 0.9, OZ - Dp / 2 + 0.6, fleshMaterial(0x5a3a24), true);
+    this._box(1.6, 1.8, 0.6, OX + 9.5, 0.9, OZ - Dp / 2 + 0.6, patternMaterial('plank', 0x5a3a24, 1.0), true);
     for (let i = 0; i < 4; i++) this._prop(this._g('sph'), metalMaterial(505, 0xc9a227), OX + 9.5, 0.4 + i * 0.4, OZ - Dp / 2 + 0.95, 0, 0.08);
     // 住人（間取りごとに家族が違う）
     if (v === 0) { this._folk(FOLK.mother, OX - 1.2, OZ - 3, -Math.PI / 2); this._folk(FOLK.child, OX - 4.6, OZ - 3, Math.PI / 2); }

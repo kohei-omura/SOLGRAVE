@@ -529,6 +529,13 @@ function _pattern(kind, color, seed) {
         put(i, arch * (0.4 + v * 0.6), (0.6 + arch * 0.5) * (0.85 + n * 0.25), 0.45 + (1 - arch) * 0.4);
       }
     }
+  } else if (kind === 'tatami') { // 畳：細かく打ち込んだ藺草の目
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const i = y * N + x, n = nz(x, y, 30, 91);
+      const rush = 0.5 + 0.5 * Math.sin(y * 0.9 + n * 2.0);
+      const warp = (x % 64) < 2 ? 0.25 : 0;
+      put(i, 0.4 + rush * 0.35 - warp, (0.82 + rush * 0.22 + (n - 0.5) * 0.12) * (1 - warp * 0.8), 0.75 + rush * 0.1);
+    }
   } else if (kind === 'bark') {   // 樹皮：縦に走る深い溝
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
       const i = y * N + x, w = nz(x, y * 0.15, 14, 61), n = nz(x, y, 30, 63);
