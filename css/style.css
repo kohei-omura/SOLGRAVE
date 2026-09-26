@@ -448,3 +448,12 @@ body{
 .loot-it.r5 b{background:radial-gradient(#ffe9a0,#b8860b);color:#2a1a00}
 .loot-it.dup{opacity:.6}
 @keyframes lootIn{to{opacity:1;transform:none}}
+
+/* 棺の鎖：押すたびに掛ける／外す（攻撃の操作とは別） */
+.pad-chain{border-color:#c9a227;color:#ffe9a8;background:rgba(40,28,8,.55)}
+#btn-chain{left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom) + 92px);min-width:120px}
+#btn-chain.on{background:rgba(201,162,39,.35);box-shadow:0 0 10px rgba(255,210,74,.5)}
+
+/* 伝説の品の固有の力 */
+.gr-lg{display:block;font-size:10px;color:#ffe08a;margin-top:2px;line-height:1.4;text-shadow:0 0 6px rgba(255,210,74,.35)}
+.loot-it em{display:block;font-style:normal;font-size:9.5px;color:#ffe08a;margin-top:1px}

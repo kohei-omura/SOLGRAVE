@@ -7,6 +7,7 @@
    ══════════════════════════════════════════════════════════════ */
 import * as THREE from 'three';
 import { metalMaterial, glowMaterial, fleshMaterial } from './gfx.js';
+import { LEGEND_WEAPON_NAMES } from './legend.js';
 
 /* ── 武器の種類 ──
    kind   : 'melee' 近接 ／ 'ranged' 遠隔
@@ -81,7 +82,9 @@ const NAMES = {
 export function weaponGear() {
   const out = {};
   Object.keys(NAMES).forEach(t => {
-    NAMES[t].forEach(([nm, rare], i) => {
+    const list = NAMES[t].slice();
+    if (LEGEND_WEAPON_NAMES[t]) list.push([LEGEND_WEAPON_NAMES[t], 5]);   // 伝説の一振り（x<種類>3）
+    list.forEach(([nm, rare], i) => {
       const W = WEAPONS[t];
       const pw = [0, 6, 12, 22, 36, 60][rare];
       const mods = {};
@@ -102,14 +105,14 @@ export function weaponGear() {
 const RARE_METAL = [0x7a7e88, 0x8a8e98, 0x9aa0aa, 0xb09a5a, 0xc8a850, 0xffd24a];
 const RARE_GLOW  = [0, 0, 0xffe0a0, 0xffc860, 0xffb040, 0xfff0a0];
 
-export function buildWeaponModel(type, rare) {
+export function buildWeaponModel(type, rare, glowCol) {
   rare = rare || 1;
   const g = new THREE.Group();
   const metal = metalMaterial(300 + rare, RARE_METAL[rare] || 0x8a8e98);
   const dark = metalMaterial(310, 0x3a3440);
   const wood = fleshMaterial(0x5a3a24);
   const cloth = fleshMaterial(0x8a2a30);
-  const glow = RARE_GLOW[rare] ? glowMaterial(RARE_GLOW[rare], 1.4 + rare * 0.4) : null;
+  const glow = (glowCol || RARE_GLOW[rare]) ? glowMaterial(glowCol || RARE_GLOW[rare], 1.4 + rare * 0.4) : null;
   const add = (geo, mat, x, y, z, rx, ry, rz) => {
     const m = new THREE.Mesh(geo, mat);
     m.position.set(x || 0, y || 0, z || 0);
@@ -249,10 +252,18 @@ export function buildWeaponModel(type, rare) {
   // 伝説の武器は光の粒をまとう
   if (rare >= 5) {
     const aura = new THREE.Mesh(new THREE.SphereGeometry(0.5, 12, 10),
-      new THREE.MeshBasicMaterial({ color: 0xffd24a, transparent: true, opacity: 0.12,
+      new THREE.MeshBasicMaterial({ color: glowCol || 0xffd24a, transparent: true, opacity: 0.14,
         blending: THREE.AdditiveBlending, depthWrite: false }));
     aura.position.z = 0.5; aura.scale.set(0.6, 0.6, 1.6);
     g.add(aura);
+    // 刀身のまわりを巡る二つの光の輪（伝説の証）
+    const ringM = glowMaterial(glowCol || 0xffd24a, 2.4, true);
+    [0.35, 0.75].forEach((z, i) => {
+      const r = new THREE.Mesh(new THREE.TorusGeometry(0.1 + i * 0.03, 0.008, 8, 28), ringM);
+      r.position.z = z; r.rotation.x = 0.4 * (i ? -1 : 1);
+      g.add(r);
+    });
+    g.userData.legendRings = true;
   }
   g.traverse(o => { if (o.isMesh) o.castShadow = true; });
   return g;
@@ -263,7 +274,8 @@ export function buildWeaponModel(type, rare) {
    0〜2：拳銃（古い・磨いた・二連）　3：大口径の回転式（S&W M500 風）
    4：大型の自動拳銃（デザートイーグル風）　5：対物狙撃銃（バレット M82 風）
    戻り値の userData：muzzleZ（銃口の Z）、support（左手で支える点）、rings（溜めで光る部品）、long（両手持ちの長物か） */
-export function buildGun(rare) {
+export function buildGun(rare, style) {
+  if (style && style.shape != null) { const g0 = buildGun(style.shape); recolorGun(g0, style); return g0; }
   rare = Math.max(0, Math.min(5, rare || 0));
   const g = new THREE.Group();
   const rings = [];
@@ -419,6 +431,19 @@ export function buildGun(rare) {
   // 原点から握りを下げる：原点は握りの上端、銃口はやや上
   g.userData = { muzzleZ, support, rings, long, rare };
   return g;
+}
+
+/** 伝説の銃の色替え：金属の明暗で主色と差し色に分け、光る部品は伝説の色に */
+function recolorGun(g, st) {
+  const main = metalMaterial(460, st.metal), acc = metalMaterial(461, st.accent || st.metal);
+  const glow = glowMaterial(st.glow || 0xffffff, 1.8, true);
+  g.traverse(o => {
+    if (!o.isMesh || !o.material) return;
+    const m = o.material;
+    if (m.emissiveIntensity > 0.2 && m.emissive && (m.emissive.r + m.emissive.g + m.emissive.b) > 0.1) { o.material = glow; return; }
+    if (m.metalness > 0.5) { const l = m.color.r + m.color.g + m.color.b; o.material = l > 0.6 ? main : acc; }
+  });
+  g.userData.rings = g.userData.rings.map(r => { r.material = glowMaterial(st.glow || 0xffffff, 0.9, true); return r; });
 }
 
 /* ── 斬撃・突きの残光 ── */

@@ -71,19 +71,19 @@ export class Player {
   }
 
   /** 持つ武器を替える（手元の模型も差し替える） */
-  setWeapon(type, rare) {
+  setWeapon(type, rare, glow) {
     type = type || 'gun'; rare = rare || 0;
-    if (this.wtype === type && this.wrare === rare && this._wModel !== undefined) return;
-    this.wtype = type; this.wrare = rare;
+    if (this.wtype === type && this.wrare === rare && this._wGlow === glow && this._wModel !== undefined) return;
+    this.wtype = type; this.wrare = rare; this._wGlow = glow;
     [this.hand, this.offHand].forEach(h => { while (h.children.length) h.remove(h.children[0]); });
     this._wModel = null; this._wOff = null;
     this.gun.visible = (type === 'gun');
     if (type !== 'gun') {
-      this._wModel = buildWeaponModel(type, rare);
+      this._wModel = buildWeaponModel(type, rare, glow);
       this._wModel.scale.setScalar(1.3);          // 見下ろしでも形が分かる大きさに
       this.hand.add(this._wModel);
       if (type === 'katar' || type === 'claw') {
-        this._wOff = buildWeaponModel(type, rare);
+        this._wOff = buildWeaponModel(type, rare, glow);
         this._wOff.scale.setScalar(1.3);
         this.offHand.add(this._wOff);
       }
@@ -295,7 +295,10 @@ export class Player {
    */
   hurt(power, magical) {
     if (this.invuln > 0) return false;
-    if (Math.random() < this.evade) { this.invuln = 0.6; return 'evade'; }
+    if (Math.random() < this.evade) {
+      this.invuln = this.mirage ? 1.3 : 0.6;   // 月読の羽衣：避けた直後は幻となって長く無敵
+      return 'evade';
+    }
     // 守りが高いほど、心1つを失うまでに耐えられる回数が増えるようにする。
     // 最低ダメージを低くし、軽減がそのまま回数に効くようにした。
     const cut = Math.min(0.92, (magical ? this.cutMag : this.cutPhys) + (this.wardT > 0 ? this.wardCut : 0));
@@ -307,8 +310,10 @@ export class Player {
       this.hp = Math.max(0, this.hp - 1);
       this.guard = this.guardMax;
       this.invuln = 1.5;
+      if (this.onHurt) this.onHurt('lost');
       return 'lost';
     }
+    if (this.onHurt) this.onHurt('guard');
     return 'guard';
   }
   /** 心が満ちたときに耐久も戻す */
@@ -627,7 +632,7 @@ export class Player {
   /** 銃の模型を差し替える。構え・溜め・銃口の位置もそれに合わせる */
   _setGunModel(r) {
     if (this._gunModel) this.gun.remove(this._gunModel);
-    this._gunModel = buildGun(r);
+    this._gunModel = buildGun(r, this._gunStyle);
     this._gunModelRare = r;
     this.gun.add(this._gunModel);
     const u = this._gunInfo = this._gunModel.userData;
@@ -645,8 +650,13 @@ export class Player {
   /** 構えと等級から、持つ銃の形を決める（二丁拳銃で長物は持てないので大型拳銃にする） */
   _refreshGun() {
     const wr = this._gunRare || 0;
-    const eff = (this.stance === 'dual' && wr >= 5) ? 4 : wr;
-    if (eff !== this._gunModelRare) this._setGunModel(eff);
+    // 伝説の銃は形と色が決まっている（二丁でも同じ銃を持つ。長物だけは大型拳銃に替える）
+    const st = this._gunStyle;
+    let eff = st ? 'S' + st.shape + st.metal : ((this.stance === 'dual' && wr >= 5) ? 4 : wr);
+    if (eff !== this._gunModelRare) {
+      if (typeof eff === 'string') { this._setGunModel(wr); this._gunModelRare = eff; }
+      else this._setGunModel(eff);
+    }
     const dual = this.wtype === 'gun' && this.stance === 'dual';
     if (dual && !this._gun2) {
       this._gun2 = this.gun.clone(true);
@@ -668,6 +678,7 @@ export class Player {
 
     // ── 銃：等級ごとに別の銃になる（拳銃→M500風→デザートイーグル風→バレット風） ──
     this._gunRare = wr;
+    this._gunStyle = g.gun || null;
     this._refreshGun();
     this.muzzle.material.emissiveIntensity = 2.2 + wr * 0.8;
 
@@ -707,6 +718,11 @@ export class Player {
       this.group.add(grp);
     }
     this.legendAura.visible = legend && !this.avatar;   // 外部モデルでは骨に付けた外套と光輪を使う
+    // 伝説の防具ごとの色（月・嵐・大蛇…）
+    const PAL = g.pal || {};
+    this.legendRing.material.color.setHex(PAL.halo || 0xffd24a); this.legendRing.material.emissive.setHex(PAL.halo || 0xffd24a);
+    this.legendAura.children.forEach(o => { if (o !== this.legendRing && o !== this.legendCape && o.material && o.material.emissive) { o.material.color.setHex(PAL.spike || 0xffe27a); o.material.emissive.setHex(PAL.spike || 0xffe27a); } });
+    this.legendCape.material.color.setHex(PAL.cape || 0xc9a227); this.legendCape.material.emissive.setHex(PAL.capeE || 0x6a4a10);
     this._legend = legend;
     // 護符の等級で足元が輝く
     if (!this.charmGlow) {

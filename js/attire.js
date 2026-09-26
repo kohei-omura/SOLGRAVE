@@ -26,6 +26,7 @@ export function dressHero(rig, g) {
   rig.gearAnims = [];
   if (!rig.H) return;
   const wr = g.weapon || 0, ar = g.armor || 0, cr = g.charm || 0;
+  const PAL = g.pal || {}, CPAL = g.cpal || {};   // 伝説の防具・護符ごとの色
   const M = measure(rig);
   const chestBone = rig.H.getNormalizedBoneNode('upperChest') ? 'upperChest' : 'chest';
   // ── 防具 ──
@@ -47,7 +48,7 @@ export function dressHero(rig, g) {
     ['left', 'right'].forEach(side => {
       const s = side === 'left' ? 1 : -1;
       const grp = new THREE.Group();
-      const c = ar >= 5 ? 0xe8c060 : ar >= 4 ? 0xb8b8c8 : 0x8a8e98;
+      const c = ar >= 5 ? (PAL.metal || 0xe8c060) : ar >= 4 ? 0xb8b8c8 : 0x8a8e98;
       for (let i = 0; i < 2; i++) {
         const p = new THREE.Mesh(new THREE.SphereGeometry(0.075 - i * 0.012, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2), steel(c));
         p.scale.set(1.05, 0.55, 1.1); p.position.set(s * i * 0.03, 0.02 - i * 0.03, 0);
@@ -83,20 +84,45 @@ export function dressHero(rig, g) {
   }
   if (ar >= 5) {        // 黄金の外套（背）と光輪
     const cape = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.34, 0.95, 20, 6, true, Math.PI * 0.62, Math.PI * 0.76),
-      cloth(0xc9a227, { metalness: 0.5, roughness: 0.35, emissive: new THREE.Color(0x5a3a08), emissiveIntensity: 0.6 }));
+      cloth(PAL.cape || 0xc9a227, { metalness: 0.5, roughness: 0.35, emissive: new THREE.Color(PAL.capeE || 0x5a3a08), emissiveIntensity: 0.6 }));
     const holder = new THREE.Group(); holder.add(cape); cape.position.y = -0.48;   // 円筒の背側だけを使う
     rig.attach(chestBone, holder, [0, 0.05, -0.06]);
     rig.gearAnims.push((t, mv) => { holder.rotation.x = 0.12 + (mv ? 0.35 : 0) + Math.sin(t * 2.2) * 0.04; });
     const halo = new THREE.Group();
-    halo.add(new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.01, 8, 40), glow(0xffd24a, 2.6)));
+    halo.add(new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.01, 8, 40), glow(PAL.halo || 0xffd24a, 2.6)));
     for (let i = 0; i < 12; i++) {
       const a = i / 12 * Math.PI * 2;
-      const sp = new THREE.Mesh(new THREE.ConeGeometry(0.01, 0.06, 5), glow(0xffe27a, 2.2));
+      const sp = new THREE.Mesh(new THREE.ConeGeometry(0.01, 0.06, 5), glow(PAL.spike || 0xffe27a, 2.2));
       sp.position.set(Math.cos(a) * 0.24, Math.sin(a) * 0.24, 0); sp.rotation.z = a - Math.PI / 2;
       halo.add(sp);
     }
+    // 伝説ごとの飾り：月（三日月）・嵐（巡る稲妻）・大蛇（肩の角）
+    if (PAL.moon) {
+      const moon = new THREE.Mesh(new THREE.TorusGeometry(0.11, 0.022, 10, 32, Math.PI * 1.3), glow(PAL.halo, 2.8));
+      moon.rotation.z = -0.6; halo.add(moon);
+    }
     rig.attach('head', halo, [0, M.headH * 0.45, -0.16]);
     rig.gearAnims.push(t => { halo.rotation.z = t * 0.4; });
+    if (PAL.bolts) {
+      const storm = new THREE.Group();
+      for (let i = 0; i < 5; i++) {
+        const b = new THREE.Mesh(new THREE.OctahedronGeometry(0.03, 0), glow(PAL.spike, 3));
+        b.scale.set(0.4, 2.2, 0.4); b.position.set(Math.cos(i * 1.26) * 0.42, Math.sin(i * 2.1) * 0.25, Math.sin(i * 1.26) * 0.42);
+        storm.add(b);
+      }
+      rig.attach('hips', storm, [0, 0.15, 0]);
+      rig.gearAnims.push(t => { storm.rotation.y = -t * 2.2; storm.children.forEach((b, i) => { b.visible = Math.sin(t * 9 + i * 2) > -0.3; }); });
+    }
+    if (PAL.horns) {
+      ['left', 'right'].forEach(side => {
+        const s = side === 'left' ? 1 : -1;
+        for (let i = 0; i < 3; i++) {
+          const h = new THREE.Mesh(new THREE.ConeGeometry(0.012, 0.09 - i * 0.02, 6), steel(PAL.metal));
+          h.position.set(s * (0.02 + i * 0.025), 0.06, -0.02 + i * 0.02); h.rotation.z = -s * 0.5;
+          rig.attach(side + 'UpperArm', h, [s * (0.02 + i * 0.025), 0.07, -0.02 + i * 0.025]);
+        }
+      });
+    }
   }
   // ── 護符 ──
   if (cr >= 2) {        // 胸元の護符
@@ -111,7 +137,7 @@ export function dressHero(rig, g) {
     const ring = new THREE.Group();
     for (let i = 0; i < 6; i++) {
       const a = i / 6 * Math.PI * 2;
-      const m = new THREE.Mesh(new THREE.SphereGeometry(0.018, 10, 8), glow(0xffe08a, 3));
+      const m = new THREE.Mesh(new THREE.SphereGeometry(0.018, 10, 8), glow(CPAL.mote || 0xffe08a, 3));
       m.position.set(Math.cos(a) * 0.36, Math.sin(i * 1.7) * 0.05, Math.sin(a) * 0.36);
       ring.add(m);
     }
@@ -126,6 +152,7 @@ export function dressHeroine(rig, g) {
   rig.gearAnims = [];
   if (!rig.H) return;
   const wr = g.weapon || 0, ar = g.armor || 0, cr = g.charm || 0;
+  const PAL = g.pal || {}, CPAL = g.cpal || {};
   const M = measure(rig);
   const chestBone = rig.H.getNormalizedBoneNode('upperChest') ? 'upperChest' : 'chest';
   const hh = M.headH;
@@ -139,8 +166,8 @@ export function dressHeroine(rig, g) {
     rig.attach(chestBone, bow, [0, 0.07, 0.1]);
   }
   if (ar >= 3) {        // 肩から垂れる羽衣（宙に揺れる）
-    const colr = ar >= 5 ? 0xffe8a0 : ar >= 4 ? 0xe8f0ff : 0xf6eef8;
-    const mat = cloth(colr, { transparent: true, opacity: 0.72, emissive: new THREE.Color(ar >= 5 ? 0xffc040 : 0x8090c0), emissiveIntensity: ar >= 5 ? 1.0 : 0.35 });
+    const colr = ar >= 5 ? (PAL.hagoromo || 0xffe8a0) : ar >= 4 ? 0xe8f0ff : 0xf6eef8;
+    const mat = cloth(colr, { transparent: true, opacity: 0.72, emissive: new THREE.Color(ar >= 5 ? (PAL.emi || 0xffc040) : 0x8090c0), emissiveIntensity: ar >= 5 ? 1.0 : 0.35 });
     ['left', 'right'].forEach(side => {
       const s = side === 'left' ? 1 : -1;
       const rib = new THREE.Group();
@@ -168,7 +195,7 @@ export function dressHeroine(rig, g) {
     const jewel = new THREE.Mesh(new THREE.SphereGeometry(0.012, 10, 8), glow(0xff5a6a, 2.6));
     jewel.position.set(0, 0.01, 0.09); crown.add(jewel);
     rig.attach('head', crown, [0, hh * 0.78, -0.005]);
-    const halo = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.008, 8, 40), glow(0xffd24a, 2.6));
+    const halo = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.008, 8, 40), glow(PAL.halo || 0xffd24a, 2.6));
     rig.attach('head', halo, [0, hh * 0.35, -0.2]);
     rig.gearAnims.push(t => { halo.rotation.z = t * 0.5; });
   }
@@ -206,7 +233,7 @@ export function dressHeroine(rig, g) {
     const ring = new THREE.Group();
     for (let i = 0; i < 8; i++) {
       const a = i / 8 * Math.PI * 2;
-      const m = new THREE.Mesh(new THREE.SphereGeometry(0.03, 10, 8), glow(i % 2 ? 0x6affa0 : 0xffd24a, 2.4));
+      const m = new THREE.Mesh(new THREE.SphereGeometry(0.03, 10, 8), glow(i % 2 ? (CPAL.mote || 0x6affa0) : 0xffd24a, 2.4));
       m.scale.set(1, 1, 1.5); m.position.set(Math.cos(a) * 0.45, 0, Math.sin(a) * 0.45);
       ring.add(m);
     }

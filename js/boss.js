@@ -7,6 +7,10 @@
 import * as THREE from 'three';
 import { LORDS, buildLord, tintForm } from './forms.js';
 
+/* 主が覚える新しい技（主ごとに組み合わせが変わる）と、第三相の大技 */
+const EXTRA = ['beam', 'meteor', 'cross', 'wall', 'slam', 'serpent', 'dash3', 'rain'];
+const ULTS = ['nova', 'storm'];
+
 export class Boss {
   constructor(scene, particles) {
     this.scene = scene;
@@ -51,9 +55,17 @@ export class Boss {
     this.hitR = (L.hitR || 1.6) * this.scaleK;
     this.hitY = (L.hitY || 1.6) * this.scaleK;
     this.r = Math.min(2.2, 0.8 + this.hitR * 0.35);
-    this.maxHp = Math.round(170 * (1 + (this.floor - 1) * 0.45));
+    // 以前は弱すぎたため、体力を約2.3倍・一撃を約1.3倍に。さらに主人公の攻めの強さに合わせて体力を上げ、
+    // 装備を揃えても一方的にならないようにする（powerK は main から渡す）
+    this.maxHp = Math.round(390 * (1 + (this.floor - 1) * 0.55) * Math.max(1, this.powerK || 1));
     this.hp = this.maxHp;
-    this.power = Math.round(120 * (1 + (this.floor - 1) * 0.3));
+    this.power = Math.round(155 * (1 + (this.floor - 1) * 0.32));
+    // 主ごとに、元の技に加えて新しい技を二つ（第二相でもう一つ、第三相で大技）
+    const i0 = LORDS.indexOf(L);
+    const E = EXTRA.length, o = Math.floor(i0 / E);
+    this.extra = [EXTRA[(i0 + o) % E], EXTRA[(i0 + 3 + o) % E]];
+    this.extra2 = EXTRA[(i0 + 6 + o) % E];
+    this.ultimate = ULTS[i0 % ULTS.length];
     this.aura.color.setHex(L.aura);
     return this.lordName;
   }
@@ -88,12 +100,18 @@ export class Boss {
 
   _chooseMove(d) {
     const L = this.lord;
-    let moves = L.moves.slice();
+    let moves = L.moves.slice().concat(this.extra || []);
     if (this.phase >= 2 && L.p2 !== 'clone' && L.p2 !== 'rage') moves.push(L.p2, L.p2);
+    if (this.phase >= 2 && this.extra2) moves.push(this.extra2);
+    if (this.phase >= 3 && this.ultimate) moves.push(this.ultimate, this.ultimate);
     if (d > 3.8) moves = moves.filter(m => m !== 'claw');
+    // 同じ技を続けない
+    if (moves.length > 1 && this._last) moves = moves.filter(m => m !== this._last);
     if (!moves.length) moves = ['volley'];
     this._moveN++;
-    return moves[(this._moveN * 7 + Math.floor(Math.random() * moves.length)) % moves.length];
+    const m = moves[(this._moveN * 7 + Math.floor(Math.random() * moves.length)) % moves.length];
+    this._last = m;
+    return m;
   }
 
   update(dt, target, world, audio, onPhase) {
@@ -120,7 +138,8 @@ export class Boss {
     const dx = target.x - this.p.x, dz = target.z - this.p.z;
     const d = Math.hypot(dx, dz) || 1;
     const H = this.hostile;
-    const fast = this.rage ? 0.6 : (this.phase === 3 ? 0.8 : 1);
+    // 技の合間：以前より短く、相が進むほど詰める
+    const fast = (this.rage ? 0.5 : (this.phase === 3 ? 0.6 : this.phase === 2 ? 0.72 : 0.85));
     let out = null;
 
     // 霧化（吸血鬼の系譜）
@@ -212,6 +231,128 @@ export class Boss {
           if (!a.done) { a.done = true; this._makeClones(3); }
           if (a.t > 0.6) this._end(4.0);
           break;
+        /* ── 新しい技 ── */
+        case 'beam': {        // 薙ぎ払う光線：狙いの左から右へ、細かな弾を途切れなく流す
+          a.k = 1;
+          if (!a.base) a.base = Math.atan2(dx, dz);
+          const T = 1.8, sweep = 1.3;
+          if (a.t < 0.5) { a.k = a.t / 0.5; if (this.particles && Math.random() < 0.5) this.particles.emit(from(), 2, { color: [1, 0.3, 0.3], size: 2.4, up: 0.2, yOff: 0 }); }
+          else if (H && a.t < 0.5 + T) {
+            a.acc = (a.acc || 0) + dt;
+            while (a.acc > 0.04) {
+              a.acc -= 0.04;
+              const u = (a.t - 0.5) / T, ang = a.base - sweep + u * sweep * 2 * (a.flip ? -1 : 1) + (a.flip ? sweep * 2 : 0);
+              H.fire(from(), new THREE.Vector3(Math.sin(ang), 0, Math.cos(ang)), { speed: 20, power: pw * 0.55, size: 0.75, life: 2.2 });
+            }
+          }
+          if (a.t > 0.8 + T) this._end(2.2 * fast);
+          break;
+        }
+        case 'meteor': {      // 流星：主人公の足もとを追って、次々に落ちる
+          a.k = 0.8;
+          const n = 5 + this.phase;
+          if (H && a.n < n && a.t > a.n * 0.32) {
+            a.n++;
+            H.zone(target.x + (Math.random() - 0.5) * 1.5, target.z + (Math.random() - 0.5) * 1.5, 2.3, 0.85, pw * 1.1);
+          }
+          if (a.t > n * 0.32 + 1.0) this._end(2.4 * fast);
+          break;
+        }
+        case 'cross': {       // 十字と斜め十字を交互に、回しながら四度
+          a.k = 0.7;
+          if (H && a.n < 4 && a.t > a.n * 0.4) {
+            const ph = a.n * Math.PI / 8 + (a.n % 2 ? Math.PI / 4 : 0);
+            a.n++;
+            for (let q = 0; q < 4; q++) for (let r = 0; r < 3; r++) {
+              const an = ph + q * Math.PI / 2;
+              H.fire(from(), new THREE.Vector3(Math.sin(an), 0, Math.cos(an)), { speed: 8 + r * 2.5, power: pw * 0.6, size: 0.9 });
+            }
+            if (audio) audio.sfx('hit');
+          }
+          if (a.t > 2.0) this._end(2.0 * fast);
+          break;
+        }
+        case 'wall': {        // 弾の壁：横一列に一か所だけ隙間。三枚押し寄せる
+          a.k = 0.8;
+          if (H && a.n < 3 && a.t > 0.3 + a.n * 0.75) {
+            a.n++;
+            const fwd = new THREE.Vector3(dx / d, 0, dz / d), side = new THREE.Vector3(fwd.z, 0, -fwd.x);
+            const gap = Math.floor(Math.random() * 9) - 4;
+            for (let i = -7; i <= 7; i++) {
+              if (Math.abs(i - gap) <= 1) continue;
+              const o = from().addScaledVector(side, i * 1.1).addScaledVector(fwd, -1);
+              H.fire(o, fwd, { speed: 7.5, power: pw * 0.65, size: 1.0, life: 5 });
+            }
+          }
+          if (a.t > 2.8) this._end(2.0 * fast);
+          break;
+        }
+        case 'slam': {        // 跳びかかって叩きつけ：着地で衝撃の輪
+          if (!a.to) a.to = new THREE.Vector3(target.x, 0, target.z);
+          if (a.t < 0.55) { a.k = a.t / 0.55; this.form.root.position.y = Math.sin(a.t / 0.55 * Math.PI * 0.5) * 2.2; this.p.lerp(a.to, Math.min(1, dt * 3.5)); }
+          else if (!a.done) {
+            a.done = true; this.form.root.position.y = 0;
+            if (H) { H.ring(from().setY(0.6), 22, 0, { speed: 9, power: pw * 0.8, size: 1.0 }); H.ring(from().setY(0.6), 22, 0.14, { speed: 6, power: pw * 0.8, size: 1.0 }); }
+            if (d < 3.6 * this.scaleK) out = 'claw';
+            if (this.particles) this.particles.emit(this.p, 30, { color: [0.8, 0.6, 0.4], size: 4, up: 2.6 });
+            if (audio) audio.sfx('pile');
+          }
+          if (a.t > 1.2) { this.form.root.position.y = 0; this._end(2.2 * fast); }
+          break;
+        }
+        case 'serpent': {     // 蛇行弾：左右に曲がる弾を扇に撒く
+          a.k = 0.8;
+          if (H && a.n < 3 && a.t > a.n * 0.45) {
+            a.n++;
+            for (let i = 0; i < 6; i++) {
+              const an = Math.atan2(dx, dz) + (i - 2.5) * 0.3;
+              H.fire(from(), new THREE.Vector3(Math.sin(an), 0, Math.cos(an)), { speed: 8, power: pw * 0.6, size: 0.85, curve: (i % 2 ? 1 : -1) * (0.9 + a.n * 0.2), life: 4 });
+            }
+          }
+          if (a.t > 1.8) this._end(2.0 * fast);
+          break;
+        }
+        case 'dash3': {       // 三連の突進：一度ごとに狙い直す
+          const seg = 0.75, k = Math.floor(a.t / seg), u = (a.t % seg) / seg;
+          if (k >= 3) { this.form.root.rotation.x = 0; this._end(2.4 * fast); break; }
+          if (u < 0.35) { a.dir.set(dx / d, 0, dz / d); a.k = u / 0.35; this.form.root.rotation.x = -0.2; a.hit = false; }
+          else { this.form.root.rotation.x = 0.3; this.p.addScaledVector(a.dir, 20 * dt); if (!a.hit && d < 2.4 * this.scaleK) { a.hit = true; out = 'claw'; } }
+          break;
+        }
+        case 'rain': {        // 降りそそぐ呪い：部屋じゅうに小さな輪が次々と
+          a.k = 0.6;
+          if (H && a.n < 14 && a.t > a.n * 0.12) {
+            a.n++;
+            const an = Math.random() * Math.PI * 2, rr = Math.random() * 9;
+            H.zone(target.x + Math.cos(an) * rr, target.z + Math.sin(an) * rr, 1.5, 0.9, pw * 0.8);
+          }
+          if (a.t > 2.6) this._end(2.2 * fast);
+          break;
+        }
+        /* ── 第三相の大技 ── */
+        case 'nova': {        // 滅びの星：溜めてから三重の輪、中心に大きな輪
+          a.k = Math.min(1, a.t / 1.0);
+          if (a.t < 1.0 && this.particles && Math.random() < 0.7) this.particles.emit(this.p, 3, { color: [1, 0.3, 0.4], size: 3, up: 3 });
+          if (H && !a.done && a.t > 1.0) {
+            a.done = true;
+            for (let r = 0; r < 3; r++) H.ring(from(), 28, r * 0.11, { speed: 6 + r * 3, power: pw * 0.75, size: 1.1 });
+            H.zone(this.p.x, this.p.z, 4.5, 0.2, pw * 1.3);
+            if (audio) audio.sfx('phase');
+          }
+          if (a.t > 2.2) this._end(2.6 * fast);
+          break;
+        }
+        case 'storm': {       // 螺旋の嵐：二重の螺旋を三秒間
+          a.k = 1;
+          a.acc = (a.acc || 0) + dt;
+          while (H && a.acc > 0.09 && a.t < 3.0) {
+            a.acc -= 0.09; a.n++;
+            const an = a.n * 0.33;
+            [0, Math.PI].forEach(o => H.fire(from(), new THREE.Vector3(Math.sin(an + o), 0, Math.cos(an + o)), { speed: 9, power: pw * 0.55, size: 0.85 }));
+          }
+          if (a.t > 3.4) this._end(2.6 * fast);
+          break;
+        }
         default:
           this._end(1.2);
       }
@@ -257,7 +398,7 @@ export class Boss {
     return out;
   }
 
-  _end(cd) { this._act = null; this.atkCd = cd; }
+  _end(cd) { this._act = null; this.atkCd = cd; if (this.form) this.form.root.position.y = 0; }
 
   _makeClones(n, permanent) {
     this.cleanup();

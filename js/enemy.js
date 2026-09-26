@@ -90,6 +90,7 @@ export class Bullets {
       probe: !!opts.probe,
       stun: opts.stun || 0,
       breaker: !!opts.breaker,
+      onHit: opts.onHit || null,
       age: 0
     };
     b.r0 = b.r; b.life0 = b.life;
@@ -607,6 +608,7 @@ export class Enemies {
           }
           b.hitSet.add(e);
           if (this._damage(e, b.dmg, onKill, { stun: b.stun })) killed++;
+          if (b.onHit) b.onHit(e, b);          // 伝説の武器の力（弾ける・雷が走る・凍らせる など）
           if (!b.pierce) { bullets.list.splice(bi, 1); break; }
         }
       }
