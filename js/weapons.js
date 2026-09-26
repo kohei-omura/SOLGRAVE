@@ -258,6 +258,169 @@ export function buildWeaponModel(type, rare) {
   return g;
 }
 
+/* ── 銃の模型 ──
+   原点＝右手の握り（人差し指の付け根のあたり）。銃口は +Z。単位は m、実物の寸法に合わせる。
+   0〜2：拳銃（古い・磨いた・二連）　3：大口径の回転式（S&W M500 風）
+   4：大型の自動拳銃（デザートイーグル風）　5：対物狙撃銃（バレット M82 風）
+   戻り値の userData：muzzleZ（銃口の Z）、support（左手で支える点）、rings（溜めで光る部品）、long（両手持ちの長物か） */
+export function buildGun(rare) {
+  rare = Math.max(0, Math.min(5, rare || 0));
+  const g = new THREE.Group();
+  const rings = [];
+  const add = (geo, mat, x, y, z, rx, ry, rz, par) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(x || 0, y || 0, z || 0);
+    m.rotation.set(rx || 0, ry || 0, rz || 0);
+    m.castShadow = true;
+    (par || g).add(m);
+    return m;
+  };
+  const Box = (w, h, d) => new THREE.BoxGeometry(w, h, d);
+  const Cyl = (a, b, h, s) => new THREE.CylinderGeometry(a, b, h, s || 12);
+  const HZ = Math.PI / 2;
+  const ring = (r, t, z, col, inten, y) => {
+    const m = add(new THREE.TorusGeometry(r, t, 6, 20), glowMaterial(col, inten, true), 0, y || 0, z);
+    rings.push(m);
+    return m;
+  };
+  // 握り：下へ伸び、下端が少し後ろへ倒れる
+  const grip = (mat, w, h, d, tilt) => add(Box(w, h, d), mat, 0, -0.035 - h / 2, -0.012, tilt == null ? -0.28 : tilt);
+  const guard = (mat) => {
+    add(Box(0.012, 0.008, 0.05), mat, 0, -0.058, 0.035);
+    add(Box(0.012, 0.03, 0.008), mat, 0, -0.045, 0.058);
+  };
+  let muzzleZ = 0.2, support = new THREE.Vector3(0.012, -0.075, 0.0), long = false;
+
+  if (rare <= 2) {
+    // ── 拳銃：遊底と枠と握り。等級で仕上げが変わる ──
+    const slideCol = [0x3c3f45, 0xa8aeb8, 0x9a7a44][rare];
+    const frameCol = [0x2a2c30, 0x1c1d21, 0x2a2420][rare];
+    const slide = metalMaterial(401 + rare, slideCol), frame = metalMaterial(404, frameCol);
+    const gripM = fleshMaterial([0x3a2a1e, 0x5a3a22, 0x6a2a2a][rare]);
+    add(Box(0.03, 0.034, 0.19), slide, 0, 0.012, 0.055);              // 遊底
+    add(Box(0.028, 0.02, 0.15), frame, 0, -0.016, 0.05);              // 枠
+    for (let i = 0; i < 5; i++) add(Box(0.031, 0.026, 0.004), frame, 0, 0.012, -0.02 + i * 0.008);  // 遊底の溝
+    add(Box(0.006, 0.008, 0.012), frame, 0, 0.033, 0.14);             // 照星
+    add(Box(0.022, 0.008, 0.01), frame, 0, 0.033, -0.03);             // 照門
+    grip(gripM, 0.03, 0.1, 0.044);
+    guard(frame);
+    add(Box(0.004, 0.022, 0.006), frame, 0, -0.04, 0.03, 0.3);        // 引き金
+    if (rare === 2) {
+      // 二連の銃身：上下に二つの口
+      add(Cyl(0.009, 0.009, 0.05, 10), slide, 0, 0.022, 0.16, HZ);
+      add(Cyl(0.009, 0.009, 0.05, 10), slide, 0, -0.004, 0.16, HZ);
+      muzzleZ = 0.19;
+      ring(0.017, 0.004, 0.17, 0xffc860, 0.9, 0.009);
+    } else {
+      add(Cyl(0.008, 0.008, 0.012, 10), frame, 0, 0.012, 0.152, HZ);
+      muzzleZ = 0.16;
+      if (rare === 1) {
+        add(Box(0.031, 0.004, 0.16), glowMaterial(0xffd98a, 0.7), 0, 0.03, 0.055);   // 金の象嵌
+      }
+      ring(0.014, 0.003, 0.145, 0xffd98a, 0.6, 0.012);
+    }
+  } else if (rare === 3) {
+    // ── 回転式：M500 風。長い銃身と全長の下支え、太い弾倉、黒い枠に金と紅 ──
+    const frame = metalMaterial(410, 0x1e1a1c), gold = metalMaterial(411, 0xc9a227);
+    const gripM = fleshMaterial(0x8a1f2a);
+    add(Box(0.036, 0.05, 0.1), frame, 0, 0.0, 0.0);                  // 枠
+    add(Box(0.036, 0.02, 0.06), frame, 0, 0.034, -0.02);             // 上の帯
+    add(Cyl(0.03, 0.03, 0.058, 10), gold, 0, 0.004, 0.03, HZ);   // 弾倉（5発）
+    for (let i = 0; i < 5; i++) {
+      const a = i / 5 * Math.PI * 2;
+      add(Box(0.006, 0.006, 0.05), frame, Math.cos(a) * 0.029, 0.004 + Math.sin(a) * 0.029, 0.03);   // 弾倉の溝
+    }
+    add(Cyl(0.013, 0.013, 0.24, 14), gold, 0, 0.012, 0.18, HZ);       // 銃身
+    add(Box(0.034, 0.03, 0.24), frame, 0, 0.012, 0.18);              // 太い銃身まわり
+    add(Box(0.026, 0.026, 0.23), frame, 0, -0.018, 0.18);            // 下支え（アンダーラグ）
+    add(Box(0.03, 0.01, 0.22), frame, 0, 0.032, 0.18);               // 上のリブ
+    // 銃口の制退器：両脇の穴
+    add(Box(0.04, 0.034, 0.04), gold, 0, 0.012, 0.31);
+    for (let i = 0; i < 3; i++) add(Box(0.042, 0.018, 0.006), frame, 0, 0.012, 0.296 + i * 0.012);
+    // 刻印の光
+    const eng = glowMaterial(0xff6a3a, 1.1);
+    add(Box(0.035, 0.003, 0.2), eng, 0, 0.0, 0.18);
+    add(Box(0.006, 0.008, 0.012), gold, 0, 0.041, 0.28);            // 照星
+    add(Box(0.012, 0.02, 0.012), gold, 0, 0.035, -0.055, -0.6);       // 撃鉄
+    grip(gripM, 0.034, 0.11, 0.05, -0.36);
+    add(Box(0.036, 0.004, 0.052), gold, 0, -0.14, -0.05, -0.36);      // 握りの金の縁
+    guard(gold);
+    muzzleZ = 0.34;
+    ring(0.024, 0.004, 0.33, 0xff8a4a, 0.9, 0.012);
+    ring(0.034, 0.003, 0.03, 0xffc860, 0.6, 0.004);
+  } else if (rare === 4) {
+    // ── 大型の自動拳銃：デザートイーグル風。角張った遊底、三角の銃身、金と黒の虎縞 ──
+    const gold = metalMaterial(420, 0xd8b860), black = metalMaterial(421, 0x141416);
+    const gripM = fleshMaterial(0x1a1a1c);
+    add(Box(0.036, 0.046, 0.14), gold, 0, 0.016, 0.0);               // 遊底
+    add(Box(0.034, 0.024, 0.13), black, 0, -0.018, 0.02);            // 枠
+    for (let i = 0; i < 7; i++) add(Box(0.037, 0.03, 0.004), black, 0, 0.018, -0.06 + i * 0.007);   // 遊底の溝
+    // 三角の銃身（上が尖る）と、その上の照準溝
+    add(Cyl(0.03, 0.03, 0.17, 3), gold, 0, 0.02, 0.15, -HZ, 0, 0);   // 頂点が上を向く
+    add(Box(0.012, 0.008, 0.17), black, 0, 0.036, 0.15);
+    for (let i = 0; i < 4; i++) add(Box(0.03, 0.008, 0.006), black, 0, 0.022, 0.2 + i * 0.012);   // 銃口の抜き穴
+    add(Cyl(0.009, 0.009, 0.01, 10), black, 0, 0.018, 0.236, HZ);
+    // 虎縞（深紅に光る）
+    const stripe = glowMaterial(0xb3424a, 1.6);
+    for (let i = 0; i < 5; i++) add(Box(0.038, 0.004, 0.012), stripe, 0, 0.004 + (i % 2) * 0.012, -0.04 + i * 0.022, 0.5);
+    add(Box(0.006, 0.01, 0.01), black, 0, 0.045, 0.22);               // 照星
+    add(Box(0.03, 0.01, 0.014), black, 0, 0.042, -0.064);             // 照門
+    grip(gripM, 0.034, 0.12, 0.054, -0.3);
+    add(Box(0.036, 0.1, 0.004), stripe, 0, -0.09, 0.003, -0.3);       // 握りの縁の光
+    guard(black);
+    add(Box(0.004, 0.024, 0.006), gold, 0, -0.042, 0.03, 0.3);
+    muzzleZ = 0.245;
+    ring(0.03, 0.004, 0.225, 0xffb040, 1.0, 0.02);
+    ring(0.03, 0.003, 0.08, 0xb3424a, 0.8, 0.02);
+  } else {
+    // ── 対物狙撃銃：バレット M82 風。白銀と金、日輪の光条。両手で抱えて撃つ ──
+    long = true;
+    const S = 0.78;                                  // 実寸 1.45m を画面向けに少し詰める
+    const b = new THREE.Group(); b.scale.setScalar(S); g.add(b);
+    const pearl = metalMaterial(430, 0xe6e0d2), gold = metalMaterial(431, 0xffd24a), dark = metalMaterial(432, 0x24262c);
+    const gripM = fleshMaterial(0x2a2a2e);
+    const A = (geo, mat, x, y, z, rx, ry, rz) => add(geo, mat, x, y, z, rx, ry, rz, b);
+    A(Box(0.06, 0.1, 0.62), pearl, 0, 0.03, 0.12);                   // 上下の機関部
+    A(Box(0.062, 0.02, 0.62), gold, 0, -0.018, 0.12);                // 金の継ぎ目
+    for (let i = 0; i < 8; i++) A(Box(0.064, 0.05, 0.008), dark, 0, 0.05, 0.3 + i * 0.03);  // 放熱の溝
+    A(Box(0.02, 0.01, 0.55), dark, 0, 0.085, 0.1);                   // 上のレール
+    // 銃身と大きな制退器
+    A(Cyl(0.02, 0.022, 0.62, 14), dark, 0, 0.04, 0.72, HZ);
+    A(Box(0.1, 0.06, 0.12), gold, 0, 0.04, 1.06);
+    for (let i = 0; i < 2; i++) A(Box(0.104, 0.04, 0.022), dark, 0, 0.04, 1.03 + i * 0.05);
+    A(Box(0.106, 0.064, 0.012), pearl, 0, 0.04, 1.0);
+    // 照準器：金の筒、前の硝子が光る
+    A(Cyl(0.024, 0.024, 0.3, 14), gold, 0, 0.14, 0.08, HZ);
+    A(Cyl(0.032, 0.026, 0.06, 14), gold, 0, 0.14, 0.26, HZ);
+    A(Cyl(0.03, 0.024, 0.05, 14), gold, 0, 0.14, -0.08, HZ);
+    A(Cyl(0.028, 0.028, 0.004, 14), glowMaterial(0x9ad8ff, 1.8), 0, 0.14, 0.292, HZ);
+    A(Box(0.02, 0.05, 0.02), dark, 0, 0.1, 0.02); A(Box(0.02, 0.05, 0.02), dark, 0, 0.1, 0.16);
+    // 弾倉・握り・引き金
+    A(Box(0.05, 0.14, 0.09), dark, 0, -0.08, 0.1, 0.12);
+    A(Box(0.036, 0.12, 0.05), gripM, 0, -0.08, -0.02, -0.28);
+    A(Box(0.012, 0.01, 0.06), dark, 0, -0.03, 0.03);
+    // 銃床：後ろへ伸び、肩当て
+    A(Box(0.05, 0.08, 0.36), pearl, 0, 0.02, -0.3);
+    A(Box(0.054, 0.12, 0.04), dark, 0, 0.0, -0.49);
+    A(Box(0.03, 0.06, 0.16), gold, 0, -0.04, -0.34);
+    // 畳んだ二脚
+    A(Box(0.012, 0.012, 0.28), dark, 0.03, -0.01, 0.62, 0.05);
+    A(Box(0.012, 0.012, 0.28), dark, -0.03, -0.01, 0.62, 0.05);
+    // 日輪の光条（両脇）
+    const sun = glowMaterial(0xffe28a, 1.4);
+    A(Box(0.064, 0.006, 0.5), sun, 0, 0.005, 0.12);
+    A(Box(0.066, 0.004, 0.2), sun, 0, 0.055, -0.3);
+    muzzleZ = 1.12 * S;
+    support = new THREE.Vector3(0.0, -0.035, 0.42 * S);
+    ring(0.03 * S, 0.004, 0.86 * S, 0xffe28a, 0.9, 0.04 * S);
+    ring(0.03 * S, 0.004, 0.66 * S, 0xffe28a, 0.9, 0.04 * S);
+    ring(0.08 * S, 0.005, 1.0 * S, 0xfff0a0, 0.8, 0.04 * S);
+  }
+  // 原点から握りを下げる：原点は握りの上端、銃口はやや上
+  g.userData = { muzzleZ, support, rings, long, rare };
+  return g;
+}
+
 /* ── 斬撃・突きの残光 ── */
 export class SlashFX {
   constructor(scene) {

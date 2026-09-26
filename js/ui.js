@@ -4,7 +4,7 @@ const $ = s => document.querySelector(s);
 export const UI = {
   el: {},
   init() {
-    ['rotate','boot','perm','title','hud','pad','cutin','config','records','result','shop','talk','floors','toast']
+    ['rotate','boot','perm','title','hud','pad','cutin','config','records','result','shop','loot','talk','floors','toast']
       .forEach(id => { this.el[id] = document.getElementById(id); });
     this.el.bootFill = $('#boot-fill');
     this.el.bootMsg  = $('#boot-msg');
@@ -40,6 +40,10 @@ export const UI = {
     if (this.el.bootMsg && msg) this.el.bootMsg.textContent = msg;
   },
   sun(v, srcLabel, srcIcon) {
+    // 毎フレーム呼ばれるので、変わった時だけ書き換える（書き換えは描画の手間になる）
+    const key = Math.round(v * 4) + '|' + srcLabel + '|' + srcIcon;
+    if (key === this._sunKey) return;
+    this._sunKey = key;
     if (this.el.sunFill) this.el.sunFill.style.width = v + '%';
     if (this.el.sunNum) this.el.sunNum.textContent = Math.round(v);
     if (this.el.sunSrc && srcLabel) this.el.sunSrc.textContent = srcLabel;
@@ -49,6 +53,9 @@ export const UI = {
     if (this.el.titleSrc && srcLabel) this.el.titleSrc.textContent = srcLabel;
   },
   hp(cur, max, guard, guardMax) {
+    const key = cur + '|' + max + '|' + Math.round((guard || 0) * 50) + '|' + guardMax;
+    if (key === this._hpKey) return;
+    this._hpKey = key;
     const fill = document.getElementById('hp-fill');
     const num = document.getElementById('hp-num');
     const bar = fill && fill.parentNode;
@@ -66,6 +73,9 @@ export const UI = {
   },
   solar(on, remain) {
     if (!this.el.solar) return;
+    const key = on ? Math.floor(remain) : -1;
+    if (key === this._solKey) return;
+    this._solKey = key;
     this.el.solar.hidden = !on;
     if (on && this.el.solarRem) {
       const m = Math.floor(remain / 60), sec = Math.floor(remain % 60);
@@ -80,7 +90,11 @@ export const UI = {
     clearTimeout(this._shoutT);
     this._shoutT = setTimeout(() => { e.hidden = true; }, 1650);
   },
-  fps(v) { if (this.el.fps) this.el.fps.textContent = v + ' fps'; },
+  fps(v) {
+    // 表示は1秒に4回で十分
+    const n = performance.now();
+    if (this.el.fps && n - (this._fpsT || 0) > 250) { this._fpsT = n; this.el.fps.textContent = v + ' fps'; }
+  },
   bossBar(ratio, phaseText) {
     if (this.el.bossFill) this.el.bossFill.style.width = Math.max(0, Math.min(1, ratio)) * 100 + '%';
     if (this.el.bossPhase && phaseText) this.el.bossPhase.textContent = phaseText;

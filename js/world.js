@@ -694,12 +694,44 @@ export class World {
       const hx0 = (d0 === 'E') ? hs.x + hs.w / 2 : (d0 === 'W') ? hs.x - hs.w / 2 : hs.x;
       const hz0 = (d0 === 'S') ? hs.z + hs.d / 2 : (d0 === 'N') ? hs.z - hs.d / 2 : hs.z;
       const horizC = (d0 === 'E' || d0 === 'W');
-      this.colliders = this.colliders.filter(c => {
-        const cx = (c.min.x + c.max.x) / 2, cz = (c.min.z + c.max.z) / 2;
+      // 路の幅ぶんの四角を、宿主の壁の「見た目」と「当たり」の両方から切り抜く。
+      // （以前は当たりだけ消していたので、罅を壊しても奥に普通の壁が見えていた）
+      const R = horizC
+        ? { x0: hx0 - 2.6, x1: hx0 + 2.6, z0: hz0 - gap / 2, z1: hz0 + gap / 2 }
+        : { x0: hx0 - gap / 2, x1: hx0 + gap / 2, z0: hz0 - 2.6, z1: hz0 + 2.6 };
+      const cutBox = (w, d, x, z) => {       // 残る部分を [w, d, x, z] で返す
+        const bx0 = x - w / 2, bx1 = x + w / 2, bz0 = z - d / 2, bz1 = z + d / 2;
+        if (bx1 <= R.x0 || bx0 >= R.x1 || bz1 <= R.z0 || bz0 >= R.z1) return null;   // 重ならない
+        if (horizC ? d < w : w < d) return null;     // 路の側壁（路と同じ向きの壁）は切らない
+        const out = [];
         if (horizC) {
-          return !(Math.abs(cx - hx0) < 2.6 && Math.abs(cz - hz0) < gap / 2 + 0.4);
+          if (bz0 < R.z0 - 0.01) out.push([w, R.z0 - bz0, x, (bz0 + R.z0) / 2]);
+          if (bz1 > R.z1 + 0.01) out.push([w, bz1 - R.z1, x, (R.z1 + bz1) / 2]);
+        } else {
+          if (bx0 < R.x0 - 0.01) out.push([R.x0 - bx0, d, (bx0 + R.x0) / 2, z]);
+          if (bx1 > R.x1 + 0.01) out.push([bx1 - R.x1, d, (R.x1 + bx1) / 2, z]);
         }
-        return !(Math.abs(cz - hz0) < 2.6 && Math.abs(cx - hx0) < gap / 2 + 0.4);
+        return out;
+      };
+      const cols = [];
+      this.colliders.forEach(c => {
+        if (c === (this.secret && this.secret.collider)) { cols.push(c); return; }
+        const w = c.max.x - c.min.x, d = c.max.z - c.min.z;
+        const r = cutBox(w, d, (c.min.x + c.max.x) / 2, (c.min.z + c.max.z) / 2);
+        if (!r) { cols.push(c); return; }
+        r.forEach(([w2, d2, x2, z2]) => cols.push({ min: { x: x2 - w2 / 2, z: z2 - d2 / 2 }, max: { x: x2 + w2 / 2, z: z2 + d2 / 2 } }));
+      });
+      this.colliders = cols;
+      if (this._batches) this._batches.forEach((arr, mat) => {
+        const keep = [];
+        arr.forEach(bx => {
+          const [w, h, d, x, y, z] = bx;
+          if (h < WALL_H * 0.6) { keep.push(bx); return; }      // 低い置物はそのまま
+          const r = cutBox(w, d, x, z);
+          if (!r) { keep.push(bx); return; }
+          r.forEach(([w2, d2, x2, z2]) => keep.push([w2, h, d2, x2, y, z2]));
+        });
+        this._batches.set(mat, keep);
       });
     }
 
@@ -1076,7 +1108,7 @@ export class World {
       : { min: { x: cx0 - GAP / 2, z: cz0 - 1.0 }, max: { x: cx0 + GAP / 2, z: cz0 + 1.0 } };
     this.colliders.push(col);
     this.secret = { x: cx0, z: cz0, seal, crack, light: cl, collider: col,
-      open: false, roomX: sx, roomZ: sz, w: SW, d: SD, hp: 3 };
+      open: false, roomX: sx, roomZ: sz, w: SW, d: SD, hp: 3, horiz, sgn, gap: GAP };
     if (this.mapAreas) {
       this._secretAreas = [
         { x: sx, z: sz, w: SW, d: SD, kind: 'secret' },
@@ -1095,6 +1127,7 @@ export class World {
     sc.open = true;
     sc.seal.visible = false;
     sc.crack.visible = false;
+    this._rubble(sc);
     const i = this.colliders.indexOf(sc.collider);
     if (i >= 0) this.colliders.splice(i, 1);
     // 見取り図にも現れる
@@ -1103,6 +1136,59 @@ export class World {
       this._secretAreas = null;
     }
     return 'open';
+  }
+
+  /** 崩れた壁：床に散る瓦礫と、ぎざぎざに欠けた開口の縁。通れると一目で分かるように */
+  _rubble(sc) {
+    const g = new THREE.Group();
+    const mat = sc.seal.material;
+    const along = (u, v) => sc.horiz ? [sc.x + v, sc.z + u] : [sc.x + u, sc.z + v];   // u：開口の幅方向、v：路の奥行き方向
+    let seed = 7;
+    const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    // 床の瓦礫（通り道の両脇に寄せ、真ん中は歩ける）
+    for (let i = 0; i < 18; i++) {
+      const side = i % 2 ? 1 : -1;
+      const u = side * (sc.gap / 2 - 0.3 - rnd() * 1.6);
+      const v = (rnd() - 0.3) * 3.2 * sc.sgn;
+      const r = 0.18 + rnd() * 0.4;
+      const m = new THREE.Mesh(new THREE.DodecahedronGeometry(r, 0), mat);
+      const [x, z] = along(u, v);
+      m.position.set(x, r * 0.6, z);
+      m.rotation.set(rnd() * 3, rnd() * 3, rnd() * 3);
+      m.scale.set(1, 0.6 + rnd() * 0.5, 1);
+      m.castShadow = true; m.receiveShadow = true;
+      g.add(m);
+    }
+    // 開口の縁：欠け残った石が段々に突き出す
+    [-1, 1].forEach(side => {
+      for (let k = 0; k < 6; k++) {
+        const h = 0.5 + rnd() * 0.9, w = 0.3 + rnd() * 0.5;
+        const y = 0.3 + k * (WALL_H - 0.6) / 5;
+        const u = side * (sc.gap / 2 - w / 2 + 0.05);
+        const [x, z] = along(u, 0);
+        const m = new THREE.Mesh(sc.horiz ? new THREE.BoxGeometry(1.4, h, w) : new THREE.BoxGeometry(w, h, 1.4), mat);
+        m.position.set(x, y, z);
+        m.rotation.set((rnd() - 0.5) * 0.3, (rnd() - 0.5) * 0.3, (rnd() - 0.5) * 0.3);
+        m.castShadow = true;
+        g.add(m);
+      }
+      if (side < 0) return;
+      // 上の梁の欠け
+      const [x, z] = along(0, 0);
+      const lintel = new THREE.Mesh(sc.horiz ? new THREE.BoxGeometry(1.3, 0.5, sc.gap * 0.7) : new THREE.BoxGeometry(sc.gap * 0.7, 0.5, 1.3), mat);
+      lintel.position.set(x, WALL_H - 0.25, z);
+      g.add(lintel);
+    });
+    // 奥から漏れる金の光（通じたことを示す）
+    const glow = new THREE.Mesh(new THREE.PlaneGeometry(sc.gap * 0.9, WALL_H * 0.9),
+      new THREE.MeshBasicMaterial({ color: 0xffd24a, transparent: true, opacity: 0.12,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+    const [gx, gz] = along(0, sc.sgn * 2.5);
+    glow.position.set(gx, WALL_H * 0.45, gz);
+    if (sc.horiz) glow.rotation.y = Math.PI / 2;
+    g.add(glow);
+    this.group.add(g);
+    sc.rubble = g;
   }
 
   /** 帰還のワープ台（魔法陣） */
@@ -1220,6 +1306,45 @@ export class World {
     this.gimmicks.chests.push({ x, z, mesh: g, lid, opened: false });
   }
 
+  /** 黄金の守り手の宝箱：黒漆に金の金具、宝玉と光の柱。開けると蓋がゆっくり上がる */
+  addGrandChest(x, z) {
+    if (!this.gimmicks) return null;
+    const g = new THREE.Group();
+    const lacq = new THREE.MeshStandardMaterial({ color: 0x3a0e14, roughness: 0.28, metalness: 0.2 });
+    const gold = metalMaterial(140, 0xe0b040);
+    const gem = glowMaterial(0xff4a6a, 2.4, true);
+    const add = (geo, mat, px, py, pz, par) => { const m = new THREE.Mesh(geo, mat); m.position.set(px, py, pz); m.castShadow = true; (par || g).add(m); return m; };
+    // 台座と箱
+    add(new THREE.BoxGeometry(2.2, 0.16, 1.5), gold, 0, 0.08, 0);
+    add(new THREE.BoxGeometry(1.9, 0.9, 1.2), lacq, 0, 0.61, 0);
+    [-0.95, 0.95].forEach(sx => [-0.6, 0.6].forEach(sz => add(new THREE.BoxGeometry(0.14, 0.95, 0.14), gold, sx, 0.61, sz)));
+    [0.2, 1.02].forEach(y => add(new THREE.BoxGeometry(1.96, 0.08, 1.26), gold, 0, y, 0));
+    [-0.5, 0.5].forEach(sx => add(new THREE.BoxGeometry(0.1, 0.9, 1.24), gold, sx, 0.61, 0));
+    add(new THREE.CylinderGeometry(0.16, 0.16, 0.05, 20), gold, 0, 0.66, 0.62).rotation.x = Math.PI / 2;
+    add(new THREE.SphereGeometry(0.08, 14, 10), gem, 0, 0.66, 0.66);
+    // 蓋（後ろの辺を軸に開く）
+    const lid = new THREE.Group(); lid.position.set(0, 1.06, -0.6); g.add(lid);
+    const dome = add(new THREE.CylinderGeometry(0.6, 0.6, 1.9, 24, 1, false, 0, Math.PI), lacq, 0, 0, 0.6, lid);
+    dome.rotation.set(0, 0, Math.PI / 2); dome.scale.set(0.7, 1, 1);   // 蒲鉾形の蓋
+    [-0.95, -0.5, 0.5, 0.95].forEach(sx => {
+      const band = add(new THREE.TorusGeometry(0.6, 0.04, 6, 20, Math.PI), gold, sx, 0, 0.6, lid);
+      band.rotation.set(0, Math.PI / 2, 0); band.scale.set(1, 0.7, 1);
+    });
+    add(new THREE.SphereGeometry(0.13, 16, 12), gem, 0, 0.32, 0.6, lid);
+    // 光の柱と灯り
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 1.1, 9, 20, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0xffd24a, transparent: true, opacity: 0.08, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+    beam.position.y = 4.5; g.add(beam);
+    const light = new THREE.PointLight(0xffc860, 2.0, 12, 2); light.position.y = 2.2; g.add(light);
+    g.position.set(x, 0, z);
+    this.group.add(g);
+    const col = { min: { x: x - 1.0, z: z - 0.7 }, max: { x: x + 1.0, z: z + 0.7 } };
+    this.colliders.push(col);
+    const ch = { x, z, mesh: g, lid, opened: false, grand: true, beam, light, gem, openT: -1 };
+    this.gimmicks.chests.push(ch);
+    return ch;
+  }
+
   /** 鍵を拾う／扉を開く／宝箱を開ける。起きたことを返す */
   interact(px, pz, hasKey) {
     const out = [];
@@ -1239,8 +1364,10 @@ export class World {
       }
     });
     this.gimmicks.chests.forEach(c => {
-      if (!c.opened && Math.hypot(px - c.x, pz - c.z) < 2.2) {
-        c.opened = true; c.lid.rotation.x = -1.1; c.lid.position.z = -0.35;
+      if (!c.opened && Math.hypot(px - c.x, pz - c.z) < (c.grand ? 2.8 : 2.2)) {
+        c.opened = true;
+        if (c.grand) { c.openT = 0; out.push('grand'); return; }
+        c.lid.rotation.x = -1.1; c.lid.position.z = -0.35;
         out.push('chest');
       }
     });
@@ -1811,6 +1938,18 @@ export class World {
   }
 
   _updateGimmick(t, dt) {
+    if (this.gimmicks && this.gimmicks.chests) this.gimmicks.chests.forEach(c => {
+      if (!c.grand) return;
+      c.beam.rotation.y += dt * 0.4;
+      c.gem.emissiveIntensity = 2 + Math.sin(t * 3) * 0.8;
+      if (c.openT >= 0 && c.openT < 1) {
+        c.openT = Math.min(1, c.openT + dt * 0.8);
+        const e = 1 - Math.pow(1 - c.openT, 3);
+        c.lid.rotation.x = -1.9 * e;
+        c.beam.material.opacity = 0.08 + Math.sin(c.openT * Math.PI) * 0.2;
+        c.light.intensity = 2.0 + Math.sin(c.openT * Math.PI) * 3;
+      } else if (c.opened && c.openT >= 1) { c.beam.material.opacity *= 0.98; c.light.intensity = Math.max(1.0, c.light.intensity * 0.98); }
+    });
     const G = this.eliteG;
     if (!G) return;
     G.seal.rotation.z += dt * 0.4;

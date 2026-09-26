@@ -120,7 +120,8 @@
   <button class="pad-btn pad-sun" id="btn-solar">☀ 太陽</button>
   <button class="pad-btn pad-heal" id="btn-heal">祓い</button>
   <button class="pad-btn pad-menu" id="btn-menu">陣中帳</button>
-  <button class="pad-btn pad-skill" id="btn-skill">技</button>
+  <button class="pad-btn pad-skill" id="btn-skill"><span id="sk-nm">技</span><i class="sk-mp"><s id="sk-mp"></s></i><em id="sk-cd"></em></button>
+  <button class="pad-btn pad-sksel" id="btn-sksel" hidden>技⇄</button>
   <button class="pad-btn pad-talk" id="btn-talk" hidden>話す</button>
   <button class="pad-btn pad-key" id="btn-key" hidden>🗝 鍵を使う</button>
   <button class="pad-btn pad-wpn" id="btn-weapon"><b>銃</b>銃</button>
@@ -264,6 +265,14 @@
 </div>
 
 <!-- 道具屋 -->
+<div id="loot" class="overlay" hidden>
+  <div class="panel loot-panel">
+    <h2>黄金の宝箱</h2>
+    <div id="loot-list" class="loot-list"></div>
+    <div class="btns"><button id="loot-close" class="btn btn-fill">受け取る</button></div>
+  </div>
+</div>
+
 <div id="shop" class="overlay" hidden>
   <div class="panel">
     <h2>道具屋</h2>

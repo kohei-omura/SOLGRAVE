@@ -133,6 +133,8 @@ class Game {
     ['mw0', 'ma0', 'mt0'].forEach(id => { m0.pick(id); if (!m0.gear[GEAR[id].slot] || (GEAR[m0.gear[GEAR[id].slot]] || {}).who !== 'miko') m0.equip(id); });
     this.menu.onChange = () => { Party.save(this.party); this.applyStats(); };
     this.menu.onUseKey = () => { this.menu.hide(); this.askUseKey(); };
+    this.menu.curSkill = () => { const l = this.party.hero.activeSkills(); return l.length ? l[(this._skillSel || 0) % l.length] : null; };
+    this.menu.onPickSkill = id => { const l = this.party.hero.activeSkills(); const i = l.indexOf(id); if (i >= 0) { this._skillSel = i; this._skKey = null; } };
 
     this.audio = new Audio();
     this.voice = new Voice();
@@ -261,6 +263,7 @@ class Game {
       if (e.code === 'KeyQ') this.invokeSolar();
       if (e.code === 'KeyE') this.invokeHeal();
       if (e.code === 'KeyR') this.useSkill();
+      if (e.code === 'KeyT') this.cycleSkill();
       if (e.code === 'KeyF') { if (this.talking) this.closeTalk(); else this.doTalk(); }
       if (e.code === 'KeyG') this.askUseKey();
       if (e.code === 'Tab') { e.preventDefault(); this.cycleWeapon(1); }
@@ -405,6 +408,8 @@ class Game {
     }
     const fc = document.getElementById('fl-close');
     if (fc) fc.addEventListener('click', () => this.closeFloors());
+    const lc = document.getElementById('loot-close');
+    if (lc) lc.addEventListener('click', () => { UI.hide('loot'); this.applyStats(); UI.toast('宝は陣中帳の「装備」から身に着けられます', 3200); });
     const sc = document.getElementById('shop-close');
     if (sc) sc.addEventListener('click', () => UI.hide('shop'));
     const skb = document.getElementById('btn-skill');
@@ -412,6 +417,12 @@ class Game {
       const go3 = e => { if (e) e.preventDefault(); this.audio.unlock(); this.voice.unlock(); this.useSkill(); };
       skb.addEventListener('touchstart', go3, { passive: false });
       skb.addEventListener('click', go3);
+    }
+    const sks = document.getElementById('btn-sksel');
+    if (sks) {
+      const go5 = e => { if (e) e.preventDefault(); this.audio.unlock(); this.cycleSkill(); };
+      sks.addEventListener('touchstart', go5, { passive: false });
+      sks.addEventListener('click', go5);
     }
     const tap = (id, fn) => {
       const el = document.getElementById(id);
@@ -606,8 +617,8 @@ class Game {
     add('もう少し話す', () => this.doTalk());
     add('離れる', () => this.closeTalk());
     box.hidden = false;
-    const male = ['kid', 'friend', 'smith', 'old', 'guest', 'appr', 'gp', 'farmer', 'boy'].indexOf(n.def.id) >= 0;
-    this.voice.say(r.text.slice(0, 22), male ? 'hero' : 'miko');
+    // 人ごとに声の質（声の種類・高さ・速さ）を変える（audio.js の VOICE_PROFILE）
+    this.voice.say(r.text.slice(0, 40), n.def.id);
   }
   closeTalk() {
     this.talking = null;
@@ -653,15 +664,22 @@ class Game {
       : ['t1', 't2', 't3', 'mw1', 'mw2', 'ma1', 'ma2', 'mt1', 'mt2', 'mw3', 'ma3'];
     const price = (g) => (g.rare + 1) * 60 + (g.rare >= 3 ? 200 : 0);
     document.getElementById('shop-coin').textContent = this.coin;
+    // 種類ごとに見出しを立てて並べる
+    const grp = id => { const g = GEAR[id]; if (!g) return '〜'; if (g.who === 'miko') return '日和の装備'; if (g.slot === 'weapon') return WEAPONS[wtypeOf(id)].icon + '　' + WEAPONS[wtypeOf(id)].name; return ({ armor: '防具', charm: '飾り' })[g.slot] || '道具'; };
+    const order = id => { const g = GEAR[id]; if (!g) return 999; if (g.slot === 'weapon' && g.who !== 'miko') return WEAPON_ORDER.indexOf(wtypeOf(id)); return 100 + (g.who === 'miko' ? 10 : 0) + ['weapon', 'armor', 'charm'].indexOf(g.slot); };
+    stock.sort((a, b) => order(a) - order(b) || (GEAR[a] ? GEAR[a].rare : 0) - (GEAR[b] ? GEAR[b].rare : 0));
+    let lastG = null;
     el.innerHTML = stock.map(id => {
       const g = GEAR[id];
       if (!g) return '';
+      const gh = grp(id), head = gh !== lastG ? '<div class="sh-grp">' + gh + '</div>' : '';
+      lastG = gh;
       const who = (g.who || 'hero');
       const owner = this.party[who];
       const have = owner.bag.indexOf(id) >= 0;
       const mods = Object.keys(g.mods).filter(k => g.mods[k]).map(k => k + '+' + g.mods[k]).join(' ');
       const tag = g.wtype ? '〔' + WEAPONS[g.wtype].name + '〕' : (who === 'miko' ? '〔日和〕' : '');
-      return '<div class="sh-row"><span class="sh-nm">' + tag + g.name + '<span class="sh-md">' + mods + '</span></span>' +
+      return head + '<div class="sh-row"><span class="sh-nm">' + tag + g.name + '<span class="sh-md">' + mods + '</span></span>' +
         '<span class="sh-pr">' + price(g) + '</span>' +
         (have ? '<span class="sh-md">所持</span>'
               : '<button class="sh-bt" data-id="' + id + '"' + (this.coin >= price(g) ? '' : ' disabled') + '>買う</button>') +
@@ -770,18 +788,32 @@ class Game {
     const h = this.party.hero;
     const list = h.activeSkills();
     if (!list.length) { UI.toast('使える技がありません（陣中帳の「技」で覚えます）'); return; }
-    const id = list[this._skillSel % list.length || 0];
+    const id = list[(this._skillSel || 0) % list.length];
     const sk = SKILLS[id];
+    const cost = this.skillCost(sk);
     const now = performance.now() / 1000;
     if ((this.skillCd[id] || 0) > now) {
       UI.toast(sk.name + '　あと' + Math.ceil(this.skillCd[id] - now) + '秒'); this.audio.sfx('empty'); return;
     }
-    if (this.heroMp < sk.cost) { UI.toast('霊力が足りない（' + Math.floor(this.heroMp) + '／' + sk.cost + '）'); this.audio.sfx('empty'); return; }
-    this.heroMp -= sk.cost;
+    if (this.heroMp < cost) { UI.toast('霊力が足りない（' + Math.floor(this.heroMp) + '／' + cost + '）'); this.audio.sfx('empty'); return; }
+    this.heroMp -= cost;
     this.skillCd[id] = now + sk.cd;
     this.castSkill(sk);
     UI.shout(sk.name);
     this.audio.sfx('beam');
+  }
+
+  /** 技の消費：霊力の器より大きい技でも必ず撃てるよう、器の9割を上限にする */
+  skillCost(sk) { return Math.min(sk.cost, Math.floor(this.party.hero.maxMp * 0.9)); }
+
+  /** 使う技を順に切り替える */
+  cycleSkill() {
+    const list = this.party.hero.activeSkills();
+    if (list.length < 2) { if (list.length) UI.toast(SKILLS[list[0]].name + '（覚えている技は1つ）'); return; }
+    this._skillSel = ((this._skillSel || 0) + 1) % list.length;
+    const sk = SKILLS[list[this._skillSel]];
+    UI.toast('技：' + sk.name + '　霊力' + this.skillCost(sk) + '・' + sk.cd + '秒');
+    this.audio.sfx('good');
   }
 
   /** 技の中身 */
@@ -1373,7 +1405,7 @@ class Game {
     const maxL = (this.cfg.quality === 'low') ? 3 : (this.cfg.quality === 'high' ? 8 : 5);
     // 場面じゅうの点光源をまとめて絞る（画質は変えずに軽くする）
     // 個別の間引きはやめ、場面全体でまとめて絞る（後から上書きされないように）
-    this.gfx.cullPointLights(this.player.pos.x, this.player.pos.z, maxL + 1);
+    this._maxL = maxL + 1;
     if (this.town && this.town.built && this.phase === Phase.SURFACE) this.town.update(now, this.player.pos);
     if (this.phase === Phase.INTERIOR) this.interior.update(now, this.player.pos);
     this.particles.update(dt);
@@ -1441,6 +1473,8 @@ class Game {
           secret: this.goldenRef && !this.goldenRef.dead ? this.goldenRef.p : null });
     }
 
+    // 描画の直前に灯りを絞る（この回に生まれた灯りも拾い、光源の数が変わらないようにする）
+    this.gfx.cullPointLights(this.player.pos.x, this.player.pos.z, this._maxL || 6);
     this.gfx.render(now);
   }
 
@@ -1580,11 +1614,23 @@ class Game {
     // （以前はここで毎フレーム押下の受け口を足しており、押すたびに何重にも動いていた）
     const skb = document.getElementById('btn-skill');
     if (skb) {
+      // 押せない状態（disabled）にすると押しても何も起きず理由も出ないため、見た目だけ変える
       const list = hh.activeSkills();
-      const id = list[0];
+      const id = list.length ? list[(this._skillSel || 0) % list.length] : null;
+      const sk = id ? SKILLS[id] : null;
       const cd = id ? (this.skillCd[id] || 0) - now : 0;
-      skb.disabled = !list.length || cd > 0 || this.heroMp < (id ? SKILLS[id].cost : 0);
-      skb.textContent = list.length ? (SKILLS[id].name) : '技';
+      const cost = sk ? this.skillCost(sk) : 0;
+      const ok = !!sk && cd <= 0 && this.heroMp >= cost;
+      const k = (id || '-') + (ok ? 1 : 0) + Math.ceil(Math.max(0, cd)) + '|' + Math.round(this.heroMp);
+      if (k !== this._skKey) {
+        this._skKey = k;
+        skb.classList.toggle('wait', !ok); skb.classList.toggle('ready', ok);
+        document.getElementById('sk-nm').textContent = sk ? sk.name : '技';
+        document.getElementById('sk-mp').style.width = (sk ? Math.min(100, this.heroMp / Math.max(1, cost) * 100) : 0) + '%';
+        document.getElementById('sk-cd').textContent = cd > 0 ? Math.ceil(cd) : '';
+        const sel = document.getElementById('btn-sksel');
+        if (sel) sel.hidden = list.length < 2;
+      }
     }
 
     // 陽の化身
@@ -1757,6 +1803,8 @@ class Game {
         } else if (a === 'door') {
           this.audio.sfx('phase');
           UI.toast('封印が解けた');
+        } else if (a === 'grand') {
+          this.openGrandChest();
         } else if (a === 'chest') {
           this.audio.sfx('good');
           const exp = 120 + this.floor * 60;
@@ -2169,6 +2217,55 @@ class Game {
     this.voice.say(null, 'hero', { segments: [{ t: '浄めるぞ、', p: 1.0, r: 1.05, gap: 150 }, { t: '日和！', p: 1.1, r: 1.1 }] });
   }
 
+  /**
+   * 黄金の宝箱の中身：主人公に種類の違うレア武器を三つ・レア防具・レア飾り（初回は伝説の三点も）、
+   * 日和にもレアな装束を二つ。持っていない物を優先し、重なった分は陽貨に替える。
+   */
+  openGrandChest() {
+    const H = this.party.hero, M = this.party.miko;
+    const ids = Object.keys(GEAR);
+    const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+    const pickFrom = (pool, owner, n, distinctType) => {
+      const out = [], types = {};
+      const fresh = shuffle(pool.filter(id => owner.bag.indexOf(id) < 0));
+      const old = shuffle(pool.filter(id => owner.bag.indexOf(id) >= 0));
+      for (const id of fresh.concat(old)) {
+        if (out.length >= n) break;
+        const t = distinctType ? wtypeOf(id) : 0;
+        if (distinctType && types[t]) continue;
+        types[t] = 1; out.push(id);
+      }
+      return out;
+    };
+    const heroW = ids.filter(id => { const g = GEAR[id]; return g.slot === 'weapon' && (g.who || 'hero') === 'hero' && g.rare >= 3; });
+    const loot = [];
+    ['w5', 'a5', 't5'].forEach(id => { if (H.bag.indexOf(id) < 0) loot.push(['hero', id]); });
+    pickFrom(heroW.filter(id => id !== 'w5'), H, 3, true).forEach(id => loot.push(['hero', id]));
+    pickFrom(['a3', 'a4', 'a5'].filter(id => !loot.some(l => l[1] === id)), H, 1).forEach(id => loot.push(['hero', id]));
+    pickFrom(['t3', 't4', 't5'].filter(id => !loot.some(l => l[1] === id)), H, 1).forEach(id => loot.push(['hero', id]));
+    pickFrom(ids.filter(id => GEAR[id].who === 'miko' && GEAR[id].rare >= 3), M, 2).forEach(id => loot.push(['miko', id]));
+    let bonus = 0;
+    const RN = ['', '★', '★★', '★★★', '★★★★', '伝説'];
+    const html = loot.map(([who, id], i) => {
+      const g = GEAR[id];
+      const fresh = this.party[who].pick(id);
+      if (!fresh) bonus += 300 * g.rare;
+      const icon = g.slot === 'weapon' ? (who === 'miko' ? '幣' : WEAPONS[wtypeOf(id)].icon) : g.slot === 'armor' ? '衣' : '飾';
+      const kind = (who === 'miko' ? '日和・' : '') + (g.slot === 'weapon' ? (who === 'miko' ? '祭具' : WEAPONS[wtypeOf(id)].name) : g.slot === 'armor' ? '防具' : '飾り');
+      return '<div class="loot-it r' + g.rare + (fresh ? '' : ' dup') + '" style="animation-delay:' + (i * 0.12) + 's"><b>' + icon + '</b><span>' + g.name +
+        '<i>' + kind + '　' + RN[g.rare] + (fresh ? '' : '　（所持・陽貨に）') + '</i></span></div>';
+    }).join('');
+    this.coin += bonus;
+    Party.save(this.party);
+    this.saveProgress && this.saveProgress();
+    const el = document.getElementById('loot-list');
+    if (el) el.innerHTML = html + (bonus ? '<div class="loot-it"><b>貨</b><span>陽貨 ' + bonus + '<i>重なった品の代わり</i></span></div>' : '');
+    UI.show('loot');
+    this.audio.sfx('purify');
+    this.line('chest');
+    UI.shout('黄 金 の 宝');
+  }
+
   /** 撃破時の処理はひとつにまとめ、どの倒し方でも同じように働かせる */
   onKill(e) {
     this.stats.kills++;
@@ -2179,21 +2276,18 @@ class Game {
       const exp = Math.round(9000 * (1 + (this.floor - 1) * 0.8));
       this.grantExp(exp);
       this.coin += 1500 + this.floor * 400;
-      const got = [];
-      ['w5', 'a5', 't5'].forEach(id => { if (this.party.hero.pick(id)) got.push(GEAR[id].name); });
-      // 伝説の武器と、日和の伝説の装束もひとつ
-      const leg = ['xsword2', 'xbow2'][Math.floor(Math.random() * 2)];
-      if (GEAR[leg] && this.party.hero.pick(leg)) got.push(GEAR[leg].name);
-      const ml = ['mw5', 'ma5', 'mt5'][Math.floor(Math.random() * 3)];
-      if (this.party.miko.pick(ml)) got.push(GEAR[ml].name + '（日和）');
-      Party.save(this.party);
+      // 豪華な宝箱が、隠しの間の中央（無ければ倒れた場所）に現れる
+      const sc = this.world.secret;
+      const cx = sc ? sc.roomX : e.p.x, cz = sc ? sc.roomZ : e.p.z;
+      if (this.world.addGrandChest) this.world.addGrandChest(cx, cz);
+      this.enemies.pushAway && this.enemies.pushAway(cx, cz, 2.5, 1);
       this.particles.emit(new THREE.Vector3(e.p.x, 2, e.p.z), 120,
         { color: [1, 0.88, 0.35], size: 5.4, up: 4, life: 2.2 });
       this.audio.sfx('purify');
       UI.shout('黄 金 の 守 り 手 を 討 っ た');
       this.voice.say(null, 'hero', { style: 'shout',
-        segments: [{ t: 'すげぇ……', p: 1.0, r: 0.9, gap: 220 }, { t: 'こいつは伝説の代物だ！', p: 1.08, r: 1.05 }] });
-      UI.toast('経験 ' + exp.toLocaleString() + '　' + got.join('・') + ' を得た', 6000);
+        segments: [{ t: '見ろ、', p: 1.0, r: 0.95, gap: 200 }, { t: '黄金の宝箱だ！', p: 1.1, r: 1.08 }] });
+      UI.toast('経験 ' + exp.toLocaleString() + '　――　黄金の宝箱が現れた。近づいて開けよ', 6000);
       this.goldenRef = null;
     } else if (e.elite) {
       this.hasKey = true;
