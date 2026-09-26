@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { fleshMaterial, metalMaterial, glowMaterial } from './gfx.js';
 import { buildElite, ELITES } from './forms.js';
 import { inShape } from './weapons.js';
+import { buildBestiary, enemyMaterial } from './bestiary.js';
 
 export const EnemyKind = {
   WALKER: 0, RUNNER: 1, SHIELD: 2, BAT: 3, SKELETON: 4, MUMMY: 5, GHOST: 6, WISP: 7,
@@ -39,33 +40,6 @@ const SPEC = {
   19: { name: '泣き女',       hp: 3,  speed: 2.4, r: 0.5,  dmgR: 1.1, exp: 30, fly: 1.2, ranged: 3.6, ringShot: true }
 };
 export function specOf(kind) { return SPEC[kind] || SPEC[0]; }
-
-/* 部位を合成して一つの形にする（BufferGeometryUtils を使わない） */
-function mergeParts(parts) {
-  const geos = [];
-  parts.forEach(p => {
-    let g = p.g.clone();
-    if (g.index) g = g.toNonIndexed();
-    g.scale(p.s ? p.s[0] : 1, p.s ? p.s[1] : 1, p.s ? p.s[2] : 1);
-    if (p.r) { g.rotateX(p.r[0] || 0); g.rotateY(p.r[1] || 0); g.rotateZ(p.r[2] || 0); }
-    g.translate(p.t[0], p.t[1], p.t[2]);
-    geos.push(g);
-  });
-  let total = 0;
-  geos.forEach(g => { total += g.attributes.position.count; });
-  const pos = new Float32Array(total * 3), nor = new Float32Array(total * 3);
-  let off = 0;
-  geos.forEach(g => {
-    pos.set(g.attributes.position.array, off * 3);
-    if (g.attributes.normal) nor.set(g.attributes.normal.array, off * 3);
-    off += g.attributes.position.count;
-    g.dispose();
-  });
-  const out = new THREE.BufferGeometry();
-  out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
-  return out;
-}
 
 /* ── 弾 ─────────────────────────────────────
    見た目（look）ごとに描き分ける：orb 陽光弾／arrow 矢／page 頁／
@@ -198,6 +172,7 @@ export class Bullets {
       im.count = cnt[k];
       im.visible = cnt[k] > 0;
       im.instanceMatrix.needsUpdate = true;
+      if (im.geometry.attributes.aAnim && im.count) im.geometry.attributes.aAnim.needsUpdate = true;
     });
   }
   clear() { this.list.length = 0; this._sync(); }
@@ -434,219 +409,35 @@ export class Enemies {
       this.scene.add(im);
       return im;
     };
-    const S = THREE.SphereGeometry, C = THREE.CapsuleGeometry, B = THREE.BoxGeometry,
-      CO = THREE.ConeGeometry, CY = THREE.CylinderGeometry, TO = THREE.TorusGeometry;
-    const G = {};
-    // 歩兵ゾンビ：前かがみ、頭が垂れ、腕が長い
-    G[0] = mergeParts([
-      { g: new C(0.3, 0.62, 5, 9),  t: [0, 0.95, 0.06], r: [0.32, 0, 0] },
-      { g: new S(0.23, 12, 10),     t: [0, 1.45, 0.28], s: [1, 0.92, 1.1] },
-      { g: new B(0.26, 0.1, 0.12),  t: [0, 1.32, 0.46] },
-      { g: new C(0.085, 0.62, 4, 7),t: [0.33, 0.92, 0.16], r: [0.5, 0, 0.16] },
-      { g: new C(0.085, 0.66, 4, 7),t: [-0.33, 0.88, 0.2], r: [0.68, 0, -0.2] },
-      { g: new C(0.1, 0.5, 4, 7),   t: [0.14, 0.34, 0] },
-      { g: new C(0.1, 0.5, 4, 7),   t: [-0.14, 0.34, 0] },
-      { g: new B(0.34, 0.05, 0.05), t: [0, 1.02, 0.24] },
-      { g: new B(0.3, 0.05, 0.05),  t: [0, 0.9, 0.24] }
-    ]);
-    // 走行ゾンビ（グール）：四つん這いに近い低い姿勢
-    G[1] = mergeParts([
-      { g: new C(0.24, 0.72, 5, 9), t: [0, 0.72, 0], r: [1.15, 0, 0] },
-      { g: new S(0.2, 12, 10),      t: [0, 0.78, 0.56], s: [1, 0.85, 1.25] },
-      { g: new CO(0.09, 0.24, 6),   t: [0, 0.72, 0.78], r: [1.57, 0, 0] },
-      { g: new C(0.07, 0.44, 4, 7), t: [0.26, 0.42, 0.3], r: [0.9, 0, 0] },
-      { g: new C(0.07, 0.44, 4, 7), t: [-0.26, 0.42, 0.3], r: [0.9, 0, 0] },
-      { g: new C(0.08, 0.46, 4, 7), t: [0.17, 0.34, -0.3], r: [-0.5, 0, 0] },
-      { g: new C(0.08, 0.46, 4, 7), t: [-0.17, 0.34, -0.3], r: [-0.5, 0, 0] }
-    ]);
-    // 盾持ち：肥大した巨躯と分厚い板
-    G[2] = mergeParts([
-      { g: new C(0.42, 0.8, 6, 10), t: [0, 1.05, 0] },
-      { g: new S(0.26, 12, 10),     t: [0, 1.66, 0.1], s: [1.1, 0.85, 1] },
-      { g: new B(0.9, 1.25, 0.16),  t: [0, 1.05, 0.52] },
-      { g: new B(0.95, 0.1, 0.06),  t: [0, 1.5, 0.6] },
-      { g: new B(0.95, 0.1, 0.06),  t: [0, 0.6, 0.6] },
-      { g: new C(0.13, 0.5, 4, 7),  t: [0.2, 0.32, 0] },
-      { g: new C(0.13, 0.5, 4, 7),  t: [-0.2, 0.32, 0] }
-    ]);
-    // 飛行コウモリ
-    G[3] = mergeParts([
-      { g: new C(0.16, 0.3, 5, 8),  t: [0, 0, 0], r: [1.4, 0, 0] },
-      { g: new S(0.15, 10, 8),      t: [0, 0.04, 0.24], s: [1, 0.9, 1.1] },
-      { g: new CO(0.05, 0.16, 5),   t: [0.07, 0.16, 0.18], r: [-0.2, 0, -0.2] },
-      { g: new CO(0.05, 0.16, 5),   t: [-0.07, 0.16, 0.18], r: [-0.2, 0, 0.2] },
-      { g: new B(0.62, 0.03, 0.34), t: [0.42, 0.04, -0.05], r: [0, 0, 0.22] },
-      { g: new B(0.62, 0.03, 0.34), t: [-0.42, 0.04, -0.05], r: [0, 0, -0.22] }
-    ]);
-    // スケルトン：細い骨と肋、剣
-    G[4] = mergeParts([
-      { g: new CY(0.05, 0.05, 0.8, 5), t: [0.13, 0.4, 0] }, { g: new CY(0.05, 0.05, 0.8, 5), t: [-0.13, 0.4, 0] },
-      { g: new CY(0.05, 0.05, 0.7, 5), t: [0, 1.1, 0] },
-      { g: new TO(0.2, 0.03, 5, 12, 4.4), t: [0, 1.25, 0], r: [1.57, 0, 0] },
-      { g: new TO(0.18, 0.03, 5, 12, 4.4), t: [0, 1.12, 0], r: [1.57, 0, 0] },
-      { g: new TO(0.16, 0.03, 5, 12, 4.4), t: [0, 0.99, 0], r: [1.57, 0, 0] },
-      { g: new S(0.19, 10, 8), t: [0, 1.62, 0.04] },
-      { g: new B(0.2, 0.08, 0.14), t: [0, 1.46, 0.08] },
-      { g: new CY(0.035, 0.035, 0.7, 5), t: [0.3, 1.1, 0.1], r: [0.3, 0, 0.2] },
-      { g: new CY(0.035, 0.035, 0.7, 5), t: [-0.3, 1.1, 0.1], r: [0.3, 0, -0.2] },
-      { g: new B(0.06, 0.03, 0.9), t: [0.36, 0.85, 0.5] }
-    ]);
-    // マミー：包帯の巻かれた太い躯
-    G[5] = mergeParts([
-      { g: new C(0.36, 0.8, 6, 10), t: [0, 1.0, 0] },
-      { g: new S(0.24, 12, 10), t: [0, 1.66, 0.06] },
-      { g: new TO(0.37, 0.04, 5, 16), t: [0, 0.8, 0], r: [1.4, 0, 0] },
-      { g: new TO(0.37, 0.04, 5, 16), t: [0, 1.1, 0], r: [1.8, 0, 0] },
-      { g: new TO(0.25, 0.04, 5, 16), t: [0, 1.66, 0.06], r: [1.3, 0, 0] },
-      { g: new C(0.1, 0.6, 4, 7), t: [0.36, 1.2, 0.35], r: [1.4, 0, 0] },
-      { g: new C(0.1, 0.6, 4, 7), t: [-0.36, 1.2, 0.35], r: [1.4, 0, 0] },
-      { g: new C(0.13, 0.5, 4, 7), t: [0.16, 0.32, 0] }, { g: new C(0.13, 0.5, 4, 7), t: [-0.16, 0.32, 0] }
-    ]);
-    // ゴースト：裾の消える霊体
-    G[6] = mergeParts([
-      { g: new CO(0.5, 1.4, 12, 1, true), t: [0, -0.3, 0], r: [Math.PI, 0, 0] },
-      { g: new S(0.32, 12, 10), t: [0, 0.45, 0] },
-      { g: new C(0.07, 0.5, 4, 7), t: [0.4, 0.2, 0.25], r: [1.2, 0, 0.3] },
-      { g: new C(0.07, 0.5, 4, 7), t: [-0.4, 0.2, 0.25], r: [1.2, 0, -0.3] }
-    ]);
-    // 鬼火：燃える玉と尾
-    G[7] = mergeParts([
-      { g: new S(0.3, 12, 10), t: [0, 0, 0] },
-      { g: new CO(0.26, 0.9, 10), t: [0, 0.1, -0.45], r: [-1.3, 0, 0] },
-      { g: new CO(0.12, 0.5, 8), t: [0.15, 0.3, -0.2], r: [-0.8, 0, -0.3] }
-    ]);
-    // 屍狼
-    G[8] = mergeParts([
-      { g: new C(0.26, 0.8, 5, 9), t: [0, 0.75, 0], r: [1.57, 0, 0] },
-      { g: new S(0.22, 10, 8), t: [0, 0.95, 0.6] },
-      { g: new CO(0.12, 0.35, 6), t: [0, 0.88, 0.85], r: [1.57, 0, 0] },
-      { g: new CO(0.06, 0.2, 5), t: [0.11, 1.15, 0.55] }, { g: new CO(0.06, 0.2, 5), t: [-0.11, 1.15, 0.55] },
-      { g: new C(0.06, 0.5, 4, 6), t: [0.16, 0.32, 0.4] }, { g: new C(0.06, 0.5, 4, 6), t: [-0.16, 0.32, 0.4] },
-      { g: new C(0.06, 0.5, 4, 6), t: [0.16, 0.32, -0.4] }, { g: new C(0.06, 0.5, 4, 6), t: [-0.16, 0.32, -0.4] },
-      { g: new CO(0.08, 0.6, 5), t: [0, 0.9, -0.7], r: [-2.0, 0, 0] }
-    ]);
-    // 朽ち木：幹と枝の腕
-    G[9] = mergeParts([
-      { g: new CY(0.35, 0.55, 1.8, 9), t: [0, 0.9, 0] },
-      { g: new CO(0.12, 1.0, 6), t: [0.5, 1.6, 0.1], r: [0, 0, -1.0] },
-      { g: new CO(0.12, 1.0, 6), t: [-0.5, 1.5, 0.1], r: [0, 0, 1.1] },
-      { g: new CO(0.08, 0.7, 5), t: [0.2, 2.1, -0.1], r: [0.3, 0, -0.4] },
-      { g: new CO(0.1, 0.8, 5), t: [-0.25, 2.0, 0], r: [-0.2, 0, 0.5] },
-      { g: new CO(0.1, 0.6, 5), t: [0.45, 0.15, 0.1], r: [0, 0, -1.9] },
-      { g: new CO(0.1, 0.6, 5), t: [-0.45, 0.15, 0.1], r: [0, 0, 1.9] }
-    ]);
-    // 亡霊騎士：甲冑と盾と槍
-    G[10] = mergeParts([
-      { g: new C(0.34, 0.7, 6, 10), t: [0, 1.1, 0] },
-      { g: new CY(0.2, 0.24, 0.4, 10), t: [0, 1.75, 0] },
-      { g: new CO(0.06, 0.4, 5), t: [0, 2.1, 0] },
-      { g: new S(0.2, 8, 6), t: [0.38, 1.5, 0], s: [1, 0.7, 1] }, { g: new S(0.2, 8, 6), t: [-0.38, 1.5, 0], s: [1, 0.7, 1] },
-      { g: new B(0.7, 1.0, 0.1), t: [-0.3, 1.1, 0.45] },
-      { g: new CY(0.03, 0.03, 2.2, 5), t: [0.4, 1.1, 0.4], r: [1.2, 0, 0] },
-      { g: new C(0.12, 0.5, 4, 7), t: [0.16, 0.34, 0] }, { g: new C(0.12, 0.5, 4, 7), t: [-0.16, 0.34, 0] }
-    ]);
-    // ガーゴイル：石の翼と角
-    G[11] = mergeParts([
-      { g: new C(0.3, 0.5, 5, 9), t: [0, 0, 0], r: [0.4, 0, 0] },
-      { g: new S(0.22, 10, 8), t: [0, 0.45, 0.2] },
-      { g: new CO(0.05, 0.3, 5), t: [0.12, 0.7, 0.15], r: [-0.4, 0, -0.3] }, { g: new CO(0.05, 0.3, 5), t: [-0.12, 0.7, 0.15], r: [-0.4, 0, 0.3] },
-      { g: new B(1.0, 0.04, 0.5), t: [0.6, 0.3, -0.2], r: [0, 0, 0.5] }, { g: new B(1.0, 0.04, 0.5), t: [-0.6, 0.3, -0.2], r: [0, 0, -0.5] },
-      { g: new C(0.08, 0.4, 4, 6), t: [0.18, -0.45, 0.1] }, { g: new C(0.08, 0.4, 4, 6), t: [-0.18, -0.45, 0.1] }
-    ]);
-    // 氷霊：尖った氷の結晶体
-    G[12] = mergeParts([
-      { g: new THREE.OctahedronGeometry(0.4, 0), t: [0, 0, 0], s: [0.8, 1.6, 0.8] },
-      { g: new THREE.OctahedronGeometry(0.2, 0), t: [0.45, 0.2, 0], s: [0.6, 1.4, 0.6], r: [0, 0, -0.6] },
-      { g: new THREE.OctahedronGeometry(0.2, 0), t: [-0.45, 0.2, 0], s: [0.6, 1.4, 0.6], r: [0, 0, 0.6] },
-      { g: new THREE.OctahedronGeometry(0.15, 0), t: [0, -0.6, 0], s: [0.6, 1.8, 0.6] }
-    ]);
-    // 雪鬼：毛深い巨躯
-    G[13] = mergeParts([
-      { g: new S(0.7, 12, 10), t: [0, 1.4, 0], s: [1, 1.1, 0.85] },
-      { g: new S(0.35, 10, 8), t: [0, 2.2, 0.2] },
-      { g: new CO(0.08, 0.35, 5), t: [0.2, 2.5, 0.1], r: [0, 0, -0.5] }, { g: new CO(0.08, 0.35, 5), t: [-0.2, 2.5, 0.1], r: [0, 0, 0.5] },
-      { g: new C(0.2, 1.0, 5, 8), t: [0.75, 1.1, 0.2], r: [0.3, 0, 0.15] }, { g: new C(0.2, 1.0, 5, 8), t: [-0.75, 1.1, 0.2], r: [0.3, 0, -0.15] },
-      { g: new C(0.22, 0.5, 5, 8), t: [0.3, 0.4, 0] }, { g: new C(0.22, 0.5, 5, 8), t: [-0.3, 0.4, 0] }
-    ]);
-    // 溶岩塊：ごつごつの岩の塊
-    G[14] = mergeParts([
-      { g: new THREE.DodecahedronGeometry(0.6, 0), t: [0, 0.8, 0] },
-      { g: new THREE.DodecahedronGeometry(0.35, 0), t: [0.45, 1.3, 0.1] },
-      { g: new THREE.DodecahedronGeometry(0.3, 0), t: [-0.4, 1.35, -0.1] },
-      { g: new THREE.DodecahedronGeometry(0.3, 0), t: [0, 1.55, 0.2] },
-      { g: new THREE.DodecahedronGeometry(0.28, 0), t: [0.3, 0.25, 0] }, { g: new THREE.DodecahedronGeometry(0.28, 0), t: [-0.3, 0.25, 0] }
-    ]);
-    // 火蜥蜴：低く長い体と尾
-    G[15] = mergeParts([
-      { g: new C(0.2, 0.9, 5, 9), t: [0, 0.4, 0], r: [1.57, 0, 0] },
-      { g: new S(0.2, 10, 8), t: [0, 0.5, 0.7], s: [1, 0.8, 1.3] },
-      { g: new CO(0.14, 1.0, 6), t: [0, 0.35, -0.95], r: [-1.57, 0, 0] },
-      { g: new C(0.05, 0.3, 4, 6), t: [0.25, 0.2, 0.3], r: [0, 0, 0.8] }, { g: new C(0.05, 0.3, 4, 6), t: [-0.25, 0.2, 0.3], r: [0, 0, -0.8] },
-      { g: new C(0.05, 0.3, 4, 6), t: [0.25, 0.2, -0.3], r: [0, 0, 0.8] }, { g: new C(0.05, 0.3, 4, 6), t: [-0.25, 0.2, -0.3], r: [0, 0, -0.8] },
-      { g: new CO(0.06, 0.25, 5), t: [0, 0.7, 0.4] }, { g: new CO(0.06, 0.25, 5), t: [0, 0.68, 0.1] }
-    ]);
-    // 案山子：一本足と十字の腕、笠
-    G[16] = mergeParts([
-      { g: new CY(0.05, 0.05, 1.4, 5), t: [0, 0.7, 0] },
-      { g: new CY(0.04, 0.04, 1.4, 5), t: [0, 1.4, 0], r: [0, 0, 1.57] },
-      { g: new CO(0.4, 1.0, 8, 1, true), t: [0, 1.1, 0] },
-      { g: new S(0.22, 10, 8), t: [0, 1.8, 0] },
-      { g: new CO(0.55, 0.3, 12), t: [0, 2.05, 0] }
-    ]);
-    // ハーピー：鳥の翼と爪
-    G[17] = mergeParts([
-      { g: new C(0.22, 0.5, 5, 9), t: [0, 0, 0], r: [0.3, 0, 0] },
-      { g: new S(0.17, 10, 8), t: [0, 0.5, 0.1] },
-      { g: new B(1.2, 0.03, 0.45), t: [0.7, 0.2, -0.1], r: [0, 0.2, 0.35] }, { g: new B(1.2, 0.03, 0.45), t: [-0.7, 0.2, -0.1], r: [0, -0.2, -0.35] },
-      { g: new CO(0.25, 0.6, 5), t: [0, -0.4, -0.35], r: [-2.4, 0, 0] },
-      { g: new C(0.05, 0.4, 4, 6), t: [0.12, -0.45, 0.1] }, { g: new C(0.05, 0.4, 4, 6), t: [-0.12, -0.45, 0.1] }
-    ]);
-    // キョンシー：両腕を前に伸ばす
-    G[18] = mergeParts([
-      { g: new CY(0.28, 0.4, 1.3, 10), t: [0, 0.75, 0] },
-      { g: new S(0.21, 10, 8), t: [0, 1.62, 0] },
-      { g: new CY(0.22, 0.24, 0.24, 10), t: [0, 1.82, 0] },
-      { g: new B(0.14, 0.3, 0.01), t: [0, 1.58, 0.21] },
-      { g: new C(0.08, 0.6, 4, 7), t: [0.2, 1.3, 0.45], r: [1.57, 0, 0] }, { g: new C(0.08, 0.6, 4, 7), t: [-0.2, 1.3, 0.45], r: [1.57, 0, 0] }
-    ]);
-    // 泣き女：長い髪と裂けた衣
-    G[19] = mergeParts([
-      { g: new CO(0.45, 1.6, 12, 1, true), t: [0, -0.3, 0], r: [Math.PI, 0, 0] },
-      { g: new S(0.2, 10, 8), t: [0, 0.65, 0] },
-      { g: new C(0.18, 0.8, 5, 8), t: [0, 0.35, -0.12] },
-      { g: new C(0.05, 0.7, 4, 6), t: [0.35, 0.4, 0.2], r: [0, 0, -1.9] }, { g: new C(0.05, 0.7, 4, 6), t: [-0.35, 0.4, 0.2], r: [0, 0, 1.9] }
-    ]);
-
-    const skin = (c, e) => new THREE.MeshStandardMaterial({
-      color: c, roughness: 0.95, metalness: 0.02,
-      emissive: new THREE.Color(e || 0x220a0a), emissiveIntensity: 0.35
-    });
-    const ghostly = (c, e, op) => new THREE.MeshStandardMaterial({
-      color: c, roughness: 0.5, emissive: new THREE.Color(e), emissiveIntensity: 1.0,
-      transparent: true, opacity: op, depthWrite: false
-    });
-    const MAT = {
-      0: skin(0x6f7a52), 1: skin(0x8a5a3a), 2: metalMaterial(61, 0x5a6570), 3: skin(0x4a3a52),
-      4: skin(0xe0d8c0, 0x1a1408), 5: skin(0xcfc0a0, 0x1a1408), 6: ghostly(0xc0e0ff, 0x4070a0, 0.55),
-      7: ghostly(0x80c0ff, 0x4aa0ff, 0.85), 8: skin(0x4a4a50), 9: skin(0x4a3a28, 0x0a1a04),
-      10: metalMaterial(63, 0x3a4050), 11: skin(0x6a6a70), 12: ghostly(0xb8e8ff, 0x60b0e0, 0.75),
-      13: skin(0xe8eef4, 0x101820), 14: new THREE.MeshStandardMaterial({ color: 0x2a1a14, roughness: 0.9,
-        emissive: new THREE.Color(0xff4010), emissiveIntensity: 0.9 }),
-      15: skin(0xc04a1a, 0x401000), 16: skin(0xb89a5a), 17: skin(0x8a6a8a), 18: skin(0x2a3a5a),
-      19: ghostly(0xe0d8ff, 0x8070c0, 0.6)
+    // 姿は bestiary.js：部位ごとの色・光る目・金属、手足の動きは頂点シェーダーで
+    const B = buildBestiary();
+    this.mats = [];
+    const addAnim = (im) => {
+      const a = new THREE.InstancedBufferAttribute(new Float32Array(MAX * 4), 4);
+      a.setUsage(THREE.DynamicDrawUsage);
+      im.geometry.setAttribute('aAnim', a);
+      return im;
     };
-    Object.keys(G).forEach(k => { this.meshes[k] = mk(G[k], MAT[k]); });
-    this.meshes[7].castShadow = false; this.meshes[6].castShadow = false;
-    this.meshes[12].castShadow = false; this.meshes[19].castShadow = false;
+    Object.keys(B).forEach(k => {
+      if (k === 'golden') return;
+      const mat = enemyMaterial(B[k].opt);
+      this.mats.push(mat);
+      const im = addAnim(mk(B[k].geo, mat));
+      im.customDepthMaterial = mat.userData.depth;
+      if (B[k].opt.opacity != null && B[k].opt.opacity < 1) im.castShadow = false;
+      im.userData.gait = B[k].opt.gait || 0;
+      this.meshes[k] = im;
+    });
 
-    // 隠しの間に眠る黄金の守り手（専用の姿）
-    this.goldMesh = new THREE.InstancedMesh(
-      this.meshes[EnemyKind.SHIELD].geometry,
-      new THREE.MeshStandardMaterial({
-        color: 0xffcf4a, emissive: new THREE.Color(0xff9a10), emissiveIntensity: 1.6,
-        roughness: 0.2, metalness: 0.95
-      }), 2);
+    // 隠しの間に眠る黄金の守り手（専用の姿：金の甲冑の巨兵）
+    const gm = enemyMaterial(B.golden.opt);
+    this.mats.push(gm);
+    this.goldMesh = new THREE.InstancedMesh(B.golden.geo, gm, 2);
     this.goldMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    const ga = new THREE.InstancedBufferAttribute(new Float32Array(8), 4);
+    ga.setUsage(THREE.DynamicDrawUsage);
+    this.goldMesh.geometry.setAttribute('aAnim', ga);
+    this.goldMesh.customDepthMaterial = gm.userData.depth;
     this.goldMesh.frustumCulled = false;
     this.goldMesh.castShadow = true;
     this.scene.add(this.goldMesh);
@@ -1071,10 +862,33 @@ export class Enemies {
     return best ? new THREE.Vector3(best.p.x, this._cy(best), best.p.z) : null;
   }
 
+  /** 歩み・羽ばたき・掴みかかり・怯みの具合を、描く一体ごとに渡す */
+  _anim(e, dt, t, gait) {
+    const px = e._ax == null ? e.p.x : e._ax, pz = e._az == null ? e.p.z : e._az;
+    e._ax = e.p.x; e._az = e.p.z;
+    const v = dt > 0 ? Math.hypot(e.p.x - px, e.p.z - pz) / dt : 0;
+    const want = Math.min(1, v / Math.max(0.6, (e.speed || 2) * 0.55));
+    e._amp = (e._amp || 0) + (want - (e._amp || 0)) * Math.min(1, dt * 8);
+    const spd = gait === 2 ? 7 : gait === 3 ? 2.2 : gait === 4 ? 5.5 : (2.6 + (e.speed || 2) * 1.1) * Math.max(0.2, e._amp);
+    e._ph = (e._ph == null ? e.phase : e._ph) + dt * spd;
+    let near = 0;
+    if (this._tgt) {
+      const sp = SPEC[e.kind] || SPEC[0];
+      const d = Math.hypot(this._tgt.x - e.p.x, this._tgt.z - e.p.z);
+      near = d < (sp.dmgR || 1.2) + 1.4 ? 1 : 0;
+    }
+    e._atk = (e._atk || 0) + (near - (e._atk || 0)) * Math.min(1, dt * 6);
+    const hurt = e.ash > 0 ? 0.6 : (e.stagger > 0 ? Math.min(1, e.stagger * 3) : 0);
+    return [e._ph, gait === 2 || gait === 3 ? 1 : e._amp, e._atk, hurt];
+  }
+
   _sync() {
     const counts = {};
     Object.keys(this.meshes).forEach(k => counts[k] = 0);
     const t = performance.now() / 1000;
+    const dt = Math.min(0.1, Math.max(0, t - (this._lt || t)));
+    this._lt = t;
+    if (this.mats) this.mats.forEach(m => { m.userData.uTime.value = t; });
     for (const e of this.list) {
       if (e.golden) continue;          // 黄金は専用の姿で描く
       if (e.elite) {
@@ -1108,6 +922,8 @@ export class Enemies {
       this._s.set(scale, scale, scale);
       this._m.compose(this._v, this._q, this._s);
       im.setMatrixAt(idx, this._m);
+      const aa = im.geometry.attributes.aAnim;
+      if (aa) { const a = this._anim(e, dt, t, im.userData.gait); aa.setXYZW(idx, a[0], a[1], a[2], a[3]); }
     }
     Object.keys(this.meshes).forEach(k => {
       const im = this.meshes[k];
@@ -1120,7 +936,9 @@ export class Enemies {
       let gn = 0;
       for (const e of this.list) {
         if (e.dead || !e.golden || gn >= this.goldMesh.count) continue;
-        const sc = (e.ash > 0 ? Math.max(0.01, e.ash) : 1) * 3.2;
+        const sc = (e.ash > 0 ? Math.max(0.01, e.ash) : 1) * 2.4;
+        const ga = this.goldMesh.geometry.attributes.aAnim;
+        if (ga) { const a = this._anim(e, dt, t, 0); ga.setXYZW(gn, a[0], a[1], a[2], a[3]); ga.needsUpdate = true; }
         this._m.makeRotationY(Math.atan2(e.facing ? e.facing.x : 0, e.facing ? e.facing.z : 1));
         this._m.setPosition(e.p.x, e.y + Math.sin(t * 1.6) * 0.12, e.p.z);
         this._m.scale(new THREE.Vector3(sc, sc, sc));
