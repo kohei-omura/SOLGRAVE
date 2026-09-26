@@ -5,6 +5,7 @@
      外部の模型は使わず、基本形の組み合わせだけで組む。
    ══════════════════════════════════════════════════════════════ */
 import * as THREE from 'three';
+import { addSurfaceDetail } from './bestiary.js';
 
 const HP = Math.PI / 2;
 
@@ -25,6 +26,8 @@ export class Kit {
       side: o.ds ? THREE.DoubleSide : THREE.FrontSide,
       depthWrite: o.op == null
     });
+    // 光る部品・透ける部品以外には、斑と細かな凹凸を乗せる（金属は控えめに）
+    if (!(o.ei > 0) && o.op == null) addSurfaceDetail(mt, (o.me || 0) > 0.5 ? 0.35 : 0.9, (o.me || 0) > 0.5 ? 0.12 : 0.28);
     this.mats.push(mt);
     return mt;
   }
@@ -45,19 +48,24 @@ export class Kit {
     (parent || this.root).add(me);
     return me;
   }
-  sphere(rad, mat, p, s, parent, seg) { return this.add(new THREE.SphereGeometry(rad, seg || 14, Math.max(6, (seg || 14) - 2)), mat, p, null, s, parent); }
+  sphere(rad, mat, p, s, parent, seg) { const n = Math.round((seg || 14) * 1.6); return this.add(new THREE.SphereGeometry(rad, n, Math.max(8, n - 4)), mat, p, null, s, parent); }
   box(w, h, d, mat, p, r, parent) { return this.add(new THREE.BoxGeometry(w, h, d), mat, p, r, null, parent); }
-  cyl(a, b, h, mat, p, r, parent, seg) { return this.add(new THREE.CylinderGeometry(a, b, h, seg || 12), mat, p, r, null, parent); }
-  cone(rad, h, mat, p, r, parent, seg) { return this.add(new THREE.ConeGeometry(rad, h, seg || 10), mat, p, r, null, parent); }
-  cap(rad, len, mat, p, r, parent) { return this.add(new THREE.CapsuleGeometry(rad, len, 5, 10), mat, p, r, null, parent); }
-  torus(R, r, mat, p, rot, parent, arc) { return this.add(new THREE.TorusGeometry(R, r, 8, 28, arc || Math.PI * 2), mat, p, rot, null, parent); }
+  cyl(a, b, h, mat, p, r, parent, seg) { return this.add(new THREE.CylinderGeometry(a, b, h, Math.round((seg || 12) * 1.6)), mat, p, r, null, parent); }
+  cone(rad, h, mat, p, r, parent, seg) { return this.add(new THREE.ConeGeometry(rad, h, Math.round((seg || 10) * 1.6)), mat, p, r, null, parent); }
+  cap(rad, len, mat, p, r, parent) { return this.add(new THREE.CapsuleGeometry(rad, len, 8, 18), mat, p, r, null, parent); }
+  torus(R, r, mat, p, rot, parent, arc) { return this.add(new THREE.TorusGeometry(R, r, 12, 44, arc || Math.PI * 2), mat, p, rot, null, parent); }
 
   /** 光る両眼 */
   eyes(parent, y, z, dx, rad, color, n) {
     n = n || 2;
     for (let i = 0; i < n; i++) {
       const x = n === 1 ? 0 : (i / (n - 1) - 0.5) * 2 * dx;
-      this.sphere(rad, this.eyeGlow(color), [x, y, z], null, parent, 8);
+      // 眼窩の窪み（暗い縁）と、光る眼・その芯
+      if (!this._socket) this._socket = this.m(0x0a0608, { r: 0.9 });
+      this.sphere(rad * 1.45, this._socket, [x, y, z - rad * 0.55], [1, 0.8, 0.6], parent, 10);
+      this.sphere(rad, this.eyeGlow(color), [x, y, z], null, parent, 10);
+      if (!this._pupil) this._pupil = this.m(0x050305, { r: 0.3 });
+      this.sphere(rad * 0.35, this._pupil, [x, y, z + rad * 0.8], [1, 1.6, 0.4], parent, 8);
     }
   }
   /** 反り返る角（円錐を連ねる） */

@@ -700,3 +700,30 @@ export function folkMaterial() {
   if (!_folkMat) _folkMat = enemyMaterial({ gait: 0, rough: 0.78, noise: 0.25 });
   return _folkMat;
 }
+
+/* ── 手組みの異形（forms.js）向けの表面の質感 ──
+   色の斑・煤け（色）と、細かな凹凸（法線の揺らぎ）を、部品ごとの座標から作る。
+   amt：斑の強さ、bump：凹凸の強さ */
+export function addSurfaceDetail(mat, amt, bump) {
+  mat.userData.uD = { value: amt == null ? 1 : amt };
+  mat.userData.uB = { value: bump == null ? 0.35 : bump };
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uD = mat.userData.uD; sh.uniforms.uB = mat.userData.uB;
+    sh.vertexShader = 'varying vec3 vDObj;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vDObj = position;');
+    sh.fragmentShader = `uniform float uD; uniform float uB; varying vec3 vDObj;
+float dh3(vec3 p){ p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+float dvn(vec3 x){ vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(dh3(i), dh3(i + vec3(1,0,0)), f.x), mix(dh3(i + vec3(0,1,0)), dh3(i + vec3(1,1,0)), f.x), f.y),
+             mix(mix(dh3(i + vec3(0,0,1)), dh3(i + vec3(1,0,1)), f.x), mix(dh3(i + vec3(0,1,1)), dh3(i + vec3(1,1,1)), f.x), f.y), f.z); }
+` + sh.fragmentShader
+      .replace('#include <color_fragment>', `#include <color_fragment>
+  { float n = dvn(vDObj * 7.0) * 0.55 + dvn(vDObj * 19.0) * 0.3 + dvn(vDObj * 2.5) * 0.15;
+    diffuseColor.rgb *= mix(1.0, 0.66 + n * 0.62, uD); }`)
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+  { vec3 q = vDObj * 16.0;
+    vec3 j = vec3(dvn(q), dvn(q + 17.3), dvn(q + 31.7)) - 0.5;
+    normal = normalize(normal + j * uB); }`);
+  };
+  mat.customProgramCacheKey = () => 'sdetail';
+  return mat;
+}
