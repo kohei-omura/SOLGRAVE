@@ -29,7 +29,7 @@ export const JOBS = {
   },
   swift: {
     id: 'swift', name: '韋駄天', short: '韋',
-    arms: ['dagger', 'katar', 'claw', 'whip', 'ninjato'],
+    arms: ['dagger', 'katar', 'claw', 'whip', 'ninjato', 'shuriken'],
     desc: '風のごとく駆ける。速さと技巧で翻弄する。',
     bias: { AGI: 1.35, DEX: 1.25, CRI: 1.15, LUK: 1.10, HP: 0.85, DEF: 0.80, MATK: 0.9 }
   },
@@ -169,7 +169,8 @@ Object.keys(LEGEND).forEach(id => { if (GEAR[id]) GEAR[id].legend = LEGEND[id].t
 /** 銃以外の武器の種類（未指定は銃） */
 export function wtypeOf(id) {
   const g = GEAR[id];
-  if (!g || g.slot !== 'weapon' || g.who === 'miko') return 'gun';
+  if (!g || g.slot !== 'weapon') return 'gun';
+  if (g.who === 'miko') return 'staff';      // 祓いの道具は、振ると陽の珠を放つ杖として働く
   return g.wtype || 'gun';
 }
 

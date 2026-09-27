@@ -94,9 +94,44 @@ export class Menu {
         this.scene.environmentIntensity = 0.5;
       }).catch(() => {});
     } catch (e) {}
-    // 絵をたたくと顔に寄る／全身に戻る
+    // 自由に鑑賞する：指でなぞると回り、二本指でつまむと寄る・離れる、二度たたくと元へ。
+    // （ホイールでも寄れる。たたくだけなら顔と全身を行き来する）
     this.closeUp = false;
-    cv.addEventListener('click', () => { this.closeUp = !this.closeUp; });
+    this.view = { rot: 0, zoom: 1, lift: 0, user: 0 };
+    const pts = new Map();
+    let last = null, pinch0 = 0, zoom0 = 1, moved = 0, tapT = 0;
+    cv.style.touchAction = 'none';
+    cv.addEventListener('pointerdown', e => { cv.setPointerCapture(e.pointerId); pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); moved = 0;
+      if (pts.size === 2) { const [a, b] = [...pts.values()]; pinch0 = Math.hypot(a.x - b.x, a.y - b.y); zoom0 = this.view.zoom; } last = { x: e.clientX, y: e.clientY }; });
+    cv.addEventListener('pointermove', e => {
+      if (!pts.has(e.pointerId)) return;
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pts.size >= 2) {
+        const [a, b] = [...pts.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y);
+        if (pinch0 > 0) this.view.zoom = Math.max(0.35, Math.min(3.2, zoom0 * d / pinch0));
+        moved += 10; this.view.user = performance.now();
+      } else if (last) {
+        const dx = e.clientX - last.x, dy = e.clientY - last.y;
+        this.view.rot += dx * 0.012;
+        this.view.lift = Math.max(-0.6, Math.min(0.9, this.view.lift - dy * 0.004));
+        moved += Math.abs(dx) + Math.abs(dy); this.view.user = performance.now();
+        last = { x: e.clientX, y: e.clientY };
+      }
+    });
+    const up = e => {
+      pts.delete(e.pointerId);
+      if (pts.size === 0) {
+        if (moved < 6) {
+          const now = performance.now();
+          if (now - tapT < 320) { this.view = { rot: 0, zoom: 1, lift: 0, user: 0 }; this.closeUp = false; }
+          else this.closeUp = !this.closeUp;
+          tapT = now;
+        }
+        last = null; pinch0 = 0;
+      } else { const v = [...pts.values()][0]; last = { x: v.x, y: v.y }; }
+    };
+    cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+    cv.addEventListener('wheel', e => { e.preventDefault(); this.view.zoom = Math.max(0.35, Math.min(3.2, this.view.zoom * (e.deltaY > 0 ? 0.9 : 1.1))); this.view.user = performance.now(); }, { passive: false });
     this._built = true;
     return true;
   }
@@ -141,10 +176,15 @@ export class Menu {
         this.camera.aspect = w / h;
         this.camera.updateProjectionMatrix();
       }
-      this.holder.rotation.y += this.closeUp ? 0.002 : 0.006;
-      // 顔に寄る（主人公は背が高いので少し上）
-      const fy = this.who === 'hero' ? 1.78 : 1.56;
-      const want = this.closeUp ? { y: fy, z: 0.95, ly: fy - 0.03 } : { y: 1.5, z: 5.4, ly: 1.2 };
+      // 触っていない間だけ、ゆっくり回る
+      const V = this.view || { rot: 0, zoom: 1, lift: 0, user: 0 };
+      if (performance.now() - V.user > 4000) V.rot += this.closeUp ? 0.002 : 0.005;
+      this.holder.rotation.y += (V.rot - this.holder.rotation.y) * 0.25;
+      // 顔に寄る（男は背が高いので少し上）
+      const fy = (this.tallOf ? this.tallOf(this.party[this.who]) : this.who === 'hero') ? 1.78 : 1.56;
+      const base = this.closeUp ? { y: fy, z: 0.95, ly: fy - 0.03 } : { y: 1.5, z: 5.4, ly: 1.2 };
+      const z = Math.max(0.45, base.z / V.zoom);
+      const want = { y: base.y + V.lift * (z * 0.35), z, ly: base.ly + (V.zoom > 1.6 && !this.closeUp ? (fy - 0.2 - base.ly) * Math.min(1, (V.zoom - 1.6) / 1.2) : 0) };
       this.camera.position.y += (want.y - this.camera.position.y) * 0.2;
       this.camera.position.z += (want.z - this.camera.position.z) * 0.2;
       this._ly = (this._ly == null ? 1.2 : this._ly) + (want.ly - (this._ly == null ? 1.2 : this._ly)) * 0.12;
@@ -164,12 +204,14 @@ export class Menu {
     // 誰を見ているか
     document.querySelectorAll('.menu-tab').forEach(b => {
       b.classList.toggle('on', b.dataset.who === this.who);
+      const m = this.party[b.dataset.who];
+      if (m) b.textContent = (b.dataset.who === 'hero' ? '◆ ' : '◇ ') + m.name;
     });
 
     const nameEl = document.getElementById('menu-name');
     if (nameEl) nameEl.textContent = c.name;
     const jobEl = document.getElementById('menu-job');
-    if (jobEl) jobEl.textContent = c.job || '（職はまだ定まっていない）';
+    if (jobEl) jobEl.textContent = (JOBS[c.job] ? JOBS[c.job].name : c.job) || '（職はまだ定まっていない）';
 
     const lvEl = document.getElementById('menu-lv');
     if (lvEl) lvEl.textContent = c.lv;
@@ -210,7 +252,7 @@ export class Menu {
         '<span class="st-val">' + c.get(k) +
           (c.alloc[k] ? '<i class="st-add">+' + c.alloc[k] + '</i>' : '') + '</span>' +
         '<button class="st-btn" data-k="' + k + '"' + (canUp ? '' : ' disabled') + '>＋</button>' +
-        '<div class="st-desc"><b class="st-eff">' + effectOf(k, c, this.who) + '</b>　' + info.desc + '</div>' +
+        '<div class="st-desc"><b class="st-eff">' + effectOf(k, c, this.healerOf && this.healerOf(c) && this.who === 'miko' ? 'miko' : 'hero') + '</b>　' + info.desc + '</div>' +
         '</div>';
     }).join('');
 
@@ -272,10 +314,11 @@ export class Menu {
     const modTxt = (g) => Object.keys(g.mods || {}).filter(k => g.mods[k])
       .map(k => k + '+' + g.mods[k]).join(' ');
     const RN = ['', '★', '★★', '★★★', '★★★★', '伝説'];
-    const item = (id, cur) =>
-      '<button class="gr-item r' + GEAR[id].rare + (id === cur ? ' on' : '') + '" data-id="' + id + '">' +
+    const item = (id, cur) => {
+      const ok = this.canEquip ? this.canEquip(c, id) : { ok: true };
+      return '<button class="gr-item r' + GEAR[id].rare + (id === cur ? ' on' : '') + (ok.ok ? '' : ' no') + '" data-id="' + id + '"' + (ok.ok ? '' : ' data-why="' + esc(ok.why) + '"') + '>' +
       '<i class="gr-rr">' + RN[GEAR[id].rare] + '</i>' + esc(GEAR[id].name) + '<span class="gr-mod">' + modTxt(GEAR[id]) + '</span>' +
-      (GEAR[id].legend ? '<span class="gr-lg">✦ ' + esc(GEAR[id].legend) + '</span>' : '') + '</button>';
+      (GEAR[id].legend ? '<span class="gr-lg">✦ ' + esc(GEAR[id].legend) + '</span>' : '') + (ok.ok ? '' : '<span class="gr-no">✕ ' + esc(ok.why) + '</span>') + '</button>'; };
     const byRare = (a, b) => GEAR[b].rare - GEAR[a].rare;
     el.innerHTML = SLOTS.map(sl => {
       const cur = c.gear[sl.id];
@@ -304,6 +347,7 @@ export class Menu {
     });
     el.querySelectorAll('.gr-item').forEach(b => {
       b.addEventListener('click', () => {
+        if (b.dataset.why) { if (this.onDeny) this.onDeny(b.dataset.why); return; }
         if (c.equip(b.dataset.id)) { this.render(); if (this.onChange) this.onChange(); }
       });
     });

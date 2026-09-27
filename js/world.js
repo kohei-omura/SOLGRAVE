@@ -268,12 +268,13 @@ export class World {
      街（中央）／ 聖域（西・墓と教会）／ 遺跡（南・階段状の神殿）
      の三つの区画に分ける。
   ──────────────────────────────────────── */
-  buildSurface() {
+  buildSurface(theme) {
     this.clear();
     this.isSurface = true;
     this.torchColor = null;
+    this.theme = theme || { sky: 0xa8bcd4, ground: 0x6f7a4c, props: 'meadow' };
 
-    const ground = patternMaterial('dirt', 0x6f7a4c, 5);   // 草の根が覆う土（草原と地続きに見える緑がかった地面）
+    const ground = patternMaterial('dirt', this.theme.ground || 0x6f7a4c, 5);   // 草の根が覆う土（草原と地続きに見える緑がかった地面）
     const f = new THREE.Mesh(new THREE.PlaneGeometry(220, 220), ground);
     f.rotation.x = -Math.PI / 2; f.receiveShadow = true;
     this.group.add(f);
@@ -432,7 +433,9 @@ export class World {
     this.group.add(em);
 
     this._sky();
-    this._meadow();
+    const pr = this.theme.props || 'meadow';
+    if (['meadow', 'forest', 'sakura', 'city', 'sea'].indexOf(pr) >= 0) this._meadow();
+    else this._scenery(pr);
     // 模様の材質は、形ごとに世界の寸法で UV を貼り直す
     this.group.updateMatrixWorld(true);
     this.group.traverse(o => {
@@ -448,22 +451,38 @@ export class World {
 
   /** 空：天頂の青から地平の白、太陽の光暈（外部画像なし） */
   _sky() {
+    // 地域の空の色：天頂は深く、地平は淡く。星海・魔界は夜空に星を散らす
+    const base = new THREE.Color((this.theme && this.theme.sky) || 0xa8bcd4);
+    const dark = base.r + base.g + base.b < 0.35;
+    const zen = dark ? base.clone().multiplyScalar(0.6) : new THREE.Color(0.16, 0.34, 0.72).lerp(base, 0.35);
+    const hor = dark ? base.clone().lerp(new THREE.Color(0x3a3050), 0.4) : base.clone().lerp(new THREE.Color(0xffffff), 0.35);
     const mat = new THREE.ShaderMaterial({
       side: THREE.BackSide, depthWrite: false, fog: false,
-      uniforms: { sunDir: { value: new THREE.Vector3(18, 30, 12).normalize() } },
+      uniforms: { sunDir: { value: new THREE.Vector3(18, 30, 12).normalize() }, uZen: { value: zen }, uHor: { value: hor }, uStars: { value: dark ? 1 : 0 },
+        uMoon: { value: (this.theme && this.theme.props === 'demon') ? 1 : 0 } },
       vertexShader: `varying vec3 vDir; void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
       fragmentShader: `
-        uniform vec3 sunDir; varying vec3 vDir;
+        uniform vec3 sunDir; uniform vec3 uZen; uniform vec3 uHor; uniform float uStars; uniform float uMoon; varying vec3 vDir;
+        float hsh(vec3 p){ return fract(sin(dot(p, vec3(12.9898, 78.233, 45.164))) * 43758.5453); }
         void main(){
           float h = clamp(vDir.y, -0.2, 1.0);
-          vec3 zen = vec3(0.16, 0.34, 0.72), hor = vec3(0.78, 0.86, 0.94), gnd = vec3(0.55, 0.52, 0.48);
-          vec3 c = mix(hor, zen, pow(max(h, 0.0), 0.55));
+          vec3 gnd = vec3(0.55, 0.52, 0.48) * (1.0 - uStars * 0.8);
+          vec3 c = mix(uHor, uZen, pow(max(h, 0.0), 0.55));
           c = mix(c, gnd, smoothstep(0.0, -0.2, h));
           float s = max(dot(normalize(vDir), sunDir), 0.0);
-          c += vec3(1.0, 0.9, 0.7) * (pow(s, 600.0) * 6.0 + pow(s, 12.0) * 0.35);
-          // 薄い雲
+          c += vec3(1.0, 0.9, 0.7) * (pow(s, 600.0) * 6.0 + pow(s, 12.0) * 0.35) * (1.0 - uStars);
           float cl = sin(vDir.x * 9.0 + vDir.z * 4.0) * sin(vDir.z * 7.0 - vDir.x * 3.0);
-          c = mix(c, vec3(1.0), smoothstep(0.55, 1.0, cl) * smoothstep(0.05, 0.4, h) * 0.35);
+          c = mix(c, vec3(1.0), smoothstep(0.55, 1.0, cl) * smoothstep(0.05, 0.4, h) * 0.35 * (1.0 - uStars));
+          // 星：細かな格子ごとに瞬く点
+          vec3 q = floor(vDir * 220.0);
+          float st = step(0.9965, hsh(q)) * smoothstep(0.0, 0.2, h);
+          c += vec3(0.9, 0.95, 1.0) * st * uStars * 1.6;
+          // 天の川
+          c += vec3(0.25, 0.22, 0.4) * uStars * smoothstep(0.3, 0.0, abs(vDir.x * 0.6 + vDir.y - 0.4)) * 0.35;
+          // 大きな月（魔界は赤、星海は青白）
+          vec3 md = normalize(vec3(-0.5, 0.45, -0.7));
+          float mo = smoothstep(0.9965, 0.9975, dot(normalize(vDir), md));
+          c = mix(c, uMoon > 0.5 ? vec3(1.0, 0.25, 0.2) : vec3(0.85, 0.9, 1.0), mo * uStars);
           gl_FragColor = vec4(c * 1.05, 1.0);
         }`
     });
@@ -471,6 +490,50 @@ export class World {
     sky.frustumCulled = false; sky.renderOrder = -10;
     this.group.add(sky);
     this.sky = sky;
+  }
+
+  /** 草原以外の地域の景色：雪原・砂漠・雲海・魔界・月面 */
+  _scenery(kind) {
+    const rnd = rngFactory(777 + kind.length * 31);
+    const G = this._pg || (this._pg = _propGeos());
+    const free = (x, z) => Math.hypot(x, z) > 36 && !(Math.abs(x) < 8 && z > 0 && z < 104) && !(Math.abs(z) < 6 && x < 0 && x > -60) && Math.hypot(x + 52, z) > 24 && !(Math.abs(x) < 22 && z > 48 && z < 100) && Math.hypot(x, z) < 105;
+    const spots = (n) => { const o = []; for (let i = 0; i < n * 4 && o.length < n; i++) { const x = (rnd() - 0.5) * 200, z = (rnd() - 0.5) * 200; if (free(x, z)) o.push([x, z]); } return o; };
+    const P = (g, m, x, y, z, sc, ry, rx, rz) => this._prop(g, m, x, y, z, ry || 0, sc, rx, rz);
+    if (kind === 'snow') {
+      const snow = fleshMaterial(0xf2f6fc), pine = fleshMaterial(0x2a4a3a), bark = patternMaterial('bark', 0x4a3a2c, 1.0);
+      spots(50).forEach(([x, z]) => { P(G.hemi, snow, x, 0, z, [3 + rnd() * 4, 0.8 + rnd(), 2.5 + rnd() * 3], rnd() * 6); });
+      spots(60).forEach(([x, z]) => { const h = 4 + rnd() * 4; P(G.taper, bark, x, h * 0.2, z, [0.4, h * 0.4, 0.4]);
+        for (let k = 0; k < 4; k++) { P(G.cone, pine, x, h * 0.35 + k * h * 0.17, z, [2.6 - k * 0.5, h * 0.3, 2.6 - k * 0.5]); P(G.cone, snow, x, h * 0.43 + k * h * 0.17, z, [1.8 - k * 0.4, h * 0.12, 1.8 - k * 0.4]); }
+        this.colliders.push({ min: { x: x - 0.5, z: z - 0.5 }, max: { x: x + 0.5, z: z + 0.5 } }); });
+    } else if (kind === 'desert') {
+      const sand = patternMaterial('dirt', 0xe0c088, 4), cactus = fleshMaterial(0x4a7a3a), rock = patternMaterial('rock', 0xb08a60, 2);
+      spots(40).forEach(([x, z]) => P(G.hemi, sand, x, 0, z, [8 + rnd() * 10, 1.5 + rnd() * 2.5, 5 + rnd() * 6], rnd() * 6));
+      spots(40).forEach(([x, z]) => { const h = 2 + rnd() * 2; P(G.cyl, cactus, x, h / 2, z, [0.5, h, 0.5]); P(G.sph, cactus, x, h, z, 0.5);
+        [-1, 1].forEach(sd => { P(G.cyl, cactus, x + sd * 0.55, h * 0.55, z, [0.3, 0.2, 0.3], 0, 0, Math.PI / 2); P(G.cyl, cactus, x + sd * 0.75, h * 0.7, z, [0.3, h * 0.35, 0.3]); });
+        this.colliders.push({ min: { x: x - 0.4, z: z - 0.4 }, max: { x: x + 0.4, z: z + 0.4 } }); });
+      spots(20).forEach(([x, z]) => P(G.rock, rock, x, 0.6, z, [3 + rnd() * 3, 2 + rnd() * 2, 3], rnd() * 6));
+    } else if (kind === 'clouds') {
+      const cloud = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, emissive: new THREE.Color(0x8090b0), emissiveIntensity: 0.25 });
+      const gold = metalMaterial(611, 0xd8b040), marble = patternMaterial('marble', 0xf4f0e8, 2.5, { rough: 0.3 });
+      spots(70).forEach(([x, z]) => { for (let k = 0; k < 4; k++) P(G.sph, cloud, x + (rnd() - 0.5) * 6, -0.5 + rnd() * 1.2, z + (rnd() - 0.5) * 6, [4 + rnd() * 5, 1.5 + rnd(), 3 + rnd() * 4]); });
+      spots(16).forEach(([x, z]) => { P(G.flute, marble, x, 3, z, [1.2, 6, 1.2]); P(G.box, gold, x, 6.2, z, [1.8, 0.4, 1.8]); this.colliders.push({ min: { x: x - 0.7, z: z - 0.7 }, max: { x: x + 0.7, z: z + 0.7 } }); });
+    } else if (kind === 'demon') {
+      const obs = metalMaterial(612, 0x1a1016), red = glowMaterial(0xff2a3a, 1.6), bark = patternMaterial('bark', 0x2a1a1a, 1.0);
+      spots(40).forEach(([x, z]) => { for (let k = 0; k < 3; k++) P(G.shard, obs, x + (rnd() - 0.5) * 2, 1.5, z + (rnd() - 0.5) * 2, [1, 3 + rnd() * 4, 1], rnd() * 6, (rnd() - 0.5) * 0.4); P(G.shard, red, x, 0.4, z, [0.5, 1.2, 0.5]);
+        this.colliders.push({ min: { x: x - 0.8, z: z - 0.8 }, max: { x: x + 0.8, z: z + 0.8 } }); });
+      spots(30).forEach(([x, z]) => { P(G.taper, bark, x, 2, z, [0.5, 4, 0.5]); for (let k = 0; k < 3; k++) P(G.taper, bark, x + Math.sin(k * 2) * 0.8, 3.4, z + Math.cos(k * 2) * 0.8, [0.18, 2, 0.18], k * 2, 0.8); });
+    } else if (kind === 'stars') {
+      const rock = patternMaterial('rock', 0x8a8a94, 3), glass = new THREE.MeshPhysicalMaterial({ color: 0xbfe0ff, roughness: 0.05, transmission: 0, transparent: true, opacity: 0.25, metalness: 0.1 });
+      const ring = fleshMaterial(0x6a6a74);
+      spots(40).forEach(([x, z]) => { const r = 2 + rnd() * 5; P(G.tor, ring, x, 0.05, z, [r * 2, r * 2, 3], 0, Math.PI / 2); P(G.disc, fleshMaterial(0x5a5a64), x, 0.03, z, [r * 1.8, 1, r * 1.8]); });
+      spots(30).forEach(([x, z]) => P(G.rock, rock, x, 0.5, z, [2 + rnd() * 3, 1 + rnd() * 2, 2 + rnd() * 2], rnd() * 6));
+      // 街を覆う硝子の円蓋
+      const dome = new THREE.Mesh(new THREE.SphereGeometry(40, 48, 20, 0, Math.PI * 2, 0, Math.PI / 2), glass);
+      dome.renderOrder = 2; this.group.add(dome);
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(40, 0.4, 8, 96), metalMaterial(613, 0xd8e0e8));
+      rim.rotation.x = Math.PI / 2; this.group.add(rim);
+    }
+    this._flushGeos();
   }
 
   /** 草原と木立ち：道・広場・建物を避けて、外周に草と木を生やす */

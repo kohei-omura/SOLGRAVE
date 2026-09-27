@@ -218,27 +218,72 @@ export function expOf(kind, isBoss) {
   return [16, 22, 34, 20][kind] || 18;
 }
 
-/* ── 保存 ── */
+/* ── 保存 ──
+   仲間全員（members）と、共有の持ち物（bag）、先頭（leader：操作する者）と供（companion）。
+   party.hero ＝ 操作する者、party.miko ＝ 供 として、これまでの作りのまま使える。 */
 const PARTY_KEY = 'solgrave_party';
+export class PartyState {
+  constructor() {
+    this.members = {};
+    this.bag = [];
+    this.recruited = [];
+    this.leader = 'sun';
+    this.companion = 'hiyori';
+  }
+  get hero() { return this.members[this.leader]; }
+  get miko() { return this.members[this.companion]; }
+  /** 仲間に加える（持ち物は皆で共有） */
+  add(def) {
+    if (this.members[def.id]) return this.members[def.id];
+    const c = new Character(def.name, { job: def.job, bias: def.bias });
+    c.id = def.id;
+    c.bag = this.bag;
+    this.members[def.id] = c;
+    if (this.recruited.indexOf(def.id) < 0) this.recruited.push(def.id);
+    return c;
+  }
+  has(id) { return this.recruited.indexOf(id) >= 0; }
+}
 export const Party = {
   save(party) {
     try {
-      const o = {};
-      Object.keys(party).forEach(k => { o[k] = party[k].toJSON(); });
+      const o = { v: 2, leader: party.leader, companion: party.companion, recruited: party.recruited, bag: party.bag, members: {} };
+      Object.keys(party.members).forEach(k => { const j = party.members[k].toJSON(); delete j.bag; o.members[k] = j; });
       localStorage.setItem(PARTY_KEY, JSON.stringify(o));
     } catch (e) {}
   },
+  /** defs：仲間の定義の一覧（roster.js）。はじめの二人は必ず加わる */
   load(defs) {
     let raw = null;
     try { raw = JSON.parse(localStorage.getItem(PARTY_KEY) || 'null'); } catch (e) {}
-    const out = {};
-    Object.keys(defs).forEach(k => {
-      const d = defs[k];
-      out[k] = (raw && raw[k])
-        ? Character.fromJSON(raw[k], d)
-        : new Character(d.name, d);
-    });
-    return out;
+    const P = new PartyState();
+    const byId = {}; defs.forEach(d => { byId[d.id] = d; });
+    if (raw && raw.v === 2) {
+      P.bag.push(...(raw.bag || []));
+      (raw.recruited || []).forEach(id => {
+        const d = byId[id]; if (!d) return;
+        const c = raw.members && raw.members[id] ? Character.fromJSON(raw.members[id], { job: d.job, bias: d.bias }) : new Character(d.name, { job: d.job, bias: d.bias });
+        c.id = id; c.bag = P.bag;
+        P.members[id] = c; P.recruited.push(id);
+      });
+      if (raw.leader && P.members[raw.leader]) P.leader = raw.leader;
+      if (raw.companion && P.members[raw.companion]) P.companion = raw.companion;
+    } else if (raw && (raw.hero || raw.miko)) {
+      // 旧い保存（主人公と日和だけ）を引き継ぐ
+      [['hero', 'sun'], ['miko', 'hiyori']].forEach(([k, id]) => {
+        const d = byId[id]; if (!d || !raw[k]) return;
+        const c = Character.fromJSON(raw[k], { job: d.job, bias: d.bias });
+        (raw[k].bag || []).forEach(g => { if (P.bag.indexOf(g) < 0) P.bag.push(g); });
+        c.id = id; c.bag = P.bag;
+        P.members[id] = c; P.recruited.push(id);
+      });
+    }
+    defs.filter(d => d.start).forEach(d => { if (!P.members[d.id]) P.add(d); });
+    // 職の名前で保存されていた古い形を、職の id に直す
+    Object.keys(P.members).forEach(id => { const c = P.members[id], d = byId[id]; if (d && (!c.job || !JOBS[c.job])) c.job = d.job; });
+    if (!P.members[P.leader]) P.leader = 'sun';
+    if (!P.members[P.companion] || P.companion === P.leader) P.companion = P.recruited.find(id => id !== P.leader) || 'hiyori';
+    return P;
   },
   clear() { try { localStorage.removeItem(PARTY_KEY); } catch (e) {} }
 };

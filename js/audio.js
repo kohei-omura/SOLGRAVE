@@ -39,6 +39,40 @@ const VOICE_PROFILE = {
   weaver:   { g: 'f', pitch: 1.06, rate: 0.88, prefer: /Grandma|O-?Ren|Ayumi/i },         // 機織り・綾
   boy:      { g: 'm', pitch: 1.7,  rate: 1.2,  prefer: /Eddy|Reed/i }                     // 息子・太一
 };
+
+/* 仲間ひとりひとりの声（roster.js の id）。女声は高さ・速さ・声の種類を、男声は低さ・張りを変える */
+Object.assign(VOICE_PROFILE, {
+  sun: VOICE_PROFILE.hero, hiyori: VOICE_PROFILE.miko,
+  seraphina: { g: 'f', pitch: 1.08, rate: 0.98, prefer: /Kyoko|Haruka|Nanami/i },
+  olivia:    { g: 'f', pitch: 1.34, rate: 1.06, prefer: /Shelley|Sayaka|Kyoko/i },
+  sophia:    { g: 'f', pitch: 1.12, rate: 1.1,  prefer: /Nanami|Shelley|O-?Ren/i },
+  mireille:  { g: 'f', pitch: 1.28, rate: 0.9,  prefer: /O-?Ren|Flo|Haruka/i },
+  nagi:      { g: 'f', pitch: 1.5,  rate: 1.0,  prefer: /Flo|Sandy/i },
+  tia:       { g: 'f', pitch: 1.62, rate: 1.22, prefer: /Sandy|Flo/i },
+  marina:    { g: 'f', pitch: 1.4,  rate: 0.92, prefer: /Shelley|Kyoko/i },
+  chloe:     { g: 'f', pitch: 0.98, rate: 0.95, prefer: /O-?Ren|Nanami/i },
+  kaguya:    { g: 'f', pitch: 1.02, rate: 0.86, prefer: /Kyoko|O-?Ren/i },
+  rin:       { g: 'f', pitch: 1.16, rate: 1.04, prefer: /Haruka|Sayaka/i },
+  yuki:      { g: 'f', pitch: 1.26, rate: 0.84, prefer: /O-?Ren|Nanami/i },
+  freya:     { g: 'f', pitch: 0.96, rate: 1.1,  prefer: /Grandma|Kyoko|Ayumi/i },
+  ciel:      { g: 'f', pitch: 1.22, rate: 1.2,  prefer: /Sandy|Sayaka/i },
+  iris:      { g: 'f', pitch: 1.46, rate: 0.94, prefer: /Shelley|Flo/i },
+  luna:      { g: 'f', pitch: 1.2,  rate: 0.88, prefer: /Kyoko|Haruka/i },
+  beatrice:  { g: 'f', pitch: 1.1,  rate: 0.9,  prefer: /O-?Ren|Ayumi/i },
+  noel:      { g: 'f', pitch: 1.36, rate: 0.96, prefer: /Kyoko|Shelley/i },
+  eris:      { g: 'f', pitch: 1.0,  rate: 1.0,  prefer: /Nanami|Haruka/i },
+  stella:    { g: 'f', pitch: 1.56, rate: 1.24, prefer: /Flo|Sandy/i },
+  alicia:    { g: 'f', pitch: 1.3,  rate: 1.02, prefer: /Shelley|Kyoko/i },
+  leon:      { g: 'm', pitch: 1.1,  rate: 1.08, prefer: /Reed|Otoya|Keita/i },
+  kai:       { g: 'm', pitch: 0.9,  rate: 0.92, prefer: /Hattori|Ichiro/i },
+  yuu:       { g: 'm', pitch: 1.28, rate: 1.14, prefer: /Eddy|Otoya/i },
+  gald:      { g: 'm', pitch: 0.64, rate: 0.86, prefer: /Grandpa|Rocko/i },
+  shin:      { g: 'm', pitch: 0.86, rate: 0.9,  prefer: /Hattori|Keita/i },
+  alto:      { g: 'm', pitch: 1.06, rate: 1.04, prefer: /Reed|Otoya/i },
+  val:       { g: 'm', pitch: 0.78, rate: 0.9,  prefer: /Rocko|Ichiro/i },
+  sieg:      { g: 'm', pitch: 0.72, rate: 1.0,  prefer: /Rocko|Grandpa/i },
+  ardo:      { g: 'm', pitch: 0.8,  rate: 0.84, prefer: /Ichiro|Hattori/i }
+});
 const MALE_RE = /Otoya|Hattori|Ichiro|Keita|Eddy|Grandpa|Reed|Rocko|Daichi|Naoki|Takumi|Male|男/i;
 const FEMALE_RE = /Kyoko|O-?Ren|Haruka|Ayumi|Sayaka|Nanami|Mizuki|Flo\b|Grandma|Sandy|Shelley|Female|女/i;
 /** 名前から決まった数を作る（同じ人はいつも同じ声になる） */
@@ -140,6 +174,8 @@ export class Voice {
    */
   say(text, who, opts) {
     if (!this.enabled || !this.supported) return false;
+    // 'hero'＝操作する者、'miko'＝供。いま誰がそこにいるかで声を選ぶ
+    if (this.alias && this.alias[who]) who = this.alias[who];
     opts = opts || {};
     try {
       if (!this.unlocked) this.unlock();

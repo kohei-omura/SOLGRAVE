@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { metalMaterial, glowMaterial, fleshMaterial } from './gfx.js';
 import { buildWeaponModel, buildGun } from './weapons.js';
 import { buildHero } from './figure.js';
-import { dressHero } from './attire.js';
+import { dressHero, dressHeroine } from './attire.js';
 
 /* 武器ごとの構え（手元の向き）。模型は +Z が刃先 */
 const REST = {
@@ -672,7 +672,7 @@ export class Player {
    */
   applyLook(g) {
     this._lookG = g;
-    if (this.avatar) dressHero(this.avatar, g || {});
+    if (this.avatar) (this.female ? dressHeroine : dressHero)(this.avatar, g || {});
     g = g || {};
     const wr = g.weapon || 0, ar = g.armor || 0, cr = g.charm || 0;
 

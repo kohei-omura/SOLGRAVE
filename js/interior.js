@@ -44,7 +44,9 @@ const DEF = {
   inn:   { name: '宿「芹の湯」',       bgm: 'inn',   w: 30, d: 22, floor: 0x8a6a44, wall: 0xe0d0b0 },
   smith: { name: '鍛冶場「鉄爺」',     bgm: 'smith', w: 26, d: 20, floor: 0x4a4038, wall: 0x6a5a4a },
   lib:   { name: '語り部の庵',         bgm: 'lib',   w: 22, d: 18, floor: 0x6a5238, wall: 0xc8b898 },
-  home:  { name: '民家',               bgm: 'home',  w: 22, d: 18, floor: 0xb8a878, wall: 0xe8dcc0 }
+  home:  { name: '民家',               bgm: 'home',  w: 22, d: 18, floor: 0xb8a878, wall: 0xe8dcc0 },
+  guild: { name: '冒険者ギルド',       bgm: 'inn',   w: 32, d: 24, floor: 0x6a4a30, wall: 0xd8c8a8 },
+  myhome:{ name: '我が家',             bgm: 'home',  w: 26, d: 20, floor: 0xb8a878, wall: 0xf0e4c8 }
 };
 
 export class Interior {
@@ -78,7 +80,8 @@ export class Interior {
   _flushGeos() { return World.prototype._flushGeos.call(this); }
 
   /** 家の中を組む */
-  build(kind, variant) {
+  build(kind, variant, opts) {
+    this.opts = opts || {};
     this.clear();
     const D = DEF[kind] || DEF.home;
     this.kind = kind; this.def = D;
@@ -117,6 +120,8 @@ export class Interior {
     else if (kind === 'inn') put(this._inn);
     else if (kind === 'smith') put(this._smith);
     else if (kind === 'lib') put(this._lib);
+    else if (kind === 'guild') put(this._guild);
+    else if (kind === 'myhome') put(this._myhome);
     else put(this._home);
 
     // 部屋全体をほのかに照らす吊り灯り
@@ -410,6 +415,53 @@ export class Interior {
     scroll.position.set(OX, 1.6, OZ - Dp / 2 + 0.3); this.group.add(scroll);
     const ink = new THREE.Mesh(new THREE.CircleGeometry(0.35, 20), fleshMaterial(0x1a1a1a));
     ink.position.set(OX, 1.8, OZ - Dp / 2 + 0.32); this.group.add(ink);
+  }
+
+  /* ── 冒険者ギルド：受付・依頼の掲示板・酒場の卓 ── */
+  _guild(o) {
+    const { W, Dp, wood } = o;
+    const dark = patternMaterial('plank', 0x3a2418, 1.2), gold = metalMaterial(520, 0xc9a227);
+    // 受付の長い台
+    this._box(12, 1.1, 1.1, OX, 0.55, OZ - 4, dark, true);
+    this._box(12.3, 0.08, 1.3, OX, 1.12, OZ - 4, gold);
+    this._folk({ id: 'guild_rc', name: '受付嬢・リーネ', role: '冒険者ギルド', kind: 'guild', hair: 0xd89a5a, cloth: 0x2a3a6a, skin: 0xf6dcc8, long: true, apron: 0xf0ece0,
+      lines: ['冒険者ギルドへようこそ！ 依頼・仲間・編成・交流・住まいのご用はこちらで承ります'] }, OX, OZ - 5.6, 0);
+    // 依頼の掲示板（紙が貼られている）
+    this._box(6, 3, 0.25, OX - 9, 1.8, OZ - Dp / 2 + 0.4, wood, true);
+    for (let i = 0; i < 12; i++) this._prop(this._g('box'), fleshMaterial([0xf0e8d0, 0xe8d8b0, 0xf8f0e0][i % 3]), OX - 11.3 + (i % 6) * 0.9, 1.2 + Math.floor(i / 6) * 1.0, OZ - Dp / 2 + 0.56, (i % 3 - 1) * 0.08, [0.6, 0.8, 0.02]);
+    // 紋章の旗
+    [OX + 4, OX - 4].forEach(x => { this._box(1.6, 3.2, 0.06, x, 3.2, OZ - Dp / 2 + 0.3, fleshMaterial(0x8a1a24)); this._prop(this._g('sph'), gold, x, 3.4, OZ - Dp / 2 + 0.36, 0, [0.6, 0.6, 0.06]); });
+    // 酒場の卓と樽
+    [[-7, 4], [0, 5], [7, 4]].forEach(([x, z]) => { this._table(OX + x, OZ + z, 2.4, 1.4, 0.8, wood); });
+    this._barrel(OX + 12, OZ - 6); this._barrel(OX + 12, OZ - 4.8);
+    for (let i = 0; i < 4; i++) this._chochin(OX - 9 + i * 6, 3.2, OZ + 1, 0xffd89a, 1);
+    // 誘える仲間が酒場に居る
+    (this.opts.locals || []).slice(0, 6).forEach((c, i) => {
+      const t = c.tint || {};
+      this._folk({ id: 'c_' + c.id, charId: c.id, name: c.name, role: c.title, kind: 'recruit', hair: t.hair || 0x2a1a14, cloth: t.top || 0x6a5a8a, skin: 0xf6dcc8, long: c.g === 'f',
+        lines: [c.intro] }, OX - 8 + (i % 3) * 8 + 1.6, OZ + 3 + Math.floor(i / 3) * 2.6, Math.PI);
+    });
+  }
+
+  /* ── 我が家：伴侶と子どもたちが迎える ── */
+  _myhome(o) {
+    const { W, Dp, wood } = o;
+    this._tatami(OX - 4, OZ - 3, 10, 8);
+    this._table(OX - 4, OZ - 3, 2.4, 1.4, 0.45, wood);
+    this._box(3, 0.2, 1.1, OX - 9, 0.2, OZ - Dp / 2 + 0.7, wood, true);
+    for (let i = 0; i < 3; i++) this._prop(this._g('sph'), glowMaterial([0xff8ab0, 0xffe08a, 0xffffff][i], 0.6), OX - 9 + (i - 1) * 0.3, 0.95, OZ - Dp / 2 + 0.7, 0, 0.16);
+    this._fire(OX + W / 2 - 2, 0.25, OZ + 6, 0.4);
+    this._barrel(OX + W / 2 - 1.5, OZ + 3.8);
+    for (let i = 0; i < 3; i++) this._chochin(OX - 8 + i * 8, 2.6, OZ + 2, 0xffe8b8, 0.8);
+    (this.opts.spouses || []).forEach((c, i) => {
+      const t = c.tint || {};
+      this._folk({ id: 'sp_' + c.id, charId: c.id, name: c.name, role: '伴侶', kind: 'spouse', hair: t.hair || 0x14101a, cloth: t.top || 0xfbf8f2, skin: 0xf6dcc8, long: true,
+        lines: ['おかえりなさい'] }, OX - 7 + i * 3.2, OZ + 1.5, Math.PI);
+    });
+    (this.opts.children || []).forEach((ch, i) => {
+      this._folk({ id: 'ch' + i, name: ch.name, role: '子ども', kind: 'child', small: true, hair: ch.hair || 0x2a1a14, cloth: ch.g === 'f' ? 0xe08aa0 : 0x4a6aa0, skin: 0xf8e0cc, long: ch.g === 'f',
+        lines: [ch.g === 'f' ? 'おかえり、お父さん！' : 'お父さん、おかえり！ 今日の冒険の話して！'] }, OX + 2 + i * 1.6, OZ + 3.5, Math.PI);
+    });
   }
 
   /* ── 民家（三つの間取り） ── */
