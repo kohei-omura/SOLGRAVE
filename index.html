@@ -88,6 +88,7 @@
 <!-- HUD -->
 <div id="hud" hidden>
   <div class="hud-left">
+  <div class="hud-party" id="hud-party"></div>
   <div class="hud-hp" id="hud-hp">
     <div class="hp-lb">命</div>
     <div class="hp-bar"><span id="hp-fill"></span></div>
@@ -115,18 +116,20 @@
 <div id="pad" hidden>
   <div class="stick" id="stick-l"><i></i></div>
   <div class="stick" id="stick-r"><i></i></div>
-  <button class="pad-btn" id="btn-dash">ダッシュ</button>
-  <button class="pad-btn" id="btn-charge">溜め</button>
-  <button class="pad-btn pad-sun" id="btn-solar">☀ 太陽</button>
-  <button class="pad-btn pad-heal" id="btn-heal">祓い</button>
-  <button class="pad-btn pad-menu" id="btn-menu">陣中帳</button>
-  <button class="pad-btn pad-skill" id="btn-skill"><span id="sk-nm">技</span><i class="sk-mp"><s id="sk-mp"></s></i><em id="sk-cd"></em></button>
-  <button class="pad-btn pad-sksel" id="btn-sksel" hidden>技⇄</button>
-  <button class="pad-btn pad-talk" id="btn-talk" hidden>話す</button>
-  <button class="pad-btn pad-key" id="btn-key" hidden>🗝 鍵を使う</button>
-  <button class="pad-btn pad-chain" id="btn-chain" hidden>⛓ 鎖を掛ける</button>
+  <button class="pad-btn ic-dash big" id="btn-dash">ダッシュ</button>
+  <button class="pad-btn ic-charge" id="btn-charge">溜め</button>
+  <button class="pad-btn pad-sun ic-solar" id="btn-solar">太陽</button>
+  <button class="pad-btn pad-heal ic-heal" id="btn-heal"><span>祓い</span></button>
+  <button class="pad-btn pad-swap ic-swap small" id="btn-swap" aria-label="操作するキャラを入れ替える"><span>交代</span></button>
+  <button class="pad-btn pad-menu ic-menu small" id="btn-menu">陣中帳</button>
+  <button class="pad-btn pad-map ic-map small" id="btn-map">地図</button>
+  <button class="pad-btn pad-skill ic-skill big" id="btn-skill"><span id="sk-nm">技</span><i class="sk-mp"><s id="sk-mp"></s></i><em id="sk-cd"></em></button>
+  <button class="pad-btn pad-sksel ic-swap small" id="btn-sksel" hidden>技⇄</button>
+  <button class="pad-btn pad-talk ic-talk pill" id="btn-talk" hidden>話す</button>
+  <button class="pad-btn pad-key ic-key pill" id="btn-key" hidden>鍵を使う</button>
+  <button class="pad-btn pad-chain ic-chain pill" id="btn-chain" hidden>鎖を掛ける</button>
   <button class="pad-btn pad-wpn" id="btn-weapon"><b>銃</b>銃</button>
-  <button class="pad-btn pad-stance" id="btn-stance">構 通常</button>
+  <button class="pad-btn pad-stance ic-stance small" id="btn-stance">構 通常</button>
   <div class="wpn-strip" id="wpn-strip" hidden></div>
 </div>
 <div id="fade" class="fade" hidden></div>
@@ -182,6 +185,10 @@
         <label class="btn btn-line btn-sm mdl-pick">選ぶ<input type="file" id="mdl-heroine" accept=".vrm,.glb,.gltf,model/gltf-binary,application/octet-stream" hidden></label>
         <button class="btn btn-line btn-sm" id="mdl-heroine-flip">向き</button>
         <button class="btn btn-line btn-sm" id="mdl-heroine-del">外す</button></div>
+      <div class="mdl-row"><select id="mdl-char" class="mdl-sel"></select><b id="mdl-char-st">色替えの姿</b>
+        <label class="btn btn-line btn-sm mdl-pick">選ぶ<input type="file" id="mdl-char-f" accept=".vrm,.glb,.gltf,model/gltf-binary,application/octet-stream" hidden></label>
+        <button class="btn btn-line btn-sm" id="mdl-char-del">外す</button></div>
+      <p class="note">仲間ひとりひとりに、専用の VRoid の模型を入れられます（入れるまでは、主人公・日和の体を色替えした姿で現れます）。</p>
       <p class="note">VRoid Hub などで入手したモデルを選ぶと、その姿で遊べます。ファイルはこの端末の中にだけ保存され、どこにも送られません。モデルごとの利用条件をご確認ください。</p>
     </div>
     <label class="row"><span>練習モード</span>
@@ -213,6 +220,34 @@
       <button id="res-retry" class="btn btn-fill">もう一度</button>
       <button id="res-title" class="btn btn-line">タイトルへ</button>
     </div>
+  </div>
+</div>
+
+<!-- 冒険者ギルド -->
+<div id="guild" class="overlay gd" hidden>
+  <div class="gd-in">
+    <div class="gd-head">
+      <div class="gd-title">冒険者ギルド</div>
+      <div id="gd-rank" class="gd-rank"></div>
+      <button id="guild-close" class="gd-x" aria-label="閉じる">✕</button>
+    </div>
+    <div class="gd-tabs">
+      <button class="gd-tab on" data-t="quest">依頼</button>
+      <button class="gd-tab" data-t="recruit">仲間</button>
+      <button class="gd-tab" data-t="party">編成</button>
+      <button class="gd-tab" data-t="bond">交流</button>
+      <button class="gd-tab" data-t="home">住まい</button>
+    </div>
+    <div id="gd-body" class="gd-body"></div>
+  </div>
+</div>
+
+<!-- 世界の地図 -->
+<div id="atlas" class="overlay gd" hidden>
+  <div class="gd-in at-in">
+    <div class="gd-head"><div class="gd-title">世界の地図</div><span style="flex:1"></span><button id="atlas-close" class="gd-x" aria-label="閉じる">✕</button></div>
+    <div id="atlas-body" class="at-body"></div>
+    <div id="atlas-info" class="at-info"></div>
   </div>
 </div>
 

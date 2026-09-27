@@ -79,8 +79,8 @@ export function talkTo(n) {
 }
 
 /* 街の家の種類（家の並び順に対応）。中に入ると場面が切り替わる */
-export const HOUSE_KIND = ['home', 'shop', 'smith', 'home', 'inn', 'home', 'home', 'lib', 'home', 'home', 'home'];
-const SIGN = { shop: '道具', inn: '宿', smith: '鍛冶', lib: '書' };
+export const HOUSE_KIND = ['home', 'shop', 'smith', 'home', 'inn', 'guild', 'home', 'lib', 'home', 'home', 'home'];
+const SIGN = { shop: '道具', inn: '宿', smith: '鍛冶', lib: '書', guild: 'ギルド', myhome: '我が家' };
 
 export class Town {
   constructor(scene, particles) {
@@ -109,13 +109,21 @@ export class Town {
   }
 
   /** 街を建てる。colliders は world のものを借りる */
-  build(colliders) {
+  /**
+   * @param region atlas.js の街（色・家の形・住人）。無ければ陽ノ里
+   * @param opts { locals: その街で出会える仲間の定義[], homeHere: この街に自宅があるか }
+   */
+  build(colliders, region, opts) {
     this.clear();
-    const wall = patternMaterial('plaster', 0xe8e0cc, 2.5);
-    const roof = patternMaterial('roof', 0x4a4a58, 1.4, { rough: 0.8, metal: 0.2 });
+    opts = opts || {};
+    const T = (region && region.theme) || {};
+    const style = T.style || 'wa';
+    this.region = region || null;
+    const wall = patternMaterial('plaster', T.plaster || 0xe8e0cc, 2.5);
+    const roof = patternMaterial('roof', T.roof || 0x4a4a58, 1.4, { rough: 0.8, metal: 0.2 });
     const wood = patternMaterial('plank', 0x4a3424, 1.2);
-    const base = patternMaterial('block', 0x8a8478, 1.6);
-    const beam = patternMaterial('plank', 0x2e2018, 1.0);
+    const base = patternMaterial('block', style === 'moon' ? 0x9aa0b0 : 0x8a8478, 1.6);
+    const beam = patternMaterial('plank', T.timber || 0x2e2018, 1.0);
 
     const box = (w, h, d, x, y, z, mat, solid) => {
       const g = new THREE.BoxGeometry(w, h, d);
@@ -142,7 +150,8 @@ export class Town {
     houses.forEach((h, i) => {
       const [x, z, w, d] = h;
       const ht = 3.4 + (i % 3) * 0.6;
-      const kind = HOUSE_KIND[i] || 'home';
+      let kind = HOUSE_KIND[i] || 'home';
+      if (i === 3 && opts.homeHere) kind = 'myhome';     // 買った我が家
       // 外観は閉じた家。南面の戸口から中へ入ると、家ごとの内部へ場面が移る
       box(w, ht, d, x, ht / 2, z, wall, true);
       // 腰板と柱
@@ -155,7 +164,7 @@ export class Town {
       const noren = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 0.9),
         new THREE.MeshStandardMaterial({ color: kind === 'home' ? 0x3a4a6a : 0xb3424a, side: THREE.DoubleSide, roughness: 0.9 }));
       noren.position.set(x, 2.15, z + d / 2 + 0.14);
-      this.group.add(noren);
+      if (style === 'wa') this.group.add(noren);
       // 看板（店だけ）
       if (SIGN[kind]) {
         const cv = document.createElement('canvas'); cv.width = 128; cv.height = 64;
@@ -188,8 +197,21 @@ export class Town {
       box(w + 0.2, 0.24, 0.26, x, ht - 0.1, z + d / 2 + 0.03, beam, false);
       box(w + 0.2, 0.24, 0.26, x, ht - 0.1, z - d / 2 - 0.03, beam, false);
       [-1, 1].forEach(k => box(0.26, 0.24, d + 0.2, x + k * (w / 2 + 0.03), ht - 0.1, z, beam, false));
+      if (style === 'desert') {
+        // 平屋根と胸壁（砂の街）
+        box(w + 0.6, 0.3, d + 0.6, x, ht + 0.15, z, beam, false);
+        for (let q = -2; q <= 2; q++) box(0.5, 0.5, 0.3, x + q * (w / 4), ht + 0.55, z + d / 2 + 0.2, wall, false);
+        const dm = new THREE.Mesh(new THREE.SphereGeometry(Math.min(w, d) * 0.28, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2), roof);
+        dm.position.set(x, ht + 0.3, z); this.group.add(dm);
+      } else if (style === 'moon' || style === 'sky') {
+        // 円蓋の屋根と細い尖塔（月面・天空）
+        const dm = new THREE.Mesh(new THREE.SphereGeometry(Math.max(w, d) * 0.55, 28, 14, 0, Math.PI * 2, 0, Math.PI / 2), roof);
+        dm.scale.set(1, 0.55, d / w); dm.position.set(x, ht, z); dm.castShadow = true; this.group.add(dm);
+        const sp = new THREE.Mesh(new THREE.ConeGeometry(0.12, 1.6, 8), glowMaterial(style === 'sky' ? 0xffe08a : 0x8ad0ff, 2));
+        sp.position.set(x, ht + Math.max(w, d) * 0.3 + 0.8, z); this.group.add(sp);
+      } else {
       // 切妻屋根（瓦葺き・深い軒）。棟は東西に通す
-      const rw = w / 2 + 0.9, rh = 2.0, rd = d + 1.4;
+      const rw = w / 2 + 0.9, rh = (style === 'west' || style === 'snow' || style === 'demon') ? 3.2 : style === 'elf' ? 2.6 : 2.0, rd = d + 1.4;
       const shape = new THREE.Shape();
       shape.moveTo(-rw, 0); shape.lineTo(0, rh); shape.lineTo(rw, 0); shape.lineTo(rw - 0.25, -0.12); shape.lineTo(0, rh - 0.3); shape.lineTo(-rw + 0.25, -0.12); shape.closePath();
       const rg = new THREE.ExtrudeGeometry(shape, { depth: rd, bevelEnabled: false });
@@ -211,6 +233,7 @@ export class Town {
         this.group.add(new THREE.Mesh(gg, wall));
       });
       box(w + 1.9, 0.26, 0.3, x, ht + rh - 0.02, z, beam, false);
+      }
       // 障子窓（灯り）
       [-1, 1].forEach(sx => {
         const win = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 0.8),
@@ -258,7 +281,25 @@ export class Town {
 
     // ── 住人 ──
     // 店の者と語り部は家の中にいる
-    TOWNSFOLK.filter(d => !d.indoor).forEach(def => this._addNpc(def, colliders));
+    if (!region || region.id === 'hinomori') TOWNSFOLK.filter(d => !d.indoor).forEach(def => this._addNpc(def, colliders));
+    // その街で出会える仲間（まだ加わっていない者）が広場に立つ。話すとギルドで誘える
+    (opts.locals || []).forEach((c, i) => {
+      const a = (i / Math.max(1, opts.locals.length)) * Math.PI * 2 + 0.4;
+      const t = c.tint || {};
+      const def = { id: 'c_' + c.id, charId: c.id, name: c.name, role: c.title, kind: 'recruit',
+        x: Math.cos(a) * 11, z: Math.sin(a) * 11 - 2, face: -a - Math.PI / 2,
+        hair: t.hair || 0x2a1a14, cloth: t.top || 0x6a5a8a, skin: 0xf6dcc8, long: c.g === 'f', small: false,
+        lines: [c.intro, '冒険者ギルドで声をかけてくれたら、一緒に行ってもいいよ'] };
+      this._addNpc(def, colliders);
+    });
+    // 住人（どの街にも少し）
+    if (region && region.id !== 'hinomori') {
+      [['旅の商人', 0x5a6a4a, 0x2a2a2a], ['街の娘', 0xd88aa0, 0x3a2018], ['衛兵', 0x4a5a7a, 0x1a1a1a]].forEach(([nm, cloth, hair], i) => {
+        this._addNpc({ id: 'cit' + i, name: nm, role: region.name + 'の住人', kind: 'talk', x: -8 + i * 8, z: 12, face: Math.PI,
+          hair, cloth, skin: 0xf0d0b0, long: i === 1,
+          lines: [region.desc, 'ようこそ、' + region.name + 'へ', '冒険者ギルドは東の大きな建物だよ'] }, colliders);
+      });
+    }
     this.built = true;
     return this;
   }

@@ -6,7 +6,8 @@
 import * as THREE from 'three';
 import { fleshMaterial, glowMaterial, metalMaterial } from './gfx.js';
 import { buildHeroine } from './figure.js';
-import { dressHeroine } from './attire.js';
+import { dressHeroine, dressHero } from './attire.js';
+import { buildWeaponModel, buildGun } from './weapons.js';
 
 export class Miko {
   constructor(scene, particles) {
@@ -117,7 +118,7 @@ export class Miko {
     g = g || {};
     this._lookG = g;
     const wr = g.weapon || 0, ar = g.armor || 0, cr = g.charm || 0;
-    if (this.avatar) dressHeroine(this.avatar, g);
+    if (this.avatar) (this.male ? dressHero : dressHeroine)(this.avatar, g);
     const key = wr + '|' + ar + '|' + cr + '|' + (g.pal ? g.pal.halo : '') + '|' + (g.cpal ? g.cpal.mote : '');
     if (this._lookKey === key) { if (this.look) this.look.visible = !this.avatar; return; }
     this._lookKey = key;
@@ -130,7 +131,7 @@ export class Miko {
 
     // ── 祓いの道具（杖の先を飾る） ──
     if (this.tipGroup) this.staff.remove(this.tipGroup);
-    const tip = new THREE.Group(); tip.position.y = 0.86; this.staff.add(tip); L.userData.tip = tip;
+    const tip = new THREE.Group(); tip.position.y = 0.86; tip.visible = !this.fighter; this.staff.add(tip); L.userData.tip = tip;
     this.staffRing.material = (wr >= 3) ? gold : metalMaterial(94, 0xc9a227);
     if (wr >= 1) for (let i = 0; i < 3 + wr * 2; i++) {
       const a = i / (3 + wr * 2) * Math.PI * 2;
@@ -240,6 +241,30 @@ export class Miko {
     this.fig.root.visible = !rig;
     if (this.bell) this.bell.visible = !rig;
     if (rig) this.group.add(rig.root);
+    if (this._lookG) this.applyLook(this._lookG);
+  }
+
+  /**
+   * 供の役どころを定める。癒し手は祓いの杖、戦い手は自分の武器を手に持つ。
+   * male：男の体（装身具の付け方が変わる）
+   */
+  setRole(role, male, wtype, rare, glow) {
+    this.fighter = role !== 'healer';
+    this.male = !!male;
+    const key = [role, male, wtype, rare, glow].join('|');
+    if (key === this._roleKey) return;
+    this._roleKey = key;
+    this.staff.children.forEach(o => { if (o !== this._fw) o.visible = !this.fighter; });
+    if (this._fw) { this.staff.remove(this._fw); this._fw = null; }
+    if (this.fighter) {
+      const m = wtype === 'gun' ? buildGun(rare || 0) : buildWeaponModel(wtype || 'sword', Math.max(1, rare || 1), glow);
+      m.scale.setScalar(wtype === 'gun' ? 1.2 : 1.25);
+      m.rotation.x = wtype === 'gun' ? 0 : -Math.PI / 2;   // 刃先を上へ（銃は前へ）
+      m.position.y = wtype === 'gun' ? 0.2 : 0.25;
+      this.staff.add(m);
+      this._fw = m;
+    }
+    if (this._lookKey) this._lookKey = null;
     if (this._lookG) this.applyLook(this._lookG);
   }
 

@@ -32,6 +32,8 @@ function tx(mode, fn) {
  * iPhone の Safari は記憶が足りなくなると画面ごと落とすため、見た目の差がほとんど無い大きさへ詰める。
  */
 const _shrunk = new WeakSet();
+const _TEX = new Map();      // 模型の絵の使い回し（模型の鍵｜材質名｜差し込み口）
+const _BUF = new Map();      // 読み込んだ模型の中身（同じ物を何度も取りに行かない）
 function shrinkTexture(tex, max) {
   max = max || 1024;
   const img = tex && tex.image;
@@ -93,7 +95,33 @@ export async function loadAvatar(who, height) {
   return buildRig(await r.arrayBuffer(), height, false, who === 'hero' ? '陽光狩人（同梱）' : '日和（同梱）');
 }
 
-export async function buildRig(buf, height, flip, name) {
+/**
+ * 仲間ひとりぶんの模型を読む。その人専用の模型（設定で入れた物）があればそれを、
+ * 無ければ土台の体（男：hero／女：heroine）を読み、人ごとの色に染める。
+ */
+export async function loadCharacterRig(def, height) {
+  const own = await ModelStore.load('c_' + def.id);
+  if (own && own.buf) return buildRig(own.buf, height, own.flip, own.name, 'c_' + def.id);
+  const key = def.base === 'hero' ? 'hero' : 'heroine';
+  // 主人公・日和は、これまで通り設定で差し替えた模型も使える
+  if (def.id === 'sun' || def.id === 'hiyori') {
+    const rec = await ModelStore.load(key);
+    if (rec && rec.buf) return buildRig(rec.buf, height, rec.flip, rec.name, 'u_' + key);
+    if (localStorage.getItem('solgrave_nomodel_' + key) === '1') return null;
+  }
+  let buf = _BUF.get(key);
+  if (!buf) {
+    const r = await fetch(BUNDLED[key]);
+    if (!r.ok) return null;
+    buf = await r.arrayBuffer();
+    _BUF.set(key, buf);
+  }
+  const rig = await buildRig(buf.slice(0), height, false, def.name, 'b_' + key);
+  if (rig && def.tint) rig.applyTint(def.tint);
+  return rig;
+}
+
+export async function buildRig(buf, height, flip, name, texKey) {
   const { GLTFLoader, SK, VRM } = await libs();
   const loader = new GLTFLoader();
   if (VRM) loader.register(p => new VRM.VRMLoaderPlugin(p));
@@ -108,13 +136,13 @@ export async function buildRig(buf, height, flip, name) {
   } else {
     root = gltf.scene;
   }
-  return new AvatarRig(root, vrm, gltf.animations, height, flip, SK, name);
+  return new AvatarRig(root, vrm, gltf.animations, height, flip, SK, name, texKey);
 }
 
 /* ── 動かす仕組み ── */
 export class AvatarRig {
-  constructor(model, vrm, clips, height, flip, SK, name) {
-    this.vrm = vrm; this.SK = SK; this.name = name || '';
+  constructor(model, vrm, clips, height, flip, SK, name, texKey) {
+    this.vrm = vrm; this.SK = SK; this.name = name || ''; this.texKey = texKey || null;
     this.root = new THREE.Group();          // 足元が原点、正面 +Z
     this.holder = new THREE.Group();
     this.root.add(this.holder);
@@ -138,8 +166,18 @@ export class AvatarRig {
           roughness: 0.72, metalness: 0
         });
         n.envMapIntensity = 0.45;
+        n.name = m.name || '';
+        // 同じ模型をもう一体読んだ時は、先に読んだ絵を使い回す（記憶を二重に使わない）
+        if (this.texKey) {
+          ['map', 'normalMap', 'emissiveMap'].forEach(slot => {
+            if (!n[slot]) return;
+            const k = this.texKey + '|' + n.name + '|' + slot;
+            const had = _TEX.get(k);
+            if (had) { if (n[slot] !== had) { const img = n[slot].image; if (img && img.close) img.close(); n[slot].dispose(); } n[slot] = had; }
+            else { shrinkTexture(n[slot]); _TEX.set(k, n[slot]); }
+          });
+        } else [n.map, n.normalMap, n.emissiveMap].forEach(shrinkTexture);
         if (n.map) n.map.colorSpace = THREE.SRGBColorSpace;
-        [n.map, n.normalMap, n.emissiveMap].forEach(shrinkTexture);
         conv.set(m, n);
         return n;
       };
@@ -364,6 +402,46 @@ export class AvatarRig {
   }
 
   /** 陣中帳に映す複製（骨ごと複製する） */
+  /**
+   * 色替え：髪・瞳・上衣・差し色・下衣・靴を、元の絵の明暗を保ったまま別の色に染める。
+   * 同じ体の模型を、人ごとに違う姿に見せるための仕組み（人ごとの模型が入れば不要）。
+   * tint: { hair, eye, top, accent, bottom, shoes } いずれも 0xRRGGBB、無い物は元のまま
+   */
+  applyTint(tint) {
+    this.tint = tint || null;
+    const pick = (nm) => {
+      if (!tint) return null;
+      if (/Hair/i.test(nm) || /FaceBrow/i.test(nm)) return tint.hair;
+      if (/EyeIris/i.test(nm)) return tint.eye;
+      if (/Tops_\d+_CLOTH(_01)?\b|Tops_01_CLOTH_01|Onepiece/i.test(nm)) return tint.top;
+      if (/Tops/i.test(nm) || /Accessory/i.test(nm)) return tint.accent;
+      if (/Bottoms/i.test(nm)) return tint.bottom;
+      if (/Shoes/i.test(nm)) return tint.shoes;
+      return null;
+    };
+    this.model.traverse(o => {
+      if (!o.isMesh) return;
+      const one = (m) => {
+        if (!m) return m;
+        const base = m.userData.tintBase || m;
+        const col = pick(base.name || '');
+        if (col == null) return base;
+        const n = base.clone();
+        n.userData.tintBase = base;
+        n.userData.uTint = { value: new THREE.Color(col) };
+        n.onBeforeCompile = sh => {
+          sh.uniforms.uTint = n.userData.uTint;
+          sh.fragmentShader = 'uniform vec3 uTint;\n' + sh.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
+  { float l = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
+    diffuseColor.rgb = clamp(uTint * (0.28 + l * 1.5), 0.0, 1.0); }`);
+        };
+        n.customProgramCacheKey = () => 'tint';
+        return n;
+      };
+      o.material = Array.isArray(o.material) ? o.material.map(one) : one(o.material);
+    });
+  }
+
   makePortrait() {
     const g = new THREE.Group();
     const c = this.SK.clone(this.holder);

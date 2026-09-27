@@ -10,7 +10,7 @@ import { Enemies, Bullets, Particles, EnemyKind, Hostile, specOf } from './enemy
 import { WEAPONS, WEAPON_ORDER, GUN_STANCES, STANCE_ORDER, SlashFX, inShape } from './weapons.js';
 import { Interior } from './interior.js';
 import { ELITES } from './forms.js';
-import { ModelStore, loadAvatar } from './avatar.js';
+import { ModelStore, loadAvatar, loadCharacterRig } from './avatar.js';
 import { Boss } from './boss.js';
 import { Coffin } from './coffin.js';
 import { Purifier, Step } from './purifier.js';
@@ -19,6 +19,10 @@ import { Solar, SOLAR_DMG_MUL } from './solar.js';
 import { Party, expOf, STAT_KEYS } from './stats.js';
 import { SKILLS, GEAR, JOBS, rollGear, wtypeOf } from './jobs.js';
 import { legendOf } from './legend.js';
+import { Guild } from './guild.js';
+import { GuildUI } from './guildui.js';
+import { REGION, MODE_NAME } from './atlas.js';
+import { CHARACTERS, CHAR, charOf, RANKS, RANK_NAME, RANK_FOR_RARE, rankIndex } from './roster.js';
 import { Town, talkTo } from './town.js';
 import { Minimap } from './minimap.js';
 import { Menu } from './menu.js';
@@ -64,6 +68,7 @@ class Game {
   async boot() {
     window.__solStarted = true;
     UI.init();
+    try { this.guildUI = new GuildUI(this); } catch (e) { console.error(e); }
     UI.boot(10, '描画を用意しています…');
 
     const canvas = document.getElementById('view');
@@ -120,21 +125,28 @@ class Game {
         this.coin = pr.coin || 0;
       }
     } catch (e) {}
-    this.party = Party.load({
-      hero: { name: '陽光狩人', job: '狩人', bias: { ATK: 1.15, DEX: 1.1, AGI: 1.05, MATK: 0.85, MP: 0.8 } },
-      miko: { name: '日和', job: '巫女', bias: { MATK: 1.25, MP: 1.3, MDEF: 1.15, ATK: 0.7, DEF: 0.85 } }
-    });
+    this.party = Party.load(CHARACTERS);
+    this.guild = Guild.load();
+    if (!REGION[this.guild.town]) this.guild.town = 'hinomori';
+    // ギルドができる前から潜っていた人は、到達した深さに見合う等級から始める（装備が外れないように）
+    if (!this.guild._init) {
+      this.guild._init = true;
+      const f = this.maxFloor || 1;
+      const pts = f >= 40 ? 3000 : f >= 25 ? 1600 : f >= 15 ? 800 : f >= 8 ? 360 : f >= 4 ? 120 : 0;
+      if (pts) this.guild.addPts(pts); else this.guild.save();
+    }
     this.menu = new Menu(this.party, {
       hero: () => this.player.makePortrait(),
       miko: () => this.miko.makePortrait()
     });
-    // はじめての装備（日和にも三枠）
-    const h0 = this.party.hero, m0 = this.party.miko;
-    if (h0.bag.indexOf('w0') < 0) h0.pick('w0');
-    if (!h0.gear.weapon) h0.equip('w0');
-    ['mw0', 'ma0', 'mt0'].forEach(id => { m0.pick(id); if (!m0.gear[GEAR[id].slot] || (GEAR[m0.gear[GEAR[id].slot]] || {}).who !== 'miko') m0.equip(id); });
-    this.menu.onChange = () => { Party.save(this.party); this.applyStats(); };
+    // 仲間それぞれの、はじめの装備
+    this.outfitMembers();
+    this.menu.onChange = () => { this.outfitMembers(); Party.save(this.party); this.applyStats(); };
     this.menu.onUseKey = () => { this.menu.hide(); this.askUseKey(); };
+    this.menu.canEquip = (c, id) => this.canEquip(c, id);
+    this.menu.onDeny = why => UI.toast('装備できない：' + why, 2400);
+    this.menu.healerOf = c => charOf(c.id).role === 'healer';
+    this.menu.tallOf = c => c && charOf(c.id).g === 'm';
     this.menu.curSkill = () => { const l = this.party.hero.activeSkills(); return l.length ? l[(this._skillSel || 0) % l.length] : null; };
     this.menu.onPickSkill = id => { const l = this.party.hero.activeSkills(); const i = l.indexOf(id); if (i >= 0) { this._skillSel = i; this._skKey = null; } };
 
@@ -162,7 +174,8 @@ class Game {
     this.applyStats();
 
     this.bindModelUI();
-    this.loadAvatars();
+    this.voice.alias = { hero: this.party.leader, miko: this.party.companion };
+    this.loadPartyModels().catch(e => { console.error('模型の読み込みに失敗', e); UI.toast('模型を読み込めませんでした（' + (e && e.message ? e.message : e) + '）', 5000); });
     UI.boot(100, '準備ができました');
     setTimeout(() => {
       UI.hide('boot');
@@ -218,6 +231,10 @@ class Game {
       this.player.setWeapon(this.wtype, rar(h.gear.weapon), lg.w && lg.w.glow);
       this.player.setStance(this.stance);
       this.updateWeaponUI();
+    }
+    if (this.miko && this.miko.setRole) {
+      const C = charOf(this.party.companion);
+      this.miko.setRole(C.role, C.g === 'm', wtypeOf(m.gear.weapon), rar(m.gear.weapon), lg.mw && lg.mw.glow);
     }
     if (this.miko && this.miko.applyLook) {
       this.miko.applyLook({ weapon: rar(m.gear.weapon), armor: rar(m.gear.armor), charm: rar(m.gear.charm),
@@ -280,7 +297,9 @@ class Game {
       this.keys[e.code] = true;
       if (e.code === 'Space') this.onAction();
       if (e.code === 'KeyQ') this.invokeSolar();
-      if (e.code === 'KeyE') this.invokeHeal();
+      if (e.code === 'KeyE') this.invokeAction();
+      if (e.code === 'KeyX') this.swapLeader();
+      if (e.code === 'KeyN' && (this.phase === Phase.SURFACE || this.phase === Phase.INTERIOR)) this.guildUI.showMap();
       if (e.code === 'KeyR') this.useSkill();
       if (e.code === 'KeyT') this.cycleSkill();
       if (e.code === 'KeyV') this.toggleChain();
@@ -410,7 +429,7 @@ class Game {
     }
     const healBtn = document.getElementById('btn-heal');
     if (healBtn) {
-      const go2 = e => { if (e) e.preventDefault(); this.audio.unlock(); this.voice.unlock(); this.invokeHeal(); };
+      const go2 = e => { if (e) e.preventDefault(); this.audio.unlock(); this.voice.unlock(); this.invokeAction(); };
       healBtn.addEventListener('touchstart', go2, { passive: false });
       healBtn.addEventListener('click', go2);
     }
@@ -437,6 +456,20 @@ class Game {
       const go3 = e => { if (e) e.preventDefault(); this.audio.unlock(); this.voice.unlock(); this.useSkill(); };
       skb.addEventListener('touchstart', go3, { passive: false });
       skb.addEventListener('click', go3);
+    }
+    const mpb = document.getElementById('btn-map');
+    if (mpb) {
+      const go8 = e => { if (e) { e.preventDefault(); e.stopPropagation(); } this.audio.unlock();
+        if (this.phase !== Phase.SURFACE && this.phase !== Phase.INTERIOR) { UI.toast('地図は街で開ける（地下からは帰還の陣で戻ろう）'); return; }
+        this.guildUI.showMap(); };
+      mpb.addEventListener('touchstart', go8, { passive: false });
+      mpb.addEventListener('click', go8);
+    }
+    const swb = document.getElementById('btn-swap');
+    if (swb) {
+      const go7 = e => { if (e) { e.preventDefault(); e.stopPropagation(); } this.audio.unlock(); this.swapLeader(); };
+      swb.addEventListener('touchstart', go7, { passive: false });
+      swb.addEventListener('click', go7);
     }
     const chb = document.getElementById('btn-chain');
     if (chb) {
@@ -473,7 +506,7 @@ class Game {
     const h = this.party.hero, best = {}, held = {};
     h.bag.forEach(id => {
       const g = GEAR[id];
-      if (!g || g.slot !== 'weapon' || (g.who || 'hero') !== 'hero') return;
+      if (!g || g.slot !== 'weapon' || !this.canEquip(h, id).ok) return;
       const t = wtypeOf(id);
       if (h.gear.weapon === id) { best[t] = id; held[t] = true; return; }
       if (held[t]) return;
@@ -529,7 +562,7 @@ class Game {
     const wb = document.getElementById('btn-weapon');
     if (wb) wb.innerHTML = '<b>' + W.icon + '</b>' + W.name;
     const sb = document.getElementById('btn-stance');
-    if (sb) { sb.hidden = this.wtype !== 'gun'; sb.textContent = '構 ' + GUN_STANCES[this.stance].name; }
+    if (sb) { sb.hidden = this.wtype !== 'gun'; sb.textContent = GUN_STANCES[this.stance].name; }
     const cb = document.getElementById('btn-charge');
     if (cb) cb.textContent = this.wtype === 'gun' ? '溜め' : (W.kind === 'melee' ? '大技' : '連撃');
   }
@@ -640,11 +673,17 @@ class Game {
       add('武器を打つ', () => { this.closeTalk(); this.openShop('smith'); }, true);
       add('銃を磨く（30陽貨）', () => this.polishGun());
     }
+    if (r.kind === 'guild') {
+      add('依頼・仲間・編成', () => { this.closeTalk(); this.guildUI.show('quest'); }, true);
+      add('交流・住まい', () => { this.closeTalk(); this.guildUI.show('bond'); });
+    }
+    if (r.kind === 'recruit') add('仲間に誘う（ギルドで）', () => { this.closeTalk(); this.guildUI.show('recruit'); }, true);
+    if (r.kind === 'spouse' && n.def.charId) { this.guild.addBond(n.def.charId, 1); }
     add('もう少し話す', () => this.doTalk());
     add('離れる', () => this.closeTalk());
     box.hidden = false;
     // 人ごとに声の質（声の種類・高さ・速さ）を変える（audio.js の VOICE_PROFILE）
-    this.voice.say(r.text.slice(0, 40), n.def.id);
+    this.voice.say(r.text.slice(0, 40), n.def.charId || n.def.id);
   }
   closeTalk() {
     this.talking = null;
@@ -655,6 +694,7 @@ class Game {
   restAtInn() {
     if (this.coin < 20) { UI.toast('陽貨が足りません（' + this.coin + '／20）'); return; }
     this.coin -= 20;
+    { const born = this.guild.nextDay(); if (born) setTimeout(() => this.announceChild(born), 1200); }
     this.player.hp = this.player.maxHp;
     this.player.guard = this.player.guardMax;
     this.heroMp = this.party.hero.maxMp;
@@ -748,7 +788,12 @@ class Game {
     await this.fade(320);
     this._door = door;
     this._outCol = this.world.colliders;
-    this.interior.build(door.kind, door.variant);
+    const G = this.guild;
+    this.interior.build(door.kind, door.variant, {
+      locals: this.localsOf(G.town),
+      spouses: G.spouses.map(id => CHAR[id]).filter(Boolean),
+      children: G.children.map(ch => Object.assign({}, ch, { hair: (CHAR[ch.mother] && CHAR[ch.mother].tint && CHAR[ch.mother].tint.hair) || 0x2a1a14 }))
+    });
     this.world.colliders = this.interior.colliders;
     this.phase = Phase.INTERIOR;
     const sp = this.interior.spawn;
@@ -797,15 +842,19 @@ class Game {
     this._entering = false;
   }
   surfaceLights() {
-    this.sunLight.intensity = 3.0;
-    this.ambient.intensity = 1.5;
-    this.hemi.intensity = 1.1;
-    this.hemi.color.setHex(0xa8bcd8); this.hemi.groundColor.setHex(0x5a5348);
-    // 昼の空と遠くの霞
-    this.gfx.scene.fog.density = 0.0035;
-    this.gfx.scene.background.setHex(0xa8bcd4);
-    this.gfx.scene.fog.color.setHex(0xa8bcd4);
-    this.gfx.scene.environmentIntensity = 0.55;
+    const T = (this.region && this.region.theme) || {};
+    const skyC = T.sky || 0xa8bcd4;
+    const dark = ['demon', 'stars'].indexOf(T.props) >= 0;
+    this.sunLight.intensity = dark ? 1.6 : 3.0;
+    this.ambient.intensity = dark ? 1.1 : 1.5;
+    this.hemi.intensity = dark ? 1.3 : 1.1;
+    this.hemi.color.setHex(dark ? 0x8a90c0 : 0xa8bcd8); this.hemi.groundColor.setHex(T.props === 'demon' ? 0x5a2020 : 0x5a5348);
+    if (T.props === 'demon') this.sunLight.color.setHex(0xff9a8a); else this.sunLight.color.setHex(0xffffff);
+    // 空と遠くの霞（地域ごと）
+    this.gfx.scene.fog.density = T.fog || 0.0035;
+    this.gfx.scene.background.setHex(skyC);
+    this.gfx.scene.fog.color.setHex(dark ? 0x1a1426 : skyC);
+    this.gfx.scene.environmentIntensity = dark ? 0.35 : 0.55;
   }
 
   /* ── 技 ───────────────────────────────── */
@@ -971,7 +1020,7 @@ class Game {
     this._chainKey = k;
     b.hidden = !show;
     b.classList.toggle('on', on);
-    b.textContent = on ? '⛓ 鎖を外す' : (near ? '⛓ 鎖を掛ける' : '⛓ 棺へ近づく');
+    b.textContent = on ? '鎖を外す' : (near ? '鎖を掛ける' : '棺へ近づく');
   }
 
   /** 使う技を順に切り替える */
@@ -1033,15 +1082,221 @@ class Game {
     }
   }
 
+  /* ── 仲間と操作の切り替え ───────────────── */
+  toast(t, ms) { UI.toast(t, ms); }
+  shout(t) { UI.shout(t); }
+  saveParty() { Party.save(this.party); }
+  get region() { return REGION[(this.guild && this.guild.town) || 'hinomori'] || REGION.hinomori; }
+  /** その街で誘える者（まだ仲間でない者） */
+  localsOf(town) { return CHARACTERS.filter(c => !c.start && c.town === town && !this.party.has(c.id)); }
+  /** 旅：歩く・乗り物・転移陣で別の街へ */
+  async travelTo(id, mode) {
+    const r = REGION[id];
+    if (!r) return;
+    await this.fade(400);
+    const how = { walk: '街道を歩いて', carriage: '馬車に揺られて', ship: '船で海を渡り', airship: '飛空艇で雲を越え', starship: '星船で星の海を渡り', gate: '転移陣をくぐって' }[mode] || '';
+    await UI.cutin(how + '　' + r.name + ' へ', 1400);
+    this.guild.town = id;
+    if (this.guild.visited.indexOf(id) < 0) this.guild.visited.push(id);
+    const born = this.guild.nextDay();
+    this.guild.save();
+    this.enterSurface();
+    this.unfade();
+    UI.toast(r.name + '　―　' + r.desc, 4200);
+    if (born) this.announceChild(born);
+  }
+  announceChild(ch) {
+    const m = charOf(ch.mother);
+    UI.shout((ch.g === 'f' ? '娘' : '息子') + '　' + ch.name + '　誕 生');
+    UI.toast(m.name + 'との間に、' + (ch.g === 'f' ? '娘' : '息子') + 'の' + ch.name + 'が生まれた。我が家で待っている', 5000);
+    this.audio.sfx('purify');
+  }
+
+  /** 左上の仲間の札：先頭（操作）と供の名前・体力・霊力 */
+  updatePartyHud() {
+    const el = document.getElementById('hud-party');
+    if (!el) return;
+    const L = charOf(this.party.leader), C = charOf(this.party.companion), P = this.player, M = this.miko;
+    const hp = P.maxHp ? ((P.hp - 1) + (P.guardMax ? P.guard / P.guardMax : 1)) / P.maxHp : 0;
+    const mp = this.party.hero.maxMp ? this.heroMp / this.party.hero.maxMp : 0;
+    const cm = M.maxMp ? M.mp / M.maxMp : 0;
+    const key = L.id + C.id + Math.round(hp * 50) + '|' + Math.round(mp * 30) + '|' + Math.round(cm * 20) + '|' + (M.stagger > 0 ? 1 : 0) + P.hp;
+    if (key === this._phKey) return;
+    this._phKey = key;
+    const face = (c, big) => { const t = c.tint || { hair: c.id === 'hiyori' ? 0x14101a : 0x2a2a34, top: c.id === 'hiyori' ? 0xb3202c : 0x1e2230 };
+      return '<div class="hp-face' + (big ? ' big' : '') + '" style="--h:#' + (t.hair >>> 0).toString(16).padStart(6, '0') + ';--c:#' + (t.top >>> 0).toString(16).padStart(6, '0') + '"><b>' + (c.short || c.name[0]) + '</b></div>'; };
+    el.innerHTML = '<div class="hp-card lead">' + face(L, true) + '<div class="hp-bars"><div class="hp-nm">' + L.name + '<span>' + P.hp + '/' + P.maxHp + '</span></div>' +
+      '<div class="hp-b hp"><i style="width:' + Math.max(0, Math.min(1, hp)) * 100 + '%"></i></div><div class="hp-b mp"><i style="width:' + Math.max(0, Math.min(1, mp)) * 100 + '%"></i></div></div></div>' +
+      '<div class="hp-card comp' + (M.stagger > 0 ? ' down' : '') + '">' + face(C) + '<div class="hp-bars"><div class="hp-nm">' + C.name + '</div><div class="hp-b mp"><i style="width:' + Math.max(0, Math.min(1, cm)) * 100 + '%"></i></div></div></div>';
+  }
+
+  /** 仲間それぞれに、その人の得物と身の回りの品を持たせる */
+  outfitMembers() {
+    const P = this.party;
+    Object.keys(P.members).forEach(id => {
+      const c = P.members[id], d = charOf(id);
+      const heal = d.role === 'healer';
+      const want = [d.weapon || (heal ? 'mw0' : 'w0'), heal ? 'ma0' : 'a0', heal ? 'mt0' : 't0'];
+      want.forEach(gid => {
+        if (!GEAR[gid]) return;
+        c.pick(gid);
+        const sl = GEAR[gid].slot;
+        if (!c.gear[sl] || !this.canEquip(c, c.gear[sl]).ok) {
+          // 使えない物を持っていたら、持ち物の中から使える物に持ち替える
+          const alt = this.canEquip(c, gid).ok ? gid : c.bag.find(x => GEAR[x] && GEAR[x].slot === sl && this.canEquip(c, x).ok);
+          if (alt) c.gear[sl] = alt;
+        }
+      });
+    });
+  }
+  /** その人がその品を使えるか（職・冒険者の等級・巫女の品） */
+  canEquip(c, gid) {
+    const g = GEAR[gid];
+    if (!g || !c) return { ok: false, why: '無い品' };
+    const d = charOf(c.id || 'sun');
+    const heal = d.role === 'healer';
+    if (g.who === 'miko' && !heal) return { ok: false, why: '癒し手だけが使える' };
+    if (g.slot === 'weapon') {
+      if (g.who !== 'miko') {
+        const t = wtypeOf(gid), job = JOBS[c.job];
+        if (job && job.arms && job.arms.indexOf(t) < 0) return { ok: false, why: (job.name || '') + 'は' + (WEAPONS[t] ? WEAPONS[t].name : t) + 'を扱えない' };
+      }
+      const need = RANK_FOR_RARE[g.rare || 0] || 'D';
+      if (rankIndex(this.guildRank()) < rankIndex(need)) return { ok: false, why: '冒険者' + RANK_NAME[need] + '級から' };
+    }
+    return { ok: true, why: '' };
+  }
+  /** いまの冒険者の等級 */
+  guildRank() { return (this.guild && this.guild.rank) || 'D'; }
+
+  /** 操作する者（先頭）と供の模型・役どころを整える */
+  async loadPartyModels() {
+    const P = this.party, L = charOf(P.leader), C = charOf(P.companion);
+    this._rigs = this._rigs || {};
+    const get = async (d) => {
+      if (this._rigs[d.id] !== undefined) return this._rigs[d.id];
+      try { this._rigs[d.id] = await loadCharacterRig(d, d.g === 'm' ? 1.8 : 1.6); }
+      catch (e) { this._rigs[d.id] = null; UI.toast(d.name + 'の模型を読めませんでした', 3000); }
+      return this._rigs[d.id];
+    };
+    const [rl, rc] = await Promise.all([get(L), get(C)]);
+    // 同じ模型を二人で取り合わないよう、いったん外してから付け直す
+    this.player.useAvatar(null); this.miko.useAvatar(null);
+    this.player.female = L.g !== 'm';
+    this.player.useAvatar(rl);
+    this.miko.useAvatar(rc);
+    this.applyStats();
+    // 使わなくなった模型は捨てる（記憶を空ける）
+    Object.keys(this._rigs).forEach(id => { if (id !== L.id && id !== C.id && this._rigs[id]) { this._disposeRig(this._rigs[id]); delete this._rigs[id]; } });
+    if (this.gfx) this.gfx.rescanLights();
+  }
+  _disposeRig(rig) {
+    try { rig.root.traverse(o => { if (o.isMesh && o.geometry) o.geometry.dispose(); }); } catch (e) {}
+  }
+  /** 操作する者と供を入れ替える（日和で戦う等） */
+  async swapLeader() {
+    if (this.phase === Phase.TITLE || this.phase === Phase.RESULT || this._swapping) return;
+    this._swapping = true;
+    const P = this.party;
+    [P.leader, P.companion] = [P.companion, P.leader];
+    Party.save(P);
+    await this.loadPartyModels();
+    // 立ち位置も入れ替える
+    const a = this.player.pos.clone(); this.player.pos.copy(this.miko.pos); this.miko.pos.copy(a);
+    this.voice.alias = { hero: P.leader, miko: P.companion };
+    UI.toast(charOf(P.leader).name + 'で戦う（供：' + charOf(P.companion).name + '）', 2200);
+    this.audio.sfx('good');
+    this._swapping = false;
+  }
+  /** 編成を決める（ギルドから） */
+  async setParty(leader, companion) {
+    const P = this.party;
+    if (!P.members[leader] || !P.members[companion] || leader === companion) return false;
+    P.leader = leader; P.companion = companion;
+    Party.save(P);
+    this.voice.alias = { hero: P.leader, miko: P.companion };
+    await this.loadPartyModels();
+    return true;
+  }
+  /** 供が戦い手のとき：近くの敵へ得物の一撃を放つ */
+  companionFight(dt) {
+    const M = this.miko, c = this.party.miko, d = charOf(this.party.companion);
+    if (d.role === 'healer' || M.stagger > 0) return;
+    this._cfT = (this._cfT || 0) - dt;
+    if (this._cfT > 0) return;
+    const t = wtypeOf(c.gear.weapon), W = WEAPONS[t] || WEAPONS.gun;
+    let best = null, bd = 14 * 14;
+    for (const e of this.enemies.list) {
+      if (e.dead) continue;
+      const d2 = (e.p.x - M.pos.x) ** 2 + (e.p.z - M.pos.z) ** 2;
+      if (d2 < bd) { bd = d2; best = e; }
+    }
+    let tx, tz;
+    if (best) { tx = best.p.x; tz = best.p.z; }
+    else if (this.phase === Phase.BOSS && this.boss.alive && Math.hypot(this.boss.p.x - M.pos.x, this.boss.p.z - M.pos.z) < 16) { tx = this.boss.p.x; tz = this.boss.p.z; }
+    else { this._cfT = 0.3; return; }
+    const dir = new THREE.Vector3(tx - M.pos.x, 0, tz - M.pos.z).normalize();
+    const mul = (W.stat === 'MATK' ? c.matkMul : c.atkMul) * 0.8;
+    const melee = W.kind === 'melee';
+    const from = new THREE.Vector3(M.pos.x, 1.3, M.pos.z).addScaledVector(dir, 0.6);
+    this.bullets.fire(from, dir, melee
+      ? { speed: 26, life: 0.4, pierce: true, dmg: W.dmg * mul, r: 0.8, look: 'wave', grow: 1.2 }
+      : { speed: (W.proj && W.proj.speed) || 30, life: 1.1, dmg: Math.max(1, W.dmg) * mul, r: 0.3, look: (W.proj && W.proj.look) || 'orb', homing: (W.proj && W.proj.homing) || 0 });
+    M.group.rotation.y = Math.atan2(dir.x, dir.z);
+    this._cfT = Math.max(0.45, (W.cd || 0.4) * 2.4);
+  }
+
+  /** 祓いの釦：供が癒し手なら祓い、操作する者が癒し手なら自らを癒し、どちらでもなければ供の大技 */
+  invokeAction() {
+    const L = charOf(this.party.leader), C = charOf(this.party.companion);
+    if (C.role === 'healer') return this.invokeHeal();
+    if (L.role === 'healer') return this.selfHeal();
+    return this.companionBurst();
+  }
+  selfHeal() {
+    if (this.phase === Phase.TITLE || this.phase === Phase.RESULT) return;
+    const h = this.party.hero, P = this.player, now = performance.now() / 1000;
+    const cd = (this._selfHealT || 0) - now;
+    if (cd > 0) { UI.toast('祈りの支度中（あと' + Math.ceil(cd) + '秒）'); this.audio.sfx('empty'); return; }
+    const cost = 12;
+    if (this.heroMp < cost) { UI.toast('霊力が足りない'); this.audio.sfx('empty'); return; }
+    this.heroMp -= cost;
+    this._selfHealT = now + Math.max(4, 12 / (1 + h.get('DEX') * 0.009));
+    const amount = 1 + Math.floor(h.get('MATK') / 55);
+    P.heal(amount);
+    P.wardT = 3 + h.get('MDEF') * 0.02; P.wardCut = Math.min(0.5, h.get('MDEF') * 0.0035);
+    UI.hp(P.hp, P.maxHp, P.guard, P.guardMax);
+    UI.shout('祈 り を');
+    this.audio.sfx('seal');
+    this.particles.emit(P.pos, 24, { color: [1, 0.95, 0.7], size: 3, up: 2 });
+  }
+  companionBurst() {
+    if (this.phase === Phase.TITLE || this.phase === Phase.RESULT) return;
+    const now = performance.now() / 1000, M = this.miko, c = this.party.miko;
+    const cd = (this._burstCd || 0) - now;
+    if (cd > 0) { UI.toast(c.name + 'の大技はあと' + Math.ceil(cd) + '秒'); this.audio.sfx('empty'); return; }
+    this._burstCd = now + 10;
+    const P = this.player;
+    const dir = P.aim.clone();
+    for (let i = 0; i < 9; i++) {
+      const a = (i - 4) * 0.13;
+      this.bullets.fire(new THREE.Vector3(M.pos.x, 1.3, M.pos.z), dir.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), a), { speed: 30, life: 1.2, pierce: true, dmg: 2.4 * c.atkMul, r: 0.35 });
+    }
+    UI.shout(c.name + '　援 護');
+    this.audio.sfx('beam');
+    this.particles.emit(M.pos, 20, { color: [1, 0.9, 0.6], size: 3, up: 1.6 });
+  }
+
   /* ── 巫女の祓い（手動） ─────────────────── */
   invokeHeal() {
     if (this.phase === Phase.TITLE || this.phase === Phase.RESULT) return;
     const m = this.miko;
-    if (m.stagger > 0) { UI.toast('日和がよろめいている（あと' + Math.ceil(m.stagger) + '秒）'); this.audio.sfx('empty'); return; }
+    const nm = this.party.miko.name;
+    if (m.stagger > 0) { UI.toast(nm + 'がよろめいている（あと' + Math.ceil(m.stagger) + '秒）'); this.audio.sfx('empty'); return; }
     if (m.healCd > 0) { UI.toast('祓いの支度中（あと' + Math.ceil(m.healCd) + '秒）'); this.audio.sfx('empty'); return; }
     if (m.mp < m.healCost) { UI.toast('霊力が足りない（' + Math.floor(m.mp) + ' / ' + m.healCost + '）'); this.audio.sfx('empty'); return; }
     const d = Math.hypot(this.player.pos.x - m.pos.x, this.player.pos.z - m.pos.z);
-    if (d > 7) { UI.toast('日和が遠い。近づいて呼べ'); this.audio.sfx('empty'); return; }
+    if (d > 7) { UI.toast(nm + 'が遠い。近づいて呼べ'); this.audio.sfx('empty'); return; }
 
     m.mp -= m.healCost;
     m.healing = 1.6;
@@ -1184,24 +1439,44 @@ class Game {
   }
   /* ── 外部の人物モデル ──────────────────── */
   /** 保存してあるモデル（または models/ に置いた物）を読み込む */
+  /** 模型を入れ替えた時：読み直す（主人公＝sun、日和＝hiyori の模型も、人ごとの模型も） */
   async loadAvatars(only) {
-    const list = [['hero', 1.8, this.player], ['heroine', 1.6, this.miko]];
-    for (const [key, h, who] of list) {
-      if (only && only !== key) continue;
+    this._rigs = {};
+    await this.loadPartyModels();
+    ['hero', 'heroine'].forEach(key => {
       const st = document.getElementById('mdl-' + key + '-st');
+      const id = key === 'hero' ? 'sun' : 'hiyori';
+      const r = this._rigs[id];
+      if (st) st.textContent = r ? (r.name || '読み込み済み') : (r === null ? '標準の姿' : '（編成にいない）');
+    });
+  }
+  /** 仲間ごとの模型（設定の欄） */
+  bindCharModelUI() {
+    const sel = document.getElementById('mdl-char'), inp = document.getElementById('mdl-char-f'), st = document.getElementById('mdl-char-st'), del = document.getElementById('mdl-char-del');
+    if (!sel) return;
+    sel.innerHTML = CHARACTERS.filter(c => !c.start).map(c => '<option value="' + c.id + '">' + c.name + '（' + c.title + '）</option>').join('');
+    const refresh = async () => { const r = await ModelStore.load('c_' + sel.value); st.textContent = r && r.buf ? (r.name || '専用の模型') : '色替えの姿'; };
+    sel.addEventListener('change', refresh); refresh();
+    inp.addEventListener('change', async () => {
+      const f = inp.files && inp.files[0]; if (!f) return;
+      st.textContent = '読み込み中…';
       try {
-        const rig = await loadAvatar(key, h);
-        who.useAvatar(rig);
-        if (st) st.textContent = rig ? (rig.name || '読み込み済み') : '標準の姿';
-      } catch (e) {
-        who.useAvatar(null);
-        if (st) st.textContent = '読み込めませんでした';
-        UI.toast((key === 'hero' ? '主人公' : '日和') + 'のモデルを読み込めませんでした（' + (e && e.message ? e.message : e) + '）', 5000);
-      }
-    }
-    if (this.gfx) this.gfx.rescanLights();
+        await ModelStore.save('c_' + sel.value, await f.arrayBuffer(), f.name);
+        if (this._rigs) delete this._rigs[sel.value];
+        if (this.party.leader === sel.value || this.party.companion === sel.value) await this.loadPartyModels();
+        UI.toast(f.name + ' を ' + charOf(sel.value).name + ' に使います', 3000);
+      } catch (e) { UI.toast('保存できませんでした（' + (e && e.message ? e.message : e) + '）', 5000); }
+      inp.value = ''; refresh();
+    });
+    del.addEventListener('click', async () => {
+      try { await ModelStore.remove('c_' + sel.value); } catch (e) {}
+      if (this._rigs) delete this._rigs[sel.value];
+      if (this.party.leader === sel.value || this.party.companion === sel.value) await this.loadPartyModels();
+      refresh();
+    });
   }
   bindModelUI() {
+    try { this.bindCharModelUI(); } catch (e) { console.error(e); }
     ['hero', 'heroine'].forEach(key => {
       const inp = document.getElementById('mdl-' + key);
       const st = document.getElementById('mdl-' + key + '-st');
@@ -1324,23 +1599,27 @@ class Game {
     this.hostile.clear();
     this.boss.despawn(); this.boss.cleanup();
     if (this.interior.active) this.interior.clear();
-    this.world.buildSurface();
+    // 地下から戻った時は日が進む（伴侶との日々・依頼の貼り替え）
+    if (this._wasUnder) { this._wasUnder = false; const born = this.guild.nextDay(); if (born) setTimeout(() => this.announceChild(born), 1500); }
+    const reg = this.region;
+    this.world.buildSurface(reg.theme);
     this.player.reset(this.world.playerStart);
     this.miko.reset(this.world.playerStart);
     this._snapCam = true;
     this.surfaceLights();
     this.camDist = 16.5;
     this.eliteRef = null;
-    this.town.build(this.world.colliders);
+    this.town.build(this.world.colliders, reg, { locals: this.localsOf(reg.id), homeHere: !!(this.guild.house && this.guild.house.town === reg.id) });
     this.town.group.visible = true;
     this.pile.place(this.world.purifierSpot ? this.world.purifierSpot.clone() : new THREE.Vector3(-52, 0, 0));
     UI.hp(this.player.hp, this.player.maxHp, this.player.guard, this.player.guardMax);
-    UI.objective('陽力を溜め、南の縦穴から地下へ');
+    UI.objective(reg.name + '　―　陽力を溜め、南の縦穴から地下へ');
     UI.hide('hud-boss');
     const bh = document.getElementById('hud-boss'); if (bh) bh.hidden = true;
   }
 
   enterDungeon() {
+    this._wasUnder = true;
     if (this.phase === Phase.SURFACE || this.phase === Phase.TITLE || this.phase === Phase.INTERIOR) this._revived = false;   // 潜るたびに生玉の力が戻る
     this.phase = Phase.DUNGEON;
     this._snapCam = true;
@@ -1350,6 +1629,7 @@ class Game {
     this.pile.group.visible = false;
     this.hasKey = false;
     if (this.floor > this.maxFloor) { this.maxFloor = this.floor; }
+    if (this.guild) this.guild.onEvent('floor', this.floor);
     this.saveProgress();
     this.world.buildDungeon(Date.now() % 100000, this.floor);
     this.minimap.reset(this.world);
@@ -1469,6 +1749,7 @@ class Game {
     // 褒美：この階の主を祓った証
     const exp = 900 + this.floor * 450;
     this.grantExp(exp);
+    if (this.guild) { this.guild.onEvent('boss', 1); if (this.guild.readyCount()) UI.toast('ギルドの依頼を達成した。報酬を受け取りに行こう', 3600); }
     this.coin += 120 + this.floor * 60;
     const gid = rollGear(this.floor + 2, this.party.hero.get('LUK'));
     let gearMsg = '';
@@ -1803,6 +2084,7 @@ class Game {
 
     this.updateChainUI();
     this.legendTick(dt);
+    this.updatePartyHud();
     // 鎖を外したら必ず身軽に戻す（以前は外した後も「押している」扱いが残り、撃てなかった）
     if (!this.coffin.chained) P.pushing = false;
     // 主人公の霊力
@@ -1849,7 +2131,14 @@ class Game {
     const sb = document.getElementById('btn-solar');
     if (sb) sb.disabled = !this.solar.ready;
     const hb = document.getElementById('btn-heal');
-    if (hb) hb.disabled = this.miko.healCd > 0;
+    if (hb) {
+      const C = charOf(this.party.companion), L = charOf(this.party.leader);
+      const mode = C.role === 'healer' ? 'heal' : (L.role === 'healer' ? 'self' : 'burst');
+      if (mode !== this._hbMode) { this._hbMode = mode; hb.dataset.mode = mode; const lab = hb.querySelector('span') || hb; lab.textContent = mode === 'heal' ? '祓い' : mode === 'self' ? '祈り' : '援護'; }
+      const nowS = performance.now() / 1000;
+      hb.classList.toggle('wait', mode === 'heal' ? this.miko.healCd > 0 : mode === 'self' ? (this._selfHealT || 0) > nowS : (this._burstCd || 0) > nowS);
+    }
+    this.companionFight(dt);
 
     // 敵
     this.enemies.update(dt, P.pos, this.world, this.audio, this._onKill);
@@ -2472,7 +2761,9 @@ class Game {
     this.stats.kills++;
     this.audio.sfx('ash');
     // 階が深いほど、レアなら大きく
-    this.coin += Math.round((2 + this.floor) * (e.rare ? 12 : 1) * (e.elite ? 8 : 1) * this.fortuneK());
+    const gain = Math.round((2 + this.floor) * (e.rare ? 12 : 1) * (e.elite ? 8 : 1) * this.fortuneK());
+    this.coin += gain;
+    if (this.guild) { this.guild.onEvent('kill', 1); this.guild.onEvent('coin', gain); if (e.rare) this.guild.onEvent('rare', 1); if (e.elite && !e.golden) this.guild.onEvent('elite', 1); }
     if (e.golden) {
       const exp = Math.round(9000 * (1 + (this.floor - 1) * 0.8));
       this.grantExp(exp);
