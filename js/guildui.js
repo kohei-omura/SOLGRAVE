@@ -4,6 +4,7 @@
    ══════════════════════════════════════════════════════════════ */
 import { CHARACTERS, CHAR, RANKS, RANK_NAME, RANK_PTS, rankIndex } from './roster.js';
 import { GIFTS, RING_PRICE, DATES, talkLine, bondName } from './guild.js';
+import { script, placeOf, SceneUI } from './scenes.js';
 import { REGIONS, REGION, WORLDS, waysTo, unlocked, MODE_NAME, MODE_ICON } from './atlas.js';
 
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -15,6 +16,7 @@ export class GuildUI {
   constructor(game) {
     this.g = game;
     this.tab = 'quest';
+    this.scene = new SceneUI(game);
     const el = document.getElementById('guild');
     el.querySelectorAll('.gd-tab').forEach(b => b.addEventListener('click', () => { this.tab = b.dataset.t; this.render(); }));
     document.getElementById('guild-close').addEventListener('click', () => this.hide());
@@ -155,9 +157,13 @@ export class GuildUI {
       case 'buygift': if (pay(GIFTS[id].price)) { G.gifts[id] = (G.gifts[id] || 0) + 1; G.save(); } break;
       case 'buyring': if (pay(RING_PRICE)) { G.rings++; G.save(); this.toast('誓いの指輪を手に入れた'); } break;
       case 'talk': {
-        const c = CHAR[id]; G.talkedDay[id] = true; const v = G.addBond(id, 3);
-        const line = talkLine(c, v, G.spouses.indexOf(id) >= 0);
-        this.toast(c.name + '「' + line + '」', 3600); g.voice.say(line.slice(0, 40), id);
+        const c = CHAR[id]; G.talkedDay[id] = true; const v0 = G.bondOf(id), married = G.spouses.indexOf(id) >= 0;
+        if (c.g === 'm' || !c.romance) { const v = G.addBond(id, 3); const line = talkLine(c, v, married); this.toast(c.name + '「' + line + '」', 3600); g.voice.say(line.slice(0, 40), id); break; }
+        if (married) { await this.scene.play(script('home', id, {})); G.addBond(id, 2); break; }
+        if (v0 < 35) { const line = talkLine(c, v0, false); G.addBond(id, 3); this.toast(c.name + '「' + line + '」', 3600); g.voice.say(line.slice(0, 40), id); break; }
+        const hit = await this.scene.play(script('talk', id, { bond: v0 }));
+        const v = G.addBond(id, hit === true ? 6 : 3);
+        this.toast(hit === true ? c.name + 'は嬉しそうだ（絆 ' + v + '）' : c.name + 'との距離が少し縮まった（絆 ' + v + '）', 2600);
         break;
       }
       case 'gift': {
@@ -169,15 +175,19 @@ export class GuildUI {
         break;
       }
       case 'date': {
-        const c = CHAR[id], place = DATES[Math.floor(Math.random() * DATES.length)];
+        const c = CHAR[id], reg = REGION[G.town] || REGION.hinomori, place = placeOf(reg.theme && reg.theme.props);
         if (!pay(80)) break;
-        G.datedDay[id] = true; const v = G.addBond(id, 7);
-        this.toast(c.name + 'と' + place + '。穏やかな時間が流れた（絆 ' + v + '）', 3600);
+        G.datedDay[id] = true;
+        const v0 = G.bondOf(id);
+        const hit = await this.scene.play(script('date', id, { bond: v0, place }));
+        const v = G.addBond(id, hit === true ? 12 : 7);
+        this.toast(place.name + '。' + (hit === true ? c.name + 'の笑顔が眩しい' : '穏やかな時間が流れた') + '（絆 ' + v + '）', 3600);
         break;
       }
       case 'confess': {
         const c = CHAR[id];
         if (G.bondOf(id) < 70) break;
+        await this.scene.play(script('confess', id, {}));
         G.lovers.push(id); G.addBond(id, 3); G.save();
         g.shout(c.name + 'と恋人になった'); g.audio.sfx('purify');
         g.voice.say('……うん。私も、ずっと好きだった', id);
@@ -188,6 +198,7 @@ export class GuildUI {
         if (!G.house) { this.toast('先に住まいを持とう（住まいの頁）'); break; }
         if (G.rings < 1) { this.toast('誓いの指輪が要る（交流の頁で買える）'); break; }
         if (G.bondOf(id) < 90) { this.toast('もう少し絆を深めてから（絆90から）'); break; }
+        await this.scene.play(script('propose', id, {}));
         G.rings--; G.lovers = G.lovers.filter(x => x !== id); G.spouses.push(id);
         G._wedDay = G._wedDay || {}; G._wedDay[id] = G.day; G.bond[id] = 100; G.save();
         g.shout(c.name + 'と結ばれた'); g.audio.sfx('purify');
