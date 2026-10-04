@@ -21,6 +21,7 @@ import { SKILLS, GEAR, JOBS, rollGear, wtypeOf } from './jobs.js';
 import { legendOf } from './legend.js';
 import { Guild } from './guild.js';
 import { GuildUI } from './guildui.js';
+import { TravelFx } from './travelfx.js';
 import { REGION, MODE_NAME } from './atlas.js';
 import { CHARACTERS, CHAR, charOf, RANKS, RANK_NAME, RANK_FOR_RARE, rankIndex } from './roster.js';
 import { Town, talkTo } from './town.js';
@@ -1093,15 +1094,17 @@ class Game {
   async travelTo(id, mode) {
     const r = REGION[id];
     if (!r) return;
-    await this.fade(400);
-    const how = { walk: '街道を歩いて', carriage: '馬車に揺られて', ship: '船で海を渡り', airship: '飛空艇で雲を越え', starship: '星船で星の海を渡り', gate: '転移陣をくぐって' }[mode] || '';
-    await UI.cutin(how + '　' + r.name + ' へ', 1400);
-    this.guild.town = id;
-    if (this.guild.visited.indexOf(id) < 0) this.guild.visited.push(id);
-    const born = this.guild.nextDay();
-    this.guild.save();
-    this.enterSurface();
-    this.unfade();
+    const from = REGION[this.guild.town];
+    let born = null;
+    if (!this.travelFx) this.travelFx = new TravelFx();
+    // 地図の上を旅する演出。到着の輪が広がる間に、街を入れ替える
+    await this.travelFx.play(from, r, mode, async () => {
+      this.guild.town = id;
+      if (this.guild.visited.indexOf(id) < 0) this.guild.visited.push(id);
+      born = this.guild.nextDay();
+      this.guild.save();
+      this.enterSurface();
+    });
     UI.toast(r.name + '　―　' + r.desc, 4200);
     if (born) this.announceChild(born);
   }

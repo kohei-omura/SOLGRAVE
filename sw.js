@@ -1,7 +1,7 @@
 /* SOLGRAVE ── Service Worker
    自前資産は Cache First、CDN(three.js)は Stale-While-Revalidate */
-const CACHE = 'solgrave-v51';
-const CDN = 'solgrave-cdn-v51';
+const CACHE = 'solgrave-v52';
+const CDN = 'solgrave-cdn-v52';
 /* 置き方が「フォルダ分け」でも「直下まとめ」でも動くよう、
    両方の場所を候補に入れる。無い物は取得に失敗しても無視される。 */
 const ASSETS = [
@@ -44,6 +44,7 @@ const ASSETS = [
   './js/guildui.js',
   './js/scenes.js',
   './js/townplan.js',
+  './js/travelfx.js',
   './audio.js',
   './boss.js',
   './coffin.js',
