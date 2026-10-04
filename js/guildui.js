@@ -5,7 +5,7 @@
 import { CHARACTERS, CHAR, RANKS, RANK_NAME, RANK_PTS, rankIndex } from './roster.js';
 import { GIFTS, RING_PRICE, DATES, talkLine, bondName } from './guild.js';
 import { script, placeOf, SceneUI } from './scenes.js';
-import { REGIONS, REGION, WORLDS, waysTo, unlocked, MODE_NAME, MODE_ICON } from './atlas.js';
+import { ROUTES, REGIONS, REGION, WORLDS, waysTo, unlocked, MODE_NAME, MODE_ICON } from './atlas.js';
 
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const hex = n => '#' + (n >>> 0).toString(16).padStart(6, '0');
@@ -229,12 +229,17 @@ export class GuildUI {
     const G = this.G, g = this.g, here = G.town, maxF = g.maxFloor || 1;
     const worlds = Object.keys(WORLDS);
     const body = document.getElementById('atlas-body');
+    const X = r => 9 + r.x * 82, Y = r => 13 + r.y * 66;
     body.innerHTML = worlds.map(w => {
       const rs = REGIONS.filter(r => r.world === w);
-      return '<div class="at-world"><div class="at-wname">' + WORLDS[w].name + '</div><div class="at-map w-' + w + '">' + rs.map(r => {
+      const lines = ROUTES.filter(([a, b]) => REGION[a].world === w && REGION[b].world === w).map(([a, b, mode]) => {
+        const A = REGION[a], B = REGION[b], on = (a === here || b === here), seen = G.visited.indexOf(a) >= 0 && G.visited.indexOf(b) >= 0;
+        return '<line class="' + (on ? 'on ' : '') + (seen ? 'seen ' : '') + 'm-' + mode + '" x1="' + X(A) + '" y1="' + Y(A) + '" x2="' + X(B) + '" y2="' + Y(B) + '"/>';
+      }).join('');
+      return '<div class="at-world"><div class="at-wname">' + WORLDS[w].name + '</div><div class="at-map w-' + w + '"><svg class="at-routes" viewBox="0 0 100 100" preserveAspectRatio="none">' + lines + '</svg>' + rs.map(r => {
         const open = unlocked(r, maxF), cur = r.id === here, seen = G.visited.indexOf(r.id) >= 0;
-        return '<button class="at-node' + (cur ? ' cur' : '') + (open ? '' : ' lock') + (seen ? ' seen' : '') + '" style="left:' + (r.x * 100) + '%;top:' + (r.y * 100) + '%" data-id="' + r.id + '">' +
-          '<i></i><b>' + esc(r.name) + '</b>' + (open ? '' : '<span>地下' + r.unlock + '層で解放</span>') + '</button>';
+        return '<button class="at-node' + (cur ? ' cur' : '') + (open ? '' : ' lock') + (seen ? ' seen' : '') + '" style="left:' + X(r) + '%;top:' + Y(r) + '%" data-id="' + r.id + '">' +
+          '<i></i><b>' + (open ? '' : '🔒 ') + esc(r.name) + '</b></button>';
       }).join('') + '</div></div>';
     }).join('');
     body.querySelectorAll('.at-node').forEach(b => b.addEventListener('click', () => this.pickTown(b.dataset.id)));
