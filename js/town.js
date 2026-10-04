@@ -4,6 +4,7 @@
    ══════════════════════════════════════════════════════════════ */
 import * as THREE from 'three';
 import { buildFolk, folkMaterial } from './bestiary.js';
+import { planOf } from './townplan.js';
 import { stoneMaterial, metalMaterial, glowMaterial, fleshMaterial, patternMaterial, worldUV } from './gfx.js';
 
 /* ── 住人 ──
@@ -139,17 +140,14 @@ export class Town {
 
     // ── 家並み ──
     // 広場（半径20）の外周に、区画を分けて建てる
-    const houses = [
-      [-25, -12, 8, 7], [-25, 2, 8, 7], [-25, 16, 8, 7],
-      [25, -12, 8, 7], [25, 2, 8, 7], [25, 16, 8, 7],
-      [-13, -26, 9, 7], [3, -26, 9, 7], [19, -26, 8, 7],
-      [-30, -24, 7, 6], [30, -24, 7, 6]
-    ];
+    const plan = planOf(region && region.id);
+    const houses = plan.houses;
+    this.plan = plan;
     this.rooms = [];
     this.doors = [];
     houses.forEach((h, i) => {
       const [x, z, w, d] = h;
-      const ht = 3.4 + (i % 3) * 0.6;
+      const ht = (3.4 + (i % 3) * 0.6) * (plan.sk || 1);
       let kind = HOUSE_KIND[i] || 'home';
       if (i === 3 && opts.homeHere) kind = 'myhome';     // 買った我が家
       // 外観は閉じた家。南面の戸口から中へ入ると、家ごとの内部へ場面が移る
@@ -249,17 +247,41 @@ export class Town {
     });
 
     // ── 道の石畳 ──
-    // 区画を分ける小径
-    [[-19, 0, 4, 44], [19, 0, 4, 44], [0, -20, 60, 4]].forEach(([x, z, w, d]) => {
-      const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), stoneMaterial(204, 0xb0a690));
-      m.rotation.x = -Math.PI / 2; m.position.set(x, 0.025, z);
-      m.receiveShadow = true;
-      this.group.add(m);
+    const strip = (x, z, w, d, ry, col) => {
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), stoneMaterial(204, col || 0xb0a690));
+      m.rotation.x = -Math.PI / 2; m.rotation.z = ry || 0; m.position.set(x, 0.025, z);
+      m.receiveShadow = true; this.group.add(m); return m;
+    };
+    if (plan.roads === 'grid') {
+      // 区画を分ける小径
+      [[-19, 0, 4, 44], [19, 0, 4, 44], [0, -20, 60, 4]].forEach(([x, z, w, d]) => strip(x, z, w, d));
+    }
+    if (plan.plaza) {
+      const pz = new THREE.Mesh(new THREE.CircleGeometry(plan.plaza, 48), stoneMaterial(204, 0xc2b89e));
+      pz.rotation.x = -Math.PI / 2; pz.position.set(0, 0.03, -2); pz.receiveShadow = true; this.group.add(pz);
+    }
+    if (plan.roads === 'ring') {
+      const rr = new THREE.Mesh(new THREE.RingGeometry(plan.ringR - 9, plan.ringR - 5, 64), stoneMaterial(204, 0xb0a690));
+      rr.rotation.x = -Math.PI / 2; rr.position.set(0, 0.026, -2); rr.receiveShadow = true; this.group.add(rr);
+    }
+    if (plan.roads === 'avenue') strip(0, -14, 5, 50);
+    // 戸口から広場へ向かう小径
+    houses.forEach(([x, z, w, d]) => {
+      const dz = z + d / 2 + 1.2, dx = -x, dzz = -2 - dz, len = Math.hypot(dx, dzz);
+      if (plan.roads === 'wind') strip(x + dx * 0.5, dz + dzz * 0.5, 2.4, len, Math.atan2(dx, dzz) * -1 + 0, 0xa89e86);
+      else strip(x, z + d / 2 + 3.0, 3.2, 4.4);
     });
 
     // ── 灯籠 ──
     this.lanterns = [];
-    [[-18, -14], [18, -14], [-18, 14], [18, 14], [-21, 0], [21, 0], [0, 24], [0, -24]].forEach(([x, z]) => {
+    const lampSpots = [[-18, -14], [18, -14], [-18, 14], [18, 14], [-21, 0], [21, 0], [0, 24], [0, -24]];
+    if (plan.roads !== 'grid' || region && region.id !== 'hinomori') {
+      for (let a = 0; a < 8; a++) lampSpots.push([Math.round(Math.cos(a * 0.785 + 0.39) * 17), Math.round(Math.sin(a * 0.785 + 0.39) * 17 - 2)]);
+    }
+    const lampOK = ([x, z]) => !houses.some(([hx, hz, w, d]) => Math.abs(x - hx) < w / 2 + 1.2 && Math.abs(z - hz) < d / 2 + 1.2) && !(Math.abs(x) < 9 && z > 6) && !(Math.abs(x) < 2.5 && Math.abs(z + 6) < 2.5);
+    let lampN = 0;
+    lampSpots.filter(p => (region && region.id === 'hinomori') || !region || lampOK(p)).forEach(([x, z]) => {
+      if (region && region.id !== 'hinomori' && ++lampN > 12) return;
       box(0.5, 2.2, 0.5, x, 1.1, z, wood, false);
       const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.9, 0.8), glowMaterial(0xffd48a, 1.6));
       lamp.position.set(x, 2.6, z);
@@ -271,6 +293,9 @@ export class Town {
       this.lanterns.push({ lamp, light: l, phase: Math.random() * 6.28 });
       (this.townLights = this.townLights || []).push(l);
     });
+
+    // ── 広場の飾り（街ごと） ──
+    (plan.lm || []).forEach(k => { try { this._landmark(k, { box, wall, wood, base, beam, roof, T, colliders }); } catch (e) { console.error(e); } });
 
     // ── 鳥居（縦穴の手前） ──
     const torii = metalMaterial(206, 0xb3424a);
@@ -302,6 +327,85 @@ export class Town {
     }
     this.built = true;
     return this;
+  }
+
+
+  /** 街ごとの目印。形はどれも安い箱と円柱と円錐だけで作る */
+  _landmark(kind, h) {
+    const { box, wood, base, beam, colliders } = h, G = this.group;
+    const add = (geo, mat, x, y, z, ry) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); if (ry) m.rotation.y = ry; m.receiveShadow = true; G.add(m); return m; };
+    const solid = (x, z, w, d) => { if (colliders) colliders.push({ min: { x: x - w / 2, z: z - d / 2 }, max: { x: x + w / 2, z: z + d / 2 } }); };
+    const light = (x, y, z, col, I, R) => { const l = new THREE.PointLight(col, I, R, 2); l.visible = false; l.position.set(x, y, z); G.add(l); (this.townLights = this.townLights || []).push(l); return l; };
+    const stone = new THREE.MeshStandardMaterial({ color: 0xd8d4cc, roughness: 0.7 });
+    const water = new THREE.MeshStandardMaterial({ color: 0x4a9ad8, roughness: 0.15, metalness: 0.1, emissive: new THREE.Color(0x103050), emissiveIntensity: 0.5 });
+    if (kind === 'fountain') {
+      add(new THREE.CylinderGeometry(3.2, 3.4, 0.7, 32), stone, 0, 0.35, 5);
+      add(new THREE.CylinderGeometry(2.7, 2.7, 0.1, 32), water, 0, 0.66, 5);
+      add(new THREE.CylinderGeometry(0.35, 0.5, 2.6, 12), stone, 0, 1.6, 5);
+      add(new THREE.SphereGeometry(0.9, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), stone, 0, 2.8, 5).scale.y = 0.5;
+      add(new THREE.SphereGeometry(0.25, 12, 8), glowMaterial(0x9ad8ff, 2), 0, 3.2, 5);
+      solid(0, 5, 6.4, 6.4);
+    } else if (kind === 'bigtree') {
+      const bark = patternMaterial('bark', 0x4a3a2c, 1.0), leaf = fleshMaterial(0x4a8a44);
+      add(new THREE.CylinderGeometry(1.0, 1.7, 9, 12), bark, -10, 4.5, -15);
+      [[0, 11, 0, 6], [3.5, 9.5, 1, 4.4], [-3.5, 9.8, -1, 4.6], [0, 13.5, 0, 3.6]].forEach(([dx, y, dz, r]) => { const c = add(new THREE.SphereGeometry(r, 16, 12), leaf, -10 + dx, y, -15 + dz); c.castShadow = true; });
+      solid(-10, -15, 3.4, 3.4);
+      light(-10, 6, -12, 0xa8ffb0, 1.4, 14);
+    } else if (kind === 'pier') {
+      const sea = new THREE.MeshStandardMaterial({ color: 0x2a78b8, roughness: 0.12, metalness: 0.2 });
+      add(new THREE.PlaneGeometry(90, 26), sea, 0, 0.04, -50).rotation.x = -Math.PI / 2;
+      for (let i = 0; i < 9; i++) box(5, 0.25, 1.6, 0, 0.35, -33 - i * 1.6, wood, false);
+      box(0.4, 2.2, 0.4, 2.8, 1.2, -45, wood, false); box(0.4, 2.2, 0.4, -2.8, 1.2, -45, wood, false);
+      add(new THREE.CylinderGeometry(0.16, 0.2, 13, 8), wood, 10, 6.5, -41);
+      const sail = add(new THREE.PlaneGeometry(5, 8), new THREE.MeshStandardMaterial({ color: 0xf4f0e4, side: THREE.DoubleSide, roughness: 0.9 }), 10, 7, -39.4); sail.rotation.y = Math.PI / 2;
+      add(new THREE.BoxGeometry(2.4, 0.8, 8), wood, 10, 0.5, -41);
+      solid(10, -41, 2.6, 8.4);
+    } else if (kind === 'toriiN') {
+      const red = metalMaterial(206, 0xb3424a);
+      [-13, -25].forEach(z => { box(0.5, 5.4, 0.5, -3.4, 2.7, z, red, true); box(0.5, 5.4, 0.5, 3.4, 2.7, z, red, true); box(9.2, 0.55, 0.8, 0, 5.6, z, red, false); box(8, 0.35, 0.55, 0, 4.7, z, red, false); });
+    } else if (kind === 'sakura') {
+      const bark = patternMaterial('bark', 0x4a3a2c, 1.0), bl = fleshMaterial(0xf4b8c8);
+      add(new THREE.CylinderGeometry(0.5, 0.8, 4.2, 10), bark, -12, 2.1, -10);
+      [[0, 5.4, 0, 3.4], [2.4, 4.8, 1, 2.4], [-2.4, 4.9, -1, 2.5]].forEach(([dx, y, dz, r]) => add(new THREE.SphereGeometry(r, 14, 10), bl, -12 + dx, y, -10 + dz));
+      solid(-12, -10, 1.6, 1.6);
+    } else if (kind === 'bonfire') {
+      for (let i = 0; i < 6; i++) { const a = i * 1.047, lg = add(new THREE.CylinderGeometry(0.16, 0.16, 2.2, 6), wood, Math.cos(a) * 0.5, 0.5, 4 + Math.sin(a) * 0.5); lg.rotation.z = Math.cos(a) * 0.9; lg.rotation.x = Math.sin(a) * 0.9; }
+      add(new THREE.ConeGeometry(0.8, 2.2, 8), glowMaterial(0xff9a3a, 2.4), 0, 1.4, 4);
+      add(new THREE.ConeGeometry(0.4, 1.6, 8), glowMaterial(0xffe08a, 3), 0, 1.5, 4);
+      add(new THREE.TorusGeometry(1.5, 0.3, 6, 16), stone, 0, 0.2, 4).rotation.x = Math.PI / 2;
+      light(0, 2, 4, 0xff9a4a, 3.2, 20); solid(0, 4, 3, 3);
+    } else if (kind === 'bazaar') {
+      const cols = [0xb3424a, 0xc9a227, 0x3a6aa8, 0x6a3a8a];
+      [[-12, -16], [12, -16], [0, -22], [-20, -4], [20, -4]].forEach(([x, z], i) => {
+        [[-1.6, -1.6], [1.6, -1.6], [-1.6, 1.6], [1.6, 1.6]].forEach(([dx, dz]) => box(0.18, 2.6, 0.18, x + dx, 1.3, z + dz, wood, false));
+        const cl = add(new THREE.PlaneGeometry(4.2, 4.2), new THREE.MeshStandardMaterial({ color: cols[i % 4], side: THREE.DoubleSide, roughness: 0.9 }), x, 2.75, z); cl.rotation.x = -Math.PI / 2 + 0.12;
+        box(2.4, 0.9, 1.0, x, 0.45, z, wood, true);
+      });
+    } else if (kind === 'crystal') {
+      const cr = add(new THREE.OctahedronGeometry(2.2, 0), glowMaterial(0x9ad8ff, 1.8), 0, 5.2, -16); cr.scale.y = 1.7;
+      add(new THREE.CylinderGeometry(1.2, 1.6, 0.8, 8), stone, 0, 0.4, -16);
+      [0, 1, 2, 3].forEach(i => add(new THREE.CylinderGeometry(0.25, 0.3, 3.4, 8), stone, Math.cos(i * 1.571 + 0.78) * 3.6, 1.7, -16 + Math.sin(i * 1.571 + 0.78) * 3.6));
+      solid(0, -16, 3, 3); light(0, 5, -16, 0x9ad8ff, 2.4, 20);
+    } else if (kind === 'spire') {
+      const dk = new THREE.MeshStandardMaterial({ color: 0x1c1420, roughness: 0.6, metalness: 0.3 });
+      add(new THREE.BoxGeometry(8, 12, 8), dk, 0, 6, -45); add(new THREE.ConeGeometry(4.2, 16, 4), dk, 0, 20, -45).rotation.y = Math.PI / 4;
+      [-1, 1].forEach(sx => add(new THREE.ConeGeometry(1.4, 9, 4), dk, sx * 5.5, 13.5, -45));
+      add(new THREE.SphereGeometry(0.6, 12, 8), glowMaterial(0xff3a4a, 3), 0, 29, -45);
+      light(0, 12, -38, 0xff4a5a, 2.4, 24);
+    } else if (kind === 'brazier') {
+      [[-6, -8], [6, -8], [-6, 6], [6, 6]].forEach(([x, z]) => { box(0.5, 1.4, 0.5, x, 0.7, z, beam, false); add(new THREE.CylinderGeometry(0.6, 0.35, 0.5, 8), beam, x, 1.6, z); add(new THREE.ConeGeometry(0.4, 1.0, 6), glowMaterial(0xff4a3a, 2.4), x, 2.2, z); });
+    } else if (kind === 'pad') {
+      add(new THREE.RingGeometry(3.4, 4.2, 40), new THREE.MeshBasicMaterial({ color: 0x8ad0ff, transparent: true, opacity: 0.8, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }), 0, 0.06, -15).rotation.x = -Math.PI / 2;
+      add(new THREE.CircleGeometry(3.4, 40), new THREE.MeshStandardMaterial({ color: 0x3a4660, roughness: 0.4, metalness: 0.5 }), 0, 0.05, -15).rotation.x = -Math.PI / 2;
+      light(0, 2, -15, 0x8ad0ff, 2.0, 18);
+    } else if (kind === 'beacon') {
+      add(new THREE.CylinderGeometry(0.3, 0.5, 14, 10), new THREE.MeshStandardMaterial({ color: 0x8a9ab8, metalness: 0.7, roughness: 0.3 }), 0, 7, -15);
+      add(new THREE.SphereGeometry(0.9, 14, 10), glowMaterial(0x4ad0e8, 3), 0, 14.4, -15);
+      solid(0, -15, 1.4, 1.4); light(0, 13, -15, 0x4ad0e8, 2.6, 24);
+    } else if (kind === 'rails') {
+      const rl = new THREE.MeshStandardMaterial({ color: 0x8a9ab8, metalness: 0.7, roughness: 0.3 });
+      [-37, 37].forEach(x => { add(new THREE.BoxGeometry(0.3, 0.2, 60), rl, x, 1.1, -6); for (let z = -34; z <= 22; z += 7) add(new THREE.BoxGeometry(0.3, 1.1, 0.3), rl, x, 0.55, z); });
+    }
   }
 
   _addNpc(def, colliders) {
