@@ -99,9 +99,18 @@ export async function loadAvatar(who, height) {
  * 仲間ひとりぶんの模型を読む。その人専用の模型（設定で入れた物）があればそれを、
  * 無ければ土台の体（男：hero／女：heroine）を読み、人ごとの色に染める。
  */
+const _NOFILE = [];   // 同梱模型が無いと分かった人（何度も取りに行かない）
 export async function loadCharacterRig(def, height) {
   const own = await ModelStore.load('c_' + def.id);
   if (own && own.buf) return buildRig(own.buf, height, own.flip, own.name, 'c_' + def.id);
+  // 同梱の専用模型（models/c_<id>.vrm）があれば、それを使う（無ければ下の色替えへ）
+  if (def.id !== 'sun' && def.id !== 'hiyori' && _NOFILE.indexOf(def.id) < 0) {
+    try {
+      const r = await fetch('models/c_' + def.id + '.vrm');
+      if (r.ok && !/text\/html/.test(r.headers.get('content-type') || '')) return await buildRig(await r.arrayBuffer(), height, false, def.name, 'f_' + def.id);
+    } catch (e) {}
+    _NOFILE.push(def.id);
+  }
   const key = def.base === 'hero' ? 'hero' : 'heroine';
   // 主人公・日和は、これまで通り設定で差し替えた模型も使える
   if (def.id === 'sun' || def.id === 'hiyori') {
